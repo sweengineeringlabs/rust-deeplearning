@@ -1,0 +1,42 @@
+[package]
+name = "audiolearn-tauri"
+version.workspace = true
+edition = "2021"
+rust-version = "1.77.2"
+license.workspace = true
+repository.workspace = true
+description = "AudioLearn - Audio-first online course platform"
+
+[lib]
+name = "audiolearn_tauri"
+crate-type = ["staticlib", "cdylib", "rlib"]
+path = "main/src/lib.rs"
+
+[[bin]]
+name = "audiolearn-app"
+path = "main/src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-log = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-store = "2"
+
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+tokio.workspace = true
+thiserror = "1.0"
+
+# TTS dependencies
+tts.workspace = true
+msedge-tts.workspace = true
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = "2"
+tauri-plugin-autostart = "2"

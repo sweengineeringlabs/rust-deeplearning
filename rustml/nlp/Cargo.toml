@@ -1,0 +1,25 @@
+[package]
+name = "rustml-nlp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "NLP models for RustML including GPT-2 and text generation"
+
+[lib]
+path = "main/src/lib.rs"
+
+[dependencies]
+rustml-core.workspace = true
+rustml-nn.workspace = true
+rustml-hub.workspace = true
+thiserror.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+regex.workspace = true
+tokio.workspace = true
+
+[[example]]
+name = "gpt2_generate"
+path = "examples/gpt2_generate.rs"

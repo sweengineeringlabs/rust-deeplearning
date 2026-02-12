@@ -1,0 +1,17 @@
+[package]
+name = "rustml-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core tensor operations for RustML - a pure Rust machine learning library"
+
+[lib]
+path = "main/src/lib.rs"
+
+[dependencies]
+thiserror.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+approx.workspace = true

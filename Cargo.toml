@@ -1,21 +1,61 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/components",
-    "crates/tutorial-app",
-    "crates/audiolearn",
-    "crates/audiolearn/src-tauri",
-    "crates/rustml-core",
-    "crates/rustml-nn",
-    "crates/rustml-hub",
-    "crates/rustml-nlp",
+    # ML stack (umbrella: rustml/)
+    "rustml/core",
+    "rustml/nn",
+    "rustml/hub",
+    "rustml/nlp",
+    # AudioLearn (umbrella: audiolearn/)
+    "audiolearn/app",
+    "audiolearn/tauri",
+    # UI
+    "components",
+    "tutorial-app",
 ]
+exclude = ["rustml", "audiolearn"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+authors = []
 repository = "https://github.com/sweengineeringlabs/rust-ui"
 
 [workspace.dependencies]
+# UI
 dioxus = { version = "0.6", features = ["web", "desktop"] }
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Async
+tokio = { version = "1", features = ["full"] }
+# Error handling
+thiserror = "2"
+# Utilities
+rand = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+regex = "1"
+dirs = "6"
+# HTTP
+reqwest = { version = "0.12", features = ["json"] }
+futures-util = "0.3"
+# Audio (desktop)
+rodio = "0.20"
+tts = "0.26"
+msedge-tts = "0.2"
+rfd = "0.15"
+# Web
+wasm-bindgen = "0.2"
+web-sys = "0.3"
+# Testing
+approx = "0.5"
+# Logging
+log = "0.4"
+# Internal crates
+rustml-core = { path = "rustml/core" }
+rustml-nn = { path = "rustml/nn" }
+rustml-hub = { path = "rustml/hub" }
+rustml-nlp = { path = "rustml/nlp" }
+components = { path = "components" }

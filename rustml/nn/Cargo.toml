@@ -1,0 +1,17 @@
+[package]
+name = "rustml-nn"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Neural network layers for RustML including attention mechanisms"
+
+[lib]
+path = "main/src/lib.rs"
+
+[dependencies]
+rustml-core.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+approx.workspace = true

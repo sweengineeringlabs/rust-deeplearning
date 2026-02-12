@@ -1,0 +1,25 @@
+[package]
+name = "tutorial-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Gamified tutorial app like Duolingo"
+
+[lib]
+path = "main/src/lib.rs"
+
+[[bin]]
+name = "tutorial-app"
+path = "main/src/main.rs"
+
+[dependencies]
+dioxus.workspace = true
+components.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[features]
+default = ["web"]
+web = []
+desktop = []

@@ -1,0 +1,27 @@
+[application]
+name = "audiolearn"
+default_platform = "web"
+
+# Assets configuration
+asset_dir = "assets"
+
+# Output for Tauri
+out_dir = "dist"
+
+[web.app]
+title = "AudioLearn - Learn on the Go"
+
+[web.watcher]
+reload_html = true
+watch_path = ["src", "assets"]
+
+[web.resource]
+style = ["/styles.css"]
+
+[web.resource.dev]
+style = ["/styles.css"]
+
+# Build settings for Tauri integration
+[build]
+# The output directory for built assets (relative to the crate root)
+target_dir = "dist"

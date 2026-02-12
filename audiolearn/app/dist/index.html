@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AudioLearn - Learn on the Go</title>
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-hover: #4f46e5;
+            --background: #0f0f23;
+            --surface: #1a1a2e;
+            --surface-hover: #252542;
+            --text: #f0f0f5;
+            --text-muted: #9898b0;
+            --success: #10b981;
+            --danger: #ef4444;
+            --border: #2d2d44;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--background);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .app {
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+        
+        header {
+            background: var(--surface);
+            padding: 1rem 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+        
+        .logo-icon {
+            font-size: 1.75rem;
+        }
+        
+        main {
+            flex: 1;
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+        
+        .hero {
+            max-width: 600px;
+        }
+        
+        .hero h1 {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, var(--primary) 0%, #a855f7 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .hero p {
+            color: var(--text-muted);
+            font-size: 1.125rem;
+            line-height: 1.6;
+            margin-bottom: 2rem;
+        }
+        
+        .actions {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 0.875rem 1.5rem;
+            border-radius: 0.5rem;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        button:hover {
+            background: var(--primary-hover);
+            transform: translateY(-1px);
+        }
+        
+        button.secondary {
+            background: var(--surface);
+            border: 1px solid var(--border);
+        }
+        
+        button.secondary:hover {
+            background: var(--surface-hover);
+        }
+        
+        .status {
+            margin-top: 2rem;
+            padding: 1rem;
+            background: var(--surface);
+            border-radius: 0.5rem;
+            min-width: 300px;
+        }
+        
+        .status h3 {
+            margin-bottom: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        .status-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .status-item:last-child {
+            border-bottom: none;
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 0.5rem;
+        }
+        
+        .status-dot.success { background: var(--success); }
+        .status-dot.pending { background: #f59e0b; }
+        .status-dot.error { background: var(--danger); }
+        
+        #voiceList {
+            margin-top: 1rem;
+            max-height: 200px;
+            overflow-y: auto;
+            text-align: left;
+            font-size: 0.875rem;
+        }
+        
+        .voice-item {
+            padding: 0.5rem;
+            background: var(--surface-hover);
+            border-radius: 0.25rem;
+            margin-bottom: 0.25rem;
+        }
+        
+        footer {
+            background: var(--surface);
+            padding: 1rem;
+            text-align: center;
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            border-top: 1px solid var(--border);
+        }
+
+        #result {
+            margin-top: 1rem;
+            padding: 1rem;
+            background: var(--surface-hover);
+            border-radius: 0.5rem;
+            font-family: monospace;
+            font-size: 0.875rem;
+            max-width: 100%;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <header>
+            <div class="logo">
+                <span class="logo-icon">🎧</span>
+                <span>AudioLearn</span>
+            </div>
+            <div>
+                <span id="version">v0.0.0</span>
+            </div>
+        </header>
+        
+        <main>
+            <div class="hero">
+                <h1>Welcome to AudioLearn</h1>
+                <p>Learn on the go with our audio-first online course platform. This is the Tauri-powered native application.</p>
+                
+                <div class="actions">
+                    <button onclick="testTTS()">
+                        🔊 Test TTS
+                    </button>
+                    <button onclick="stopTTS()" class="secondary">
+                        ⏹️ Stop
+                    </button>
+                    <button onclick="getVoices()" class="secondary">
+                        📋 List Voices
+                    </button>
+                </div>
+                
+                <div class="status">
+                    <h3>System Status</h3>
+                    <div class="status-item">
+                        <span><span class="status-dot success" id="tauriDot"></span> Tauri API</span>
+                        <span id="tauriStatus">Checking...</span>
+                    </div>
+                    <div class="status-item">
+                        <span><span class="status-dot pending" id="ttsDot"></span> TTS Engine</span>
+                        <span id="ttsStatus">Ready</span>
+                    </div>
+                </div>
+                
+                <div id="result" style="display: none;"></div>
+                
+                <div id="voiceList"></div>
+            </div>
+        </main>
+        
+        <footer>
+            AudioLearn © 2024 - Powered by Tauri + Rust
+        </footer>
+    </div>
+    
+    <script>
+        // Check if Tauri is available
+        const { invoke } = window.__TAURI__.core;
+        
+        async function init() {
+            try {
+                const version = await invoke('get_app_version');
+                document.getElementById('version').textContent = `v${version}`;
+                document.getElementById('tauriDot').className = 'status-dot success';
+                document.getElementById('tauriStatus').textContent = 'Connected';
+            } catch (e) {
+                console.error('Tauri not available:', e);
+                document.getElementById('tauriDot').className = 'status-dot error';
+                document.getElementById('tauriStatus').textContent = 'Error';
+            }
+        }
+        
+        async function testTTS() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.style.display = 'block';
+            resultDiv.textContent = 'Speaking...';
+            
+            try {
+                const result = await invoke('speak_text', { 
+                    text: 'Welcome to AudioLearn. This is a test of the native text to speech system powered by Tauri.',
+                    options: null
+                });
+                resultDiv.textContent = JSON.stringify(result, null, 2);
+                document.getElementById('ttsDot').className = result.success ? 'status-dot success' : 'status-dot error';
+                document.getElementById('ttsStatus').textContent = result.success ? 'Playing' : 'Error';
+            } catch (e) {
+                resultDiv.textContent = 'Error: ' + e;
+                document.getElementById('ttsDot').className = 'status-dot error';
+                document.getElementById('ttsStatus').textContent = 'Error';
+            }
+        }
+        
+        async function stopTTS() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.style.display = 'block';
+            
+            try {
+                const result = await invoke('stop_tts');
+                resultDiv.textContent = JSON.stringify(result, null, 2);
+                document.getElementById('ttsStatus').textContent = 'Stopped';
+            } catch (e) {
+                resultDiv.textContent = 'Error: ' + e;
+            }
+        }
+        
+        async function getVoices() {
+            const voiceList = document.getElementById('voiceList');
+            
+            try {
+                const voices = await invoke('get_voices');
+                voiceList.innerHTML = `<h4>Available Voices (${voices.length})</h4>` + 
+                    voices.slice(0, 10).map(v => 
+                        `<div class="voice-item">${v.name} (${v.language})${v.is_neural ? ' 🧠' : ''}</div>`
+                    ).join('') +
+                    (voices.length > 10 ? `<div class="voice-item">...and ${voices.length - 10} more</div>` : '');
+            } catch (e) {
+                voiceList.innerHTML = '<div class="voice-item">Error loading voices: ' + e + '</div>';
+            }
+        }
+        
+        // Initialize on load
+        init();
+    </script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+[package]
+name = "rustml-hub"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "HuggingFace Hub integration for loading pre-trained models"
+
+[lib]
+path = "main/src/lib.rs"
+
+[dependencies]
+rustml-core.workspace = true
+thiserror.workspace = true
+reqwest = { workspace = true, features = ["stream"] }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+futures-util.workspace = true
+dirs.workspace = true

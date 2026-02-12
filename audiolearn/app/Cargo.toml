@@ -1,0 +1,45 @@
+[package]
+name = "audiolearn-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Audio-first online course platform - Learn on the go"
+
+[lib]
+path = "main/src/lib.rs"
+
+[[bin]]
+name = "audiolearn-app"
+path = "main/src/main.rs"
+
+[dependencies]
+dioxus.workspace = true
+components.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+thiserror = "1.0"
+
+# Desktop-only dependencies (native audio/TTS)
+rodio = { version = "0.19", features = ["mp3", "wav"], optional = true }
+tokio = { workspace = true, optional = true }
+tts = { workspace = true, optional = true }
+msedge-tts = { workspace = true, optional = true }
+rfd = { workspace = true, optional = true }
+dirs = { version = "5.0", optional = true }
+
+# Web-specific dependencies
+wasm-bindgen = { workspace = true, optional = true }
+web-sys = { workspace = true, optional = true, features = [
+    "Window",
+    "SpeechSynthesis",
+    "SpeechSynthesisUtterance",
+    "SpeechSynthesisVoice"
+] }
+
+[features]
+default = ["desktop"]
+web = ["wasm-bindgen", "web-sys"]
+desktop = ["rodio", "tokio", "tts", "msedge-tts", "rfd", "dirs"]
+tauri = ["web"]

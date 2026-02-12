@@ -1,5 +1,6 @@
 # Rust build artifacts
 /target/
+**/target/
 debug/
 release/
 
@@ -20,3 +21,10 @@ Thumbs.db
 # Environment files
 .env
 .env.local
+
+# Tauri build artifacts
+audiolearn/tauri/gen/
+audiolearn/tauri/WixTools/
+
+# Dioxus build artifacts
+audiolearn/app/dist/assets/dioxus/
