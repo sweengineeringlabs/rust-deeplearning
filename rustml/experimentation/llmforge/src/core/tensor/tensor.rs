@@ -147,19 +147,14 @@ impl Tensor {
             });
         }
 
-        // Try bytemuck first (safe, checks alignment); fall back to raw pointer
-        // if alignment doesn't match (e.g. some mmap offsets or Vec<u8> allocations).
-        match bytemuck::try_cast_slice(bytes) {
-            Ok(slice) => Ok(slice),
-            Err(_) => {
-                // SAFETY: dtype is F32 (checked above), byte length is verified
-                // as a multiple of 4, and the underlying data was originally written
-                // as f32 values. The pointer is valid for `len` f32 elements because
-                // bytes points to a live allocation of exactly `bytes.len()` bytes.
-                let len = bytes.len() / 4;
-                Ok(unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const f32, len) })
-            }
-        }
+        // bytemuck checks both size and alignment; if the pointer is not 4-byte
+        // aligned (can happen with mmap offsets), this will return an error.
+        // Callers should use to_f32() first to ensure owned/aligned storage.
+        bytemuck::try_cast_slice(bytes).map_err(|_| {
+            LLMForgeError::InvalidConfig(
+                "as_slice_f32: data not 4-byte aligned; call to_f32() first to make an aligned copy".into()
+            )
+        })
     }
 
     /// Returns raw byte slice from any Storage variant.
@@ -191,7 +186,17 @@ impl Tensor {
     // Convert to F32 tensor
     pub fn to_f32(&self) -> Result<Tensor> {
         match self.dtype {
-            DType::F32 => Ok(self.clone()),
+            DType::F32 => {
+                // If data is already aligned, clone is fine. If misaligned
+                // (e.g. mmap offset not divisible by 4), make an owned copy
+                // so downstream as_slice_f32() never hits unaligned pointers.
+                let bytes = self.as_raw_bytes()?;
+                if bytemuck::try_cast_slice::<u8, f32>(bytes).is_ok() {
+                    Ok(self.clone())
+                } else {
+                    Ok(Tensor::new(bytes.to_vec(), self.shape.clone(), DType::F32))
+                }
+            },
             DType::BF16 => {
                 let contiguous = if !self.is_contiguous() {
                     self.contiguous()?
@@ -200,19 +205,16 @@ impl Tensor {
                 };
 
                 let bytes = contiguous.as_raw_bytes()?;
-                let slice: &[bf16] = match bytemuck::try_cast_slice(bytes) {
-                    Ok(s) => s,
+                let data_f32: Vec<f32> = match bytemuck::try_cast_slice::<u8, bf16>(bytes) {
+                    Ok(slice) => slice.iter().map(|x| x.to_f32()).collect(),
                     Err(_) => {
-                        // SAFETY: dtype is BF16 (matched above), tensor is contiguous,
-                        // byte length is a multiple of 2 (bf16 size), and the data was
-                        // originally written as bf16 values. Pointer is valid for the
-                        // full allocation.
-                        let len = bytes.len() / 2;
-                        unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const bf16, len) }
+                        // Misaligned mmap data — read bf16 values from raw bytes
+                        let n = bytes.len() / 2;
+                        (0..n)
+                            .map(|i| bf16::from_le_bytes([bytes[i * 2], bytes[i * 2 + 1]]).to_f32())
+                            .collect()
                     }
                 };
-
-                let data_f32: Vec<f32> = slice.iter().map(|x| x.to_f32()).collect();
                 let out_bytes = f32_vec_to_bytes(data_f32);
 
                 Ok(Tensor::new(out_bytes, contiguous.shape.clone(), DType::F32))
@@ -225,22 +227,82 @@ impl Tensor {
                 };
 
                 let bytes = contiguous.as_raw_bytes()?;
-                let slice: &[f16] = match bytemuck::try_cast_slice(bytes) {
-                    Ok(s) => s,
+                let data_f32: Vec<f32> = match bytemuck::try_cast_slice::<u8, f16>(bytes) {
+                    Ok(slice) => slice.iter().map(|x| x.to_f32()).collect(),
                     Err(_) => {
-                        // SAFETY: dtype is F16 (matched above), tensor is contiguous,
-                        // byte length is a multiple of 2 (f16 size), and the data was
-                        // originally written as f16 values. Pointer is valid for the
-                        // full allocation.
-                        let len = bytes.len() / 2;
-                        unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const f16, len) }
+                        // Misaligned mmap data — read f16 values from raw bytes
+                        let n = bytes.len() / 2;
+                        (0..n)
+                            .map(|i| f16::from_le_bytes([bytes[i * 2], bytes[i * 2 + 1]]).to_f32())
+                            .collect()
                     }
                 };
-
-                let data_f32: Vec<f32> = slice.iter().map(|x| x.to_f32()).collect();
                 let out_bytes = f32_vec_to_bytes(data_f32);
 
                 Ok(Tensor::new(out_bytes, contiguous.shape.clone(), DType::F32))
+            },
+            DType::Q4_0 => {
+                // Q4_0: 32 elements per block, 18 bytes/block (2-byte f16 scale + 16 packed nibbles)
+                let bytes = self.as_raw_bytes()?;
+                let n_elements = self.element_count();
+                if n_elements % 32 != 0 {
+                    return Err(LLMForgeError::InvalidConfig(
+                        format!("Q4_0 element count {} not divisible by 32", n_elements),
+                    ));
+                }
+                let n_blocks = n_elements / 32;
+                let expected_bytes = n_blocks * 18;
+                if bytes.len() < expected_bytes {
+                    return Err(LLMForgeError::ShapeMismatch {
+                        expected: vec![expected_bytes],
+                        actual: vec![bytes.len()],
+                    });
+                }
+
+                let mut out = Vec::with_capacity(n_elements);
+                for b in 0..n_blocks {
+                    let block = &bytes[b * 18..(b + 1) * 18];
+                    let scale = f16::from_le_bytes([block[0], block[1]]).to_f32();
+                    for j in 0..16 {
+                        let byte = block[2 + j];
+                        let lo = (byte & 0x0F) as i32 - 8;
+                        let hi = ((byte >> 4) & 0x0F) as i32 - 8;
+                        out.push(scale * lo as f32);
+                        out.push(scale * hi as f32);
+                    }
+                }
+
+                Ok(Tensor::new(f32_vec_to_bytes(out), self.shape.clone(), DType::F32))
+            },
+            DType::Q8_0 => {
+                // Q8_0: 32 elements per block, 34 bytes/block (2-byte f16 scale + 32 i8 values)
+                let bytes = self.as_raw_bytes()?;
+                let n_elements = self.element_count();
+                if n_elements % 32 != 0 {
+                    return Err(LLMForgeError::InvalidConfig(
+                        format!("Q8_0 element count {} not divisible by 32", n_elements),
+                    ));
+                }
+                let n_blocks = n_elements / 32;
+                let expected_bytes = n_blocks * 34;
+                if bytes.len() < expected_bytes {
+                    return Err(LLMForgeError::ShapeMismatch {
+                        expected: vec![expected_bytes],
+                        actual: vec![bytes.len()],
+                    });
+                }
+
+                let mut out = Vec::with_capacity(n_elements);
+                for b in 0..n_blocks {
+                    let block = &bytes[b * 34..(b + 1) * 34];
+                    let scale = f16::from_le_bytes([block[0], block[1]]).to_f32();
+                    for j in 0..32 {
+                        let quant = block[2 + j] as i8;
+                        out.push(scale * quant as f32);
+                    }
+                }
+
+                Ok(Tensor::new(f32_vec_to_bytes(out), self.shape.clone(), DType::F32))
             },
             _ => Err(LLMForgeError::NotImplemented(format!("Conversion from {:?} to F32", self.dtype))),
         }

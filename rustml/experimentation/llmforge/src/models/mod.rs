@@ -90,6 +90,7 @@ impl LlmModel {
         let causal = config.causal;
         let rope_theta = config.rope_theta;
 
+        // Convert to F32 (for Embedding, LayerNorm — must be float)
         let get_tensor = |key: &str| -> Result<Tensor> {
             weights.get(key)
                 .ok_or_else(|| LLMForgeError::NotImplemented(
@@ -98,7 +99,19 @@ impl LlmModel {
                 .and_then(|t| t.to_f32())
         };
 
-        // Token embedding
+        // Preserve quantized dtype (for Linear weights — Q4_0/Q8_0 stay quantized)
+        let get_weight = |key: &str| -> Result<Tensor> {
+            weights.get(key)
+                .ok_or_else(|| LLMForgeError::NotImplemented(
+                    format!("Missing weight: {}", key)
+                ))
+                .and_then(|t| match t.dtype() {
+                    DType::Q4_0 | DType::Q8_0 | DType::F32 => Ok(t.clone()),
+                    _ => t.to_f32(),
+                })
+        };
+
+        // Token embedding (needs F32 for lookup)
         let token_embedding = Embedding::from_weights(get_tensor("token_embedding.weight")?);
 
         // Positional embedding: only for Learned
@@ -116,19 +129,19 @@ impl LlmModel {
         let mut layers = Vec::with_capacity(num_layers);
         for i in 0..num_layers {
             let q_proj = Linear::from_weights(
-                get_tensor(&format!("layers.{}.attention.q_proj.weight", i))?,
+                get_weight(&format!("layers.{}.attention.q_proj.weight", i))?,
                 None,
             );
             let k_proj = Linear::from_weights(
-                get_tensor(&format!("layers.{}.attention.k_proj.weight", i))?,
+                get_weight(&format!("layers.{}.attention.k_proj.weight", i))?,
                 None,
             );
             let v_proj = Linear::from_weights(
-                get_tensor(&format!("layers.{}.attention.v_proj.weight", i))?,
+                get_weight(&format!("layers.{}.attention.v_proj.weight", i))?,
                 None,
             );
             let out_proj = Linear::from_weights(
-                get_tensor(&format!("layers.{}.attention.out_proj.weight", i))?,
+                get_weight(&format!("layers.{}.attention.out_proj.weight", i))?,
                 None,
             );
             let attention = MultiHeadAttention::from_weights(
@@ -138,23 +151,24 @@ impl LlmModel {
             )?;
 
             let up_proj = Linear::from_weights(
-                get_tensor(&format!("layers.{}.feed_forward.up_proj.weight", i))?,
+                get_weight(&format!("layers.{}.feed_forward.up_proj.weight", i))?,
                 None,
             );
             let down_proj = Linear::from_weights(
-                get_tensor(&format!("layers.{}.feed_forward.down_proj.weight", i))?,
+                get_weight(&format!("layers.{}.feed_forward.down_proj.weight", i))?,
                 None,
             );
 
             // Detect SwiGLU: if gate_proj weight is present
             let gate_key = format!("layers.{}.feed_forward.gate_proj.weight", i);
-            let feed_forward = if let Ok(gate_weight) = get_tensor(&gate_key) {
+            let feed_forward = if let Ok(gate_weight) = get_weight(&gate_key) {
                 let gate_proj = Linear::from_weights(gate_weight, None);
                 FeedForward::from_weights_swiglu(up_proj, gate_proj, down_proj)
             } else {
                 FeedForward::from_weights_with_activation(up_proj, down_proj, Activation::Silu)
             };
 
+            // LayerNorm always needs F32
             let attention_norm = LayerNorm::from_weight_only(
                 get_tensor(&format!("layers.{}.attention_norm.weight", i))?,
                 eps,
@@ -167,11 +181,11 @@ impl LlmModel {
             layers.push(TransformerBlock::from_weights(attention, feed_forward, attention_norm, ffn_norm));
         }
 
-        // Final norm
+        // Final norm (F32)
         let norm = LayerNorm::from_weight_only(get_tensor("norm.weight")?, eps);
 
-        // Output projection
-        let output = Linear::from_weights(get_tensor("output.weight")?, None);
+        // Output projection (can be quantized)
+        let output = Linear::from_weights(get_weight("output.weight")?, None);
 
         Ok(Self {
             token_embedding,
@@ -238,10 +252,14 @@ impl LlmModel {
         // Transformer layers
         let mut layers = Vec::with_capacity(num_layers);
         for i in 0..num_layers {
-            // Split fused QKV
-            let c_attn_weight = get_tensor(&format!("layers.{}.attention.c_attn.weight", i))?;
+            // GPT-2 uses Conv1D which stores weights as [In, Out].
+            // Our Linear expects [Out, In], so transpose all weight matrices.
+            let c_attn_weight = get_tensor(&format!("layers.{}.attention.c_attn.weight", i))?
+                .transpose(0, 1)?
+                .contiguous()?;
             let c_attn_bias = get_tensor_opt(&format!("layers.{}.attention.c_attn.bias", i));
 
+            // Split fused QKV: [3*d_model, d_model] → 3x [d_model, d_model]
             let (q_w, k_w, v_w) = split_qkv(c_attn_weight, d_model)?;
             let (q_b, k_b, v_b) = if let Some(bias) = c_attn_bias {
                 let (qb, kb, vb) = split_qkv_bias(bias, d_model)?;
@@ -254,8 +272,11 @@ impl LlmModel {
             let k_proj = Linear::from_weights(k_w, k_b);
             let v_proj = Linear::from_weights(v_w, v_b);
 
+            let out_proj_weight = get_tensor(&format!("layers.{}.attention.out_proj.weight", i))?
+                .transpose(0, 1)?
+                .contiguous()?;
             let out_proj = Linear::from_weights(
-                get_tensor(&format!("layers.{}.attention.out_proj.weight", i))?,
+                out_proj_weight,
                 get_tensor_opt(&format!("layers.{}.attention.out_proj.bias", i)),
             );
 
@@ -265,13 +286,19 @@ impl LlmModel {
                 causal, position_encoding, max_seq_len, rope_theta,
             )?;
 
-            // FFN (GELU, no gate_proj)
+            // FFN (GELU, no gate_proj) — also transpose Conv1D weights
+            let up_proj_weight = get_tensor(&format!("layers.{}.feed_forward.up_proj.weight", i))?
+                .transpose(0, 1)?
+                .contiguous()?;
             let up_proj = Linear::from_weights(
-                get_tensor(&format!("layers.{}.feed_forward.up_proj.weight", i))?,
+                up_proj_weight,
                 get_tensor_opt(&format!("layers.{}.feed_forward.up_proj.bias", i)),
             );
+            let down_proj_weight = get_tensor(&format!("layers.{}.feed_forward.down_proj.weight", i))?
+                .transpose(0, 1)?
+                .contiguous()?;
             let down_proj = Linear::from_weights(
-                get_tensor(&format!("layers.{}.feed_forward.down_proj.weight", i))?,
+                down_proj_weight,
                 get_tensor_opt(&format!("layers.{}.feed_forward.down_proj.bias", i)),
             );
             let feed_forward = FeedForward::from_weights_with_activation(up_proj, down_proj, Activation::Gelu);

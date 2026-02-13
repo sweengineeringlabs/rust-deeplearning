@@ -295,14 +295,15 @@ fn gpt2_from_pretrained_forward() {
     weights.insert("norm.bias".to_string(), make_f32_tensor(&vec![0.0; d], vec![d]));
 
     // Layer 0
-    // Fused QKV: [3*d, d]
-    weights.insert("layers.0.attention.c_attn.weight".to_string(), make_f32_tensor(&vec![0.01; 3 * d * d], vec![3 * d, d]));
+    // GPT-2 Conv1D format: weights stored as [In, Out]
+    // Fused QKV: [d, 3*d] (Conv1D), transposed to [3*d, d] inside from_pretrained_gpt2
+    weights.insert("layers.0.attention.c_attn.weight".to_string(), make_f32_tensor(&vec![0.01; d * 3 * d], vec![d, 3 * d]));
     weights.insert("layers.0.attention.c_attn.bias".to_string(), make_f32_tensor(&vec![0.0; 3 * d], vec![3 * d]));
     weights.insert("layers.0.attention.out_proj.weight".to_string(), make_f32_tensor(&vec![0.01; d * d], vec![d, d]));
     weights.insert("layers.0.attention.out_proj.bias".to_string(), make_f32_tensor(&vec![0.0; d], vec![d]));
-    weights.insert("layers.0.feed_forward.up_proj.weight".to_string(), make_f32_tensor(&vec![0.01; h * d], vec![h, d]));
+    weights.insert("layers.0.feed_forward.up_proj.weight".to_string(), make_f32_tensor(&vec![0.01; d * h], vec![d, h]));
     weights.insert("layers.0.feed_forward.up_proj.bias".to_string(), make_f32_tensor(&vec![0.0; h], vec![h]));
-    weights.insert("layers.0.feed_forward.down_proj.weight".to_string(), make_f32_tensor(&vec![0.01; d * h], vec![d, h]));
+    weights.insert("layers.0.feed_forward.down_proj.weight".to_string(), make_f32_tensor(&vec![0.01; h * d], vec![h, d]));
     weights.insert("layers.0.feed_forward.down_proj.bias".to_string(), make_f32_tensor(&vec![0.0; d], vec![d]));
     weights.insert("layers.0.attention_norm.weight".to_string(), make_f32_tensor(&vec![1.0; d], vec![d]));
     weights.insert("layers.0.attention_norm.bias".to_string(), make_f32_tensor(&vec![0.0; d], vec![d]));
@@ -341,13 +342,13 @@ fn gpt2_tied_embeddings() {
     weights.insert("pos_embedding.weight".to_string(), make_f32_tensor(&vec![0.01; 8 * d], vec![8, d]));
     weights.insert("norm.weight".to_string(), make_f32_tensor(&vec![1.0; d], vec![d]));
     weights.insert("norm.bias".to_string(), make_f32_tensor(&vec![0.0; d], vec![d]));
-    weights.insert("layers.0.attention.c_attn.weight".to_string(), make_f32_tensor(&vec![0.01; 3 * d * d], vec![3 * d, d]));
+    weights.insert("layers.0.attention.c_attn.weight".to_string(), make_f32_tensor(&vec![0.01; d * 3 * d], vec![d, 3 * d]));
     weights.insert("layers.0.attention.c_attn.bias".to_string(), make_f32_tensor(&vec![0.0; 3 * d], vec![3 * d]));
     weights.insert("layers.0.attention.out_proj.weight".to_string(), make_f32_tensor(&vec![0.01; d * d], vec![d, d]));
     weights.insert("layers.0.attention.out_proj.bias".to_string(), make_f32_tensor(&vec![0.0; d], vec![d]));
-    weights.insert("layers.0.feed_forward.up_proj.weight".to_string(), make_f32_tensor(&vec![0.01; 64 * d], vec![64, d]));
+    weights.insert("layers.0.feed_forward.up_proj.weight".to_string(), make_f32_tensor(&vec![0.01; d * 64], vec![d, 64]));
     weights.insert("layers.0.feed_forward.up_proj.bias".to_string(), make_f32_tensor(&vec![0.0; 64], vec![64]));
-    weights.insert("layers.0.feed_forward.down_proj.weight".to_string(), make_f32_tensor(&vec![0.01; d * 64], vec![d, 64]));
+    weights.insert("layers.0.feed_forward.down_proj.weight".to_string(), make_f32_tensor(&vec![0.01; 64 * d], vec![64, d]));
     weights.insert("layers.0.feed_forward.down_proj.bias".to_string(), make_f32_tensor(&vec![0.0; d], vec![d]));
     weights.insert("layers.0.attention_norm.weight".to_string(), make_f32_tensor(&vec![1.0; d], vec![d]));
     weights.insert("layers.0.attention_norm.bias".to_string(), make_f32_tensor(&vec![0.0; d], vec![d]));
