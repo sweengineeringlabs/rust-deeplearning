@@ -33,7 +33,7 @@
 
 ### 5. Backend Optimization
 - [x] **Quantization (Q8_0)**: Block-quantized 8-bit storage (32 elements/block, 34 bytes/block). Supports quantize, dequantize, and on-the-fly quantized matmul. ~26.6% of F32 memory. Integrated into `Linear` layer.
-- [ ] **Quantization (Q4_0)**: 4-bit quantization for further memory reduction.
+- [x] **Quantization (Q4_0)**: 4-bit block quantization (32 elem/block, 18 bytes/block, ~14% of F32). See Phase 5 Performance.
 - [x] **SIMD/Parallelism**: `RuntimeConfig` struct with `apply()` to set `faer::set_global_parallelism` and rayon thread pool. Must be called before computation.
 - [x] **GPU Support (Investigation)**: Investigated `wgpu` and `cudarc` backends. See findings below.
 
@@ -161,7 +161,7 @@ Current state: 215 tests across 21 test files, all passing.
 - [x] **HuggingFace tensor name remapping** — `WeightMap::llama2()` maps HF weight names to LLMForge internal names.
 - [x] **Llama-2 model loading** — HF config parser (`from_hf_llama2`), RoPE/GQA settings, pos embedding loading from weights, gate_proj mapping.
 - [x] **GPT-2 model loading** — HF config parser (`from_hf_gpt2`), fused QKV splitting, tied embeddings, LayerNorm with bias, `from_pretrained_gpt2`.
-- [x] **GGUF format support** — Hand-written binary parser for llama.cpp ecosystem. Supports F32, F16, Q8_0, Q4_0 tensor types. Mmap-based tensor loading.
+- [x] **GGUF format support** — Hand-written binary parser for llama.cpp ecosystem. Supports F32, F16, Q8_0, Q4_0 tensor types plus k-quant types (Q2_K through Q8_K, dequantized to F32 on load). Mmap-based tensor loading.
 
 ### Performance
 - [x] **Quantization (Q8_0)** — 8-bit block quantization (~26.6% memory). Quantize/dequantize + on-the-fly quantized matmul.
@@ -177,4 +177,18 @@ Current state: 215 tests across 21 test files, all passing.
 - [ ] **Benchmarking suite** — Automated benchmarks for matmul, attention, full forward pass with regression tracking.
 - [ ] **CI pipeline** — Automated build, test, and lint on push.
 - [ ] **Logging/tracing** — Add `tracing` crate for structured logging of forward pass timing and memory usage.
-- [ ] **Model download utility** — Download models from HuggingFace Hub directly.
+- [x] **Model download utility** — `hf-hub` crate integration for automatic model downloading from HuggingFace Hub. Used in `gpt2_inference` and `gguf_inference` examples. Caches downloads in `~/.cache/huggingface/hub/`.
+
+---
+
+## Phase 6: End-to-End Inference Examples (Status: Complete)
+
+### Examples
+- [x] **GPT-2 inference** (`examples/gpt2_inference.rs`) — Auto-downloads GPT-2 124M from `openai-community/gpt2` via `hf-hub`. Pipeline: config.json → `ModelConfig::from_hf_gpt2()`, model.safetensors → `ModelLoader::load_safetensors()` → `WeightMap::gpt2().remap()` → `LlmModel::from_pretrained_gpt2()`, tokenizer.json → `HFTokenizer`. Interactive REPL with streaming token output.
+- [x] **GGUF inference** (`examples/gguf_inference.rs`) — Auto-downloads TinyLlama-1.1B-Chat Q4_0 (~670MB) from `TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF` via `hf-hub`, or loads a local GGUF file. Prints quantization breakdown. Falls back to `NaiveTokenizer` when no tokenizer provided. CLI: `[gguf_path] [tokenizer_path] [--temp N] [--max-tokens N]`.
+
+### Bug Fixes (discovered during end-to-end testing)
+- [x] **Mmap alignment safety** — `to_f32()` for F32 dtype now detects misaligned mmap data and copies to owned storage. BF16/F16 paths use safe byte-level reads instead of unsafe `from_raw_parts`. `as_slice_f32()` returns proper error for unaligned data.
+- [x] **GPT-2 Conv1D weight transposition** — GPT-2 stores Conv1D weights as `[In, Out]` (not `[Out, In]`). `from_pretrained_gpt2` now transposes c_attn, out_proj, up_proj, and down_proj weights before use.
+- [x] **K-quant dequantization** — GGUF loader now supports Q2_K through Q8_K quantization types, dequantized to F32 during loading.
+- [x] **Q4_0/Q8_0 → F32 dequantization** — `Tensor::to_f32()` now supports Q4_0 (18 bytes/block, nibble unpacking) and Q8_0 (34 bytes/block, i8 scaling) for tensors that require F32 (embeddings, layer norms).
