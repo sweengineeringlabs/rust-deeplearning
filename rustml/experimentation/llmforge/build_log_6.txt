@@ -1,0 +1,220 @@
+   Compiling llmforge v0.1.0 (C:\phd-systems\swe-labs\rustml\experimentation\llmforge)
+warning: unused import: `Parallelism`
+   --> src\core\tensor.rs:190:36
+    |
+190 |         use faer::{MatRef, MatMut, Parallelism};
+    |                                    ^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `Parallelism`
+   --> src\core\tensor.rs:285:36
+    |
+285 |         use faer::{MatRef, MatMut, Parallelism};
+    |                                    ^^^^^^^^^^^
+
+warning: unused import: `LLMForgeError`
+ --> src\attention\mod.rs:2:20
+  |
+2 | use crate::error::{LLMForgeError, Result};
+  |                    ^^^^^^^^^^^^^
+
+warning: unnecessary `unsafe` block
+   --> src\core\tensor.rs:206:19
+    |
+206 |         let a_t = unsafe { MatRef::<f32>::from_column_major_slice(lhs_data, K, M) };
+    |                   ^^^^^^ unnecessary `unsafe` block
+    |
+    = note: `#[warn(unused_unsafe)]` (part of `#[warn(unused)]`) on by default
+
+warning: unnecessary `unsafe` block
+   --> src\core\tensor.rs:207:19
+    |
+207 |         let b_t = unsafe { MatRef::<f32>::from_column_major_slice(rhs_data, N, K) };
+    |                   ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> src\core\tensor.rs:208:23
+    |
+208 |         let mut c_t = unsafe { MatMut::<f32>::from_column_major_slice(&mut out_data, N, M) };
+    |                       ^^^^^^ unnecessary `unsafe` block
+
+warning: unused variable: `out_shape`
+   --> src\core\tensor.rs:186:13
+    |
+186 |         let out_shape = vec![M, N];
+    |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_out_shape`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unnecessary `unsafe` block
+   --> src\core\tensor.rs:294:27
+    |
+294 |                 let a_t = unsafe { MatRef::<f32>::from_column_major_slice(lhs_chunk, K, M) };
+    |                           ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> src\core\tensor.rs:295:27
+    |
+295 |                 let b_t = unsafe { MatRef::<f32>::from_column_major_slice(rhs_chunk, N, K) };
+    |                           ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> src\core\tensor.rs:296:31
+    |
+296 |                 let mut c_t = unsafe { MatMut::<f32>::from_column_major_slice(out_chunk, N, M) };
+    |                               ^^^^^^ unnecessary `unsafe` block
+
+warning: unused variable: `num_rows`
+   --> src\core\tensor.rs:346:13
+    |
+346 |         let num_rows = input_data.len() / last_dim_size;
+    |             ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_num_rows`
+
+warning: variable does not need to be mutable
+   --> src\core\tensor.rs:466:13
+    |
+466 |         let mut data: Vec<u8> = Vec::with_capacity(size * self.dtype.size()); // Assuming F32
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `data`
+   --> src\core\tensor.rs:466:13
+    |
+466 |         let mut data: Vec<u8> = Vec::with_capacity(size * self.dtype.size()); // Assuming F32
+    |             ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_data`
+
+warning: unused variable: `b`
+  --> src\nn\mod.rs:58:21
+   |
+58 |         if let Some(b) = &self.bias {
+   |                     ^ help: if this is intentional, prefix it with an underscore: `_b`
+
+warning: unused variable: `indices`
+  --> src\nn\mod.rs:95:27
+   |
+95 |     pub fn forward(&self, indices: &Tensor) -> Result<Tensor> {
+   |                           ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_indices`
+
+warning: unused variable: `input`
+   --> src\nn\mod.rs:137:23
+    |
+137 |     fn forward(&self, input: &Tensor) -> Result<Tensor> {
+    |                       ^^^^^ help: if this is intentional, prefix it with an underscore: `_input`
+
+warning: field `device` is never read
+  --> src\core\tensor.rs:47:16
+   |
+41 | pub struct Tensor {
+   |            ------ field in this struct
+...
+47 |     pub(crate) device: String,
+   |                ^^^^^^
+   |
+   = note: `Tensor` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable `K` should have a snake case name
+   --> src\core\tensor.rs:139:18
+    |
+139 |              let K = self.shape[ndim - 1];
+    |                  ^ help: convert the identifier to snake case (notice the capitalization): `k`
+    |
+    = note: `#[warn(non_snake_case)]` (part of `#[warn(nonstandard_style)]`) on by default
+
+warning: variable `M` should have a snake case name
+   --> src\core\tensor.rs:140:18
+    |
+140 |              let M: usize = self.shape[0..ndim - 1].iter().product();
+    |                  ^ help: convert the identifier to snake case: `m`
+
+warning: variable `K2` should have a snake case name
+   --> src\core\tensor.rs:141:18
+    |
+141 |              let K2 = other.shape[0];
+    |                  ^^ help: convert the identifier to snake case (notice the capitalization): `k2`
+
+warning: variable `N` should have a snake case name
+   --> src\core\tensor.rs:142:18
+    |
+142 |              let N = other.shape[1];
+    |                  ^ help: convert the identifier to snake case: `n`
+
+warning: variable `M` should have a snake case name
+   --> src\core\tensor.rs:170:13
+    |
+170 |         let M = self.shape[0];
+    |             ^ help: convert the identifier to snake case: `m`
+
+warning: variable `K` should have a snake case name
+   --> src\core\tensor.rs:171:13
+    |
+171 |         let K = self.shape[1];
+    |             ^ help: convert the identifier to snake case (notice the capitalization): `k`
+
+warning: variable `K2` should have a snake case name
+   --> src\core\tensor.rs:172:13
+    |
+172 |         let K2 = other.shape[0];
+    |             ^^ help: convert the identifier to snake case (notice the capitalization): `k2`
+
+warning: variable `N` should have a snake case name
+   --> src\core\tensor.rs:173:13
+    |
+173 |         let N = other.shape[1];
+    |             ^ help: convert the identifier to snake case: `n`
+
+warning: variable `M` should have a snake case name
+   --> src\core\tensor.rs:254:13
+    |
+254 |         let M = self.shape[ndim - 2];
+    |             ^ help: convert the identifier to snake case: `m`
+
+warning: variable `K` should have a snake case name
+   --> src\core\tensor.rs:255:13
+    |
+255 |         let K = self.shape[ndim - 1];
+    |             ^ help: convert the identifier to snake case (notice the capitalization): `k`
+
+warning: variable `K2` should have a snake case name
+   --> src\core\tensor.rs:256:13
+    |
+256 |         let K2 = other.shape[ndim - 2];
+    |             ^^ help: convert the identifier to snake case (notice the capitalization): `k2`
+
+warning: variable `N` should have a snake case name
+   --> src\core\tensor.rs:257:13
+    |
+257 |         let N = other.shape[ndim - 1];
+    |             ^ help: convert the identifier to snake case: `n`
+
+warning: `llmforge` (lib) generated 29 warnings (run `cargo fix --lib -p llmforge` to apply 10 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.43s
+     Running tests\attention_test.rs (target\debug\deps\attention_test-ff481ce7d065d623.exe)
+
+running 1 test
+test test_mha_forward ... FAILED
+
+failures:
+
+---- test_mha_forward stdout ----
+[1;31mAssertion failed[0m at [1mC:\Users\elvis\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\faer-core-0.13.5\src\mul.rs[0m:2016:5:
+  [35massert[0m[35m!([0m [36mlhs.ncols()[0m [1;34m==[0m [33mrhs.nrows()[0m [35m)[0m
+with expansion:
+  20 == 64
+
+
+thread 'test_mha_forward' (52724) panicked at src\core\tensor.rs:211:32:
+assertion failed
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    test_mha_forward
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `--test attention_test`

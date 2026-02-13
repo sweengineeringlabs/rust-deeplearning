@@ -1,0 +1,70 @@
+   Compiling llmforge v0.1.0 (C:\phd-systems\swe-labs\rustml\experimentation\llmforge)
+error[E0433]: failed to resolve: could not find `matmul` in `faer`
+   --> src\core\tensor.rs:183:15
+    |
+183 |         faer::matmul::matmul(
+    |               ^^^^^^ could not find `matmul` in `faer`
+
+error[E0433]: failed to resolve: could not find `matmul` in `faer`
+   --> src\core\tensor.rs:277:23
+    |
+277 |                 faer::matmul::matmul(
+    |                       ^^^^^^ could not find `matmul` in `faer`
+
+warning: unused import: `LLMForgeError`
+ --> src\attention\mod.rs:2:20
+  |
+2 | use crate::error::{LLMForgeError, Result};
+  |                    ^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+error[E0282]: type annotations needed for `Vec<_>`
+   --> src\core\tensor.rs:452:13
+    |
+452 |         let mut data = Vec::with_capacity(size * self.dtype.size()); // Assuming F32
+    |             ^^^^^^^^   -------------------------------------------- type must be known at this point
+    |
+help: consider giving `data` an explicit type, where the type for type parameter `T` is specified
+    |
+452 |         let mut data: Vec<T> = Vec::with_capacity(size * self.dtype.size()); // Assuming F32
+    |                     ++++++++
+
+error[E0133]: call to unsafe function `Tensor::as_ptr` is unsafe and requires unsafe function or block
+   --> src\core\tensor.rs:108:34
+    |
+108 |                 let parent_ptr = parent.as_ptr()?;
+    |                                  ^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning: unused variable: `num_rows`
+   --> src\core\tensor.rs:332:13
+    |
+332 |         let num_rows = input_data.len() / last_dim_size;
+    |             ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_num_rows`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `b`
+  --> src\nn\mod.rs:58:21
+   |
+58 |         if let Some(b) = &self.bias {
+   |                     ^ help: if this is intentional, prefix it with an underscore: `_b`
+
+warning: unused variable: `indices`
+  --> src\nn\mod.rs:95:27
+   |
+95 |     pub fn forward(&self, indices: &Tensor) -> Result<Tensor> {
+   |                           ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_indices`
+
+warning: unused variable: `input`
+   --> src\nn\mod.rs:137:23
+    |
+137 |     fn forward(&self, input: &Tensor) -> Result<Tensor> {
+    |                       ^^^^^ help: if this is intentional, prefix it with an underscore: `_input`
+
+Some errors have detailed explanations: E0133, E0282, E0433.
+For more information about an error, try `rustc --explain E0133`.
+warning: `llmforge` (lib) generated 5 warnings
+error: could not compile `llmforge` (lib) due to 4 previous errors; 5 warnings emitted

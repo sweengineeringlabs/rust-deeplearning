@@ -1,0 +1,223 @@
+   Compiling llmforge v0.1.0 (C:\phd-systems\swe-labs\rustml\experimentation\llmforge)
+warning: unused import: `LLMForgeError`
+ --> src\attention\mod.rs:2:20
+  |
+2 | use crate::error::{LLMForgeError, Result};
+  |                    ^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `crate::core::tensor::Tensor`
+ --> src\tokenization\mod.rs:3:5
+  |
+3 | use crate::core::tensor::Tensor;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unnecessary `unsafe` block
+   --> src\core\tensor.rs:207:19
+    |
+207 |         let a_t = unsafe { MatRef::<f32>::from_column_major_slice(lhs_data, K, M) };
+    |                   ^^^^^^ unnecessary `unsafe` block
+    |
+    = note: `#[warn(unused_unsafe)]` (part of `#[warn(unused)]`) on by default
+
+warning: unnecessary `unsafe` block
+   --> src\core\tensor.rs:208:19
+    |
+208 |         let b_t = unsafe { MatRef::<f32>::from_column_major_slice(rhs_data, N, K) };
+    |                   ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> src\core\tensor.rs:209:23
+    |
+209 |         let mut c_t = unsafe { MatMut::<f32>::from_column_major_slice(&mut out_data, N, M) };
+    |                       ^^^^^^ unnecessary `unsafe` block
+
+warning: unused variable: `out_shape`
+   --> src\core\tensor.rs:186:13
+    |
+186 |         let out_shape = vec![M, N];
+    |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_out_shape`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unnecessary `unsafe` block
+   --> src\core\tensor.rs:296:27
+    |
+296 |                 let a_t = unsafe { MatRef::<f32>::from_column_major_slice(lhs_chunk, K, M) };
+    |                           ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> src\core\tensor.rs:297:27
+    |
+297 |                 let b_t = unsafe { MatRef::<f32>::from_column_major_slice(rhs_chunk, N, K) };
+    |                           ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> src\core\tensor.rs:298:31
+    |
+298 |                 let mut c_t = unsafe { MatMut::<f32>::from_column_major_slice(out_chunk, N, M) };
+    |                               ^^^^^^ unnecessary `unsafe` block
+
+warning: unused variable: `num_rows`
+   --> src\core\tensor.rs:404:13
+    |
+404 |         let num_rows = input_data.len() / last_dim_size;
+    |             ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_num_rows`
+
+warning: unused variable: `b`
+  --> src\nn\mod.rs:60:21
+   |
+60 |         if let Some(b) = &self.bias {
+   |                     ^ help: if this is intentional, prefix it with an underscore: `_b`
+
+warning: unused variable: `indices`
+  --> src\nn\mod.rs:97:27
+   |
+97 |     pub fn forward(&self, indices: &Tensor) -> Result<Tensor> {
+   |                           ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_indices`
+
+warning: unused variable: `input`
+   --> src\nn\mod.rs:139:23
+    |
+139 |     fn forward(&self, input: &Tensor) -> Result<Tensor> {
+    |                       ^^^^^ help: if this is intentional, prefix it with an underscore: `_input`
+
+warning: field `device` is never read
+  --> src\core\tensor.rs:47:16
+   |
+41 | pub struct Tensor {
+   |            ------ field in this struct
+...
+47 |     pub(crate) device: String,
+   |                ^^^^^^
+   |
+   = note: `Tensor` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `hidden_dim` is never read
+ --> src\transformer\mod.rs:9:5
+  |
+6 | pub struct FeedForward {
+  |            ----------- field in this struct
+...
+9 |     hidden_dim: usize,
+  |     ^^^^^^^^^^
+
+warning: fields `attention_norm` and `ffn_norm` are never read
+  --> src\transformer\mod.rs:33:5
+   |
+30 | pub struct TransformerBlock {
+   |            ---------------- fields in this struct
+...
+33 |     attention_norm: LayerNorm,
+   |     ^^^^^^^^^^^^^^
+34 |     ffn_norm: LayerNorm,
+   |     ^^^^^^^^
+
+warning: field `merges` is never read
+  --> src\tokenization\mod.rs:15:5
+   |
+13 | pub struct BPETokenizer {
+   |            ------------ field in this struct
+14 |     vocab: HashMap<String, u32>,
+15 |     merges: Vec<(String, String)>,
+   |     ^^^^^^
+
+warning: variable `K` should have a snake case name
+   --> src\core\tensor.rs:139:18
+    |
+139 |              let K = self.shape[ndim - 1];
+    |                  ^ help: convert the identifier to snake case (notice the capitalization): `k`
+    |
+    = note: `#[warn(non_snake_case)]` (part of `#[warn(nonstandard_style)]`) on by default
+
+warning: variable `M` should have a snake case name
+   --> src\core\tensor.rs:140:18
+    |
+140 |              let M: usize = self.shape[0..ndim - 1].iter().product();
+    |                  ^ help: convert the identifier to snake case: `m`
+
+warning: variable `K2` should have a snake case name
+   --> src\core\tensor.rs:141:18
+    |
+141 |              let K2 = other.shape[0];
+    |                  ^^ help: convert the identifier to snake case (notice the capitalization): `k2`
+
+warning: variable `N` should have a snake case name
+   --> src\core\tensor.rs:142:18
+    |
+142 |              let N = other.shape[1];
+    |                  ^ help: convert the identifier to snake case: `n`
+
+warning: variable `M` should have a snake case name
+   --> src\core\tensor.rs:170:13
+    |
+170 |         let M = self.shape[0];
+    |             ^ help: convert the identifier to snake case: `m`
+
+warning: variable `K` should have a snake case name
+   --> src\core\tensor.rs:171:13
+    |
+171 |         let K = self.shape[1];
+    |             ^ help: convert the identifier to snake case (notice the capitalization): `k`
+
+warning: variable `K2` should have a snake case name
+   --> src\core\tensor.rs:172:13
+    |
+172 |         let K2 = other.shape[0];
+    |             ^^ help: convert the identifier to snake case (notice the capitalization): `k2`
+
+warning: variable `N` should have a snake case name
+   --> src\core\tensor.rs:173:13
+    |
+173 |         let N = other.shape[1];
+    |             ^ help: convert the identifier to snake case: `n`
+
+warning: variable `M` should have a snake case name
+   --> src\core\tensor.rs:255:13
+    |
+255 |         let M = self.shape[ndim - 2];
+    |             ^ help: convert the identifier to snake case: `m`
+
+warning: variable `K` should have a snake case name
+   --> src\core\tensor.rs:256:13
+    |
+256 |         let K = self.shape[ndim - 1];
+    |             ^ help: convert the identifier to snake case (notice the capitalization): `k`
+
+warning: variable `K2` should have a snake case name
+   --> src\core\tensor.rs:257:13
+    |
+257 |         let K2 = other.shape[ndim - 2];
+    |             ^^ help: convert the identifier to snake case (notice the capitalization): `k2`
+
+warning: variable `N` should have a snake case name
+   --> src\core\tensor.rs:258:13
+    |
+258 |         let N = other.shape[ndim - 1];
+    |             ^ help: convert the identifier to snake case: `n`
+
+warning: `llmforge` (lib) generated 29 warnings (run `cargo fix --lib -p llmforge` to apply 7 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15.99s
+     Running tests\inference_test.rs (target\debug\deps\inference_test-713368a7499a5c99.exe)
+
+running 1 test
+test test_end_to_end_flow ... FAILED
+
+failures:
+
+---- test_end_to_end_flow stdout ----
+Encoded tokens: [72, 101, 108, 108, 111, 32, 65, 73]
+
+thread 'test_end_to_end_flow' (74920) panicked at tests\inference_test.rs:59:47:
+Forward failed: NotImplemented("Embedding lookup")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    test_end_to_end_flow
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `--test inference_test`

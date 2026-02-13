@@ -1,0 +1,254 @@
+use crate::error::{LLMForgeError, Result};
+use super::dtype::{DType, Device, Shape};
+use std::sync::Arc;
+use std::fmt;
+use half::{bf16, f16};
+use smallvec::SmallVec;
+
+/// Safely convert a Vec<f32> into a Vec<u8> without unsafe code.
+/// Public within the crate so all modules can use it.
+pub(crate) fn f32_vec_to_bytes(v: Vec<f32>) -> Vec<u8> {
+    // try_cast_vec attempts zero-copy reinterpretation; if the allocator
+    // rejects the alignment change, fall back to a safe copy.
+    match bytemuck::try_cast_vec::<f32, u8>(v) {
+        Ok(bytes) => bytes,
+        Err((_, original)) => bytemuck::cast_slice::<f32, u8>(&original).to_vec(),
+    }
+}
+
+pub enum Storage {
+    Owned(Vec<u8>),
+    View { parent: Arc<Tensor>, offset: usize, len: usize },
+    MMap { mmap: Arc<memmap2::Mmap>, offset: usize, len: usize },
+}
+
+impl fmt::Debug for Storage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Storage::Owned(v) => write!(f, "Owned({} bytes)", v.len()),
+            Storage::View { offset, len, .. } => write!(f, "View(offset={}, len={})", offset, len),
+            Storage::MMap { offset, len, .. } => write!(f, "MMap(offset={}, len={})", offset, len),
+        }
+    }
+}
+
+/// Returns the total byte length of the given storage.
+pub(super) fn storage_byte_len(s: &Storage) -> usize {
+    match s {
+        Storage::Owned(v) => v.len(),
+        Storage::View { parent: _, offset: _, len } => *len,
+        Storage::MMap { mmap: _, offset: _, len } => *len,
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Tensor {
+    pub(crate) data: Arc<Storage>, // Arc for cheap cloning
+    pub(crate) shape: Shape,
+    pub(crate) strides: Shape,
+    pub(crate) dtype: DType,
+    pub(crate) device: Device,
+}
+
+impl Tensor {
+    pub fn new(data: Vec<u8>, shape: impl Into<Shape>, dtype: DType) -> Self {
+        let shape: Shape = shape.into();
+        let strides = Self::compute_strides(&shape);
+        Self {
+            data: Arc::new(Storage::Owned(data)),
+            shape,
+            strides,
+            dtype,
+            device: Device::Cpu,
+        }
+    }
+
+    pub fn from_mmap(mmap: Arc<memmap2::Mmap>, offset: usize, len: usize, shape: impl Into<Shape>, dtype: DType) -> Self {
+        let shape: Shape = shape.into();
+        let strides = Self::compute_strides(&shape);
+        Self {
+            data: Arc::new(Storage::MMap { mmap, offset, len }),
+            shape,
+            strides,
+            dtype,
+            device: Device::Cpu,
+        }
+    }
+
+    pub fn element_count(&self) -> usize {
+        self.shape.iter().product()
+    }
+
+    // Create a view with new shape/strides over existing data.
+    // Validates that the maximum addressable offset fits within the storage.
+    pub(crate) fn view(data: Arc<Storage>, shape: Shape, strides: Shape, dtype: DType) -> Result<Self> {
+        if !shape.is_empty() && dtype.size() > 0 {
+            let max_offset: usize = shape.iter().zip(strides.iter())
+                .filter(|(&s, _)| s > 0)
+                .map(|(&s, &st)| (s - 1) * st)
+                .sum();
+            let required_bytes = (max_offset + 1) * dtype.size();
+            let available = storage_byte_len(&data);
+            if required_bytes > available {
+                return Err(LLMForgeError::IndexOutOfBounds {
+                    index: required_bytes,
+                    dim: 0,
+                    size: available,
+                });
+            }
+        }
+        Ok(Self {
+            data,
+            shape,
+            strides,
+            dtype,
+            device: Device::Cpu,
+        })
+    }
+
+    pub fn zeros(shape: &[usize]) -> Self {
+        let size: usize = shape.iter().product();
+        let dtype = DType::F32; // Default
+        let bytes = vec![0u8; size * dtype.size()];
+        Self::new(bytes, SmallVec::from_slice(shape), dtype)
+    }
+
+    pub fn empty() -> Self {
+        Self::new(vec![], smallvec::smallvec![0usize], DType::F32)
+    }
+
+    pub(crate) fn compute_strides(shape: &[usize]) -> Shape {
+        let mut strides = smallvec::smallvec![1usize; shape.len()];
+        for i in (0..shape.len() - 1).rev() {
+            strides[i] = strides[i + 1] * shape[i + 1];
+        }
+        strides
+    }
+
+    pub fn shape(&self) -> &[usize] {
+        &self.shape
+    }
+
+    pub fn dtype(&self) -> DType {
+        self.dtype
+    }
+
+    // Helper to get f32 slice
+    pub fn as_slice_f32(&self) -> Result<&[f32]> {
+        if self.dtype != DType::F32 {
+            return Err(LLMForgeError::DTypeMismatch);
+        }
+
+        let bytes = self.as_raw_bytes()?;
+
+        if bytes.len() % 4 != 0 {
+            return Err(LLMForgeError::ShapeMismatch {
+                expected: vec![bytes.len() / 4],
+                actual: vec![bytes.len()]
+            });
+        }
+
+        // Try bytemuck first (safe, checks alignment); fall back to raw pointer
+        // if alignment doesn't match (e.g. some mmap offsets or Vec<u8> allocations).
+        match bytemuck::try_cast_slice(bytes) {
+            Ok(slice) => Ok(slice),
+            Err(_) => {
+                // SAFETY: dtype is F32 (checked above), byte length is verified
+                // as a multiple of 4, and the underlying data was originally written
+                // as f32 values. The pointer is valid for `len` f32 elements because
+                // bytes points to a live allocation of exactly `bytes.len()` bytes.
+                let len = bytes.len() / 4;
+                Ok(unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const f32, len) })
+            }
+        }
+    }
+
+    /// Returns raw byte slice from any Storage variant.
+    pub fn as_raw_bytes(&self) -> Result<&[u8]> {
+        match self.data.as_ref() {
+            Storage::Owned(v) => Ok(v.as_slice()),
+            Storage::View { parent, offset, len } => {
+                let parent_bytes = parent.as_raw_bytes()?;
+                Ok(&parent_bytes[*offset..*offset + *len])
+            }
+            Storage::MMap { mmap, offset, len } => {
+                Ok(&mmap[*offset..*offset + *len])
+            }
+        }
+    }
+
+    // SAFETY: Returns a raw pointer into the underlying storage. The caller
+    // must ensure the returned pointer is only used while `self` is alive and
+    // the pointed-to range is within bounds. Each variant's pointer arithmetic
+    // is sound because offsets are validated at construction time.
+    pub(super) unsafe fn as_ptr(&self) -> Result<*const u8> {
+        match self.data.as_ref() {
+            Storage::Owned(v) => Ok(v.as_ptr()),
+            Storage::View { parent, offset, .. } => Ok(parent.as_ptr()?.add(*offset)),
+            Storage::MMap { mmap, offset, .. } => Ok(mmap.as_ptr().add(*offset)),
+        }
+    }
+
+    // Convert to F32 tensor
+    pub fn to_f32(&self) -> Result<Tensor> {
+        match self.dtype {
+            DType::F32 => Ok(self.clone()),
+            DType::BF16 => {
+                let contiguous = if !self.is_contiguous() {
+                    self.contiguous()?
+                } else {
+                    self.clone()
+                };
+
+                let bytes = contiguous.as_raw_bytes()?;
+                let slice: &[bf16] = match bytemuck::try_cast_slice(bytes) {
+                    Ok(s) => s,
+                    Err(_) => {
+                        // SAFETY: dtype is BF16 (matched above), tensor is contiguous,
+                        // byte length is a multiple of 2 (bf16 size), and the data was
+                        // originally written as bf16 values. Pointer is valid for the
+                        // full allocation.
+                        let len = bytes.len() / 2;
+                        unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const bf16, len) }
+                    }
+                };
+
+                let data_f32: Vec<f32> = slice.iter().map(|x| x.to_f32()).collect();
+                let out_bytes = f32_vec_to_bytes(data_f32);
+
+                Ok(Tensor::new(out_bytes, contiguous.shape.clone(), DType::F32))
+            },
+            DType::F16 => {
+                let contiguous = if !self.is_contiguous() {
+                    self.contiguous()?
+                } else {
+                    self.clone()
+                };
+
+                let bytes = contiguous.as_raw_bytes()?;
+                let slice: &[f16] = match bytemuck::try_cast_slice(bytes) {
+                    Ok(s) => s,
+                    Err(_) => {
+                        // SAFETY: dtype is F16 (matched above), tensor is contiguous,
+                        // byte length is a multiple of 2 (f16 size), and the data was
+                        // originally written as f16 values. Pointer is valid for the
+                        // full allocation.
+                        let len = bytes.len() / 2;
+                        unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const f16, len) }
+                    }
+                };
+
+                let data_f32: Vec<f32> = slice.iter().map(|x| x.to_f32()).collect();
+                let out_bytes = f32_vec_to_bytes(data_f32);
+
+                Ok(Tensor::new(out_bytes, contiguous.shape.clone(), DType::F32))
+            },
+            _ => Err(LLMForgeError::NotImplemented(format!("Conversion from {:?} to F32", self.dtype))),
+        }
+    }
+
+    pub fn is_contiguous(&self) -> bool {
+        let default_strides = Self::compute_strides(&self.shape);
+        self.strides == default_strides
+    }
+}
