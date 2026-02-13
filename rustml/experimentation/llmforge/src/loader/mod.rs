@@ -1,4 +1,5 @@
 pub mod weight_map;
+pub mod gguf;
 pub use weight_map::WeightMap;
 
 use std::collections::HashMap;
@@ -22,6 +23,7 @@ fn dtype_to_byte(dtype: DType) -> u8 {
         DType::I8 => 3,
         DType::U8 => 4,
         DType::Q8_0 => 5,
+        DType::Q4_0 => 6,
     }
 }
 
@@ -33,11 +35,27 @@ fn byte_to_dtype(b: u8) -> Result<DType> {
         3 => Ok(DType::I8),
         4 => Ok(DType::U8),
         5 => Ok(DType::Q8_0),
+        6 => Ok(DType::Q4_0),
         _ => Err(LLMForgeError::UnknownDType(b)),
     }
 }
 
 impl ModelLoader {
+    /// Load a GGUF file, returning (ModelConfig, HashMap<String, Tensor>).
+    ///
+    /// Parses GGUF header for config metadata and loads tensor data.
+    /// Tensor names are mapped from GGUF conventions to LLMForge internal names.
+    pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<(crate::config::ModelConfig, HashMap<String, Tensor>)> {
+        let gguf = gguf::GGUFFile::parse_header(path.as_ref())?;
+        let config = gguf.to_model_config()?;
+        let raw_tensors = gguf.load_tensors(path.as_ref())?;
+
+        let weight_map = gguf::gguf_weight_map(config.n_layers);
+        let tensors = weight_map.remap(raw_tensors)?;
+
+        Ok((config, tensors))
+    }
+
     pub fn load_safetensors<P: AsRef<Path>>(path: P) -> Result<HashMap<String, Tensor>> {
         let file = File::open(path)?;
         // SAFETY: The file is opened read-only and lives for the duration of the

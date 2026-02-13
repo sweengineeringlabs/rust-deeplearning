@@ -74,9 +74,9 @@ impl Tensor {
             return Ok(self.clone());
         }
 
-        if self.dtype == DType::Q8_0 {
+        if matches!(self.dtype, DType::Q8_0 | DType::Q4_0) {
             return Err(LLMForgeError::NotImplemented(
-                "Cannot make Q8_0 tensors contiguous via element-wise copy".into()
+                "Cannot make quantized tensors contiguous via element-wise copy".into()
             ));
         }
 
@@ -165,6 +165,44 @@ impl Tensor {
         let out_bytes = f32_vec_to_bytes(dest_data);
 
         Ok(Self::new(out_bytes, new_shape, self.dtype))
+    }
+
+    /// Slice rows from a 2D tensor: returns tensor[start..end, :].
+    ///
+    /// Input shape: [rows, cols] → Output shape: [end-start, cols].
+    /// Creates a new owned tensor with copied data.
+    pub fn slice_rows(&self, start: usize, end: usize) -> Result<Tensor> {
+        if self.shape.len() != 2 {
+            return Err(LLMForgeError::ShapeMismatch {
+                expected: vec![2],
+                actual: vec![self.shape.len()],
+            });
+        }
+
+        let rows = self.shape[0];
+        let cols = self.shape[1];
+
+        if start > end || end > rows {
+            return Err(LLMForgeError::IndexOutOfBounds {
+                index: end,
+                dim: 0,
+                size: rows,
+            });
+        }
+
+        let n_rows = end - start;
+        let data = self.as_slice_f32()?;
+        let mut out = Vec::with_capacity(n_rows * cols);
+
+        for r in start..end {
+            let row_start = r * self.strides[0];
+            for c in 0..cols {
+                out.push(data[row_start + c * self.strides[1]]);
+            }
+        }
+
+        let out_bytes = f32_vec_to_bytes(out);
+        Ok(Self::new(out_bytes, vec![n_rows, cols], self.dtype))
     }
 
     pub fn slice_assign_sequence(&mut self, start: usize, source: &Tensor) -> Result<()> {

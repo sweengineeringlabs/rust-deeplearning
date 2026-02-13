@@ -103,7 +103,11 @@ impl LlmModel {
 
         // Positional embedding: only for Learned
         let pos_embedding = if position_encoding == PositionEncoding::Learned {
-            Some(Embedding::new(max_seq_len, d_model))
+            if let Ok(pos_weight) = get_tensor("pos_embedding.weight") {
+                Some(Embedding::from_weights(pos_weight))
+            } else {
+                Some(Embedding::new(max_seq_len, d_model))
+            }
         } else {
             None
         };
@@ -168,6 +172,135 @@ impl LlmModel {
 
         // Output projection
         let output = Linear::from_weights(get_tensor("output.weight")?, None);
+
+        Ok(Self {
+            token_embedding,
+            pos_embedding,
+            layers,
+            norm,
+            output,
+            d_model,
+            vocab_size,
+            max_seq_len,
+            n_layers: num_layers,
+            n_heads: num_heads,
+            n_kv_heads,
+            position_encoding,
+        })
+    }
+
+    /// Construct GPT-2 model from pre-loaded and remapped weights.
+    ///
+    /// Handles GPT-2 specifics:
+    /// - Tied embeddings: output weight = token_embedding weight (clone)
+    /// - Fused QKV: c_attn split into separate Q/K/V projections
+    /// - Positional embedding loaded from weights
+    /// - LayerNorm with bias
+    /// - GELU activation (no gate_proj)
+    pub fn from_pretrained_gpt2(config: &crate::config::ModelConfig, weights: HashMap<String, Tensor>) -> Result<Self> {
+        let d_model = config.dim;
+        let num_heads = config.n_heads;
+        let num_layers = config.n_layers;
+        let vocab_size = config.vocab_size;
+        let max_seq_len = config.max_seq_len;
+        let eps = config.norm_eps;
+        let n_kv_heads = config.n_kv_heads.unwrap_or(num_heads);
+        let position_encoding = config.position_encoding;
+        let causal = config.causal;
+        let rope_theta = config.rope_theta;
+
+        let get_tensor = |key: &str| -> Result<Tensor> {
+            weights.get(key)
+                .ok_or_else(|| LLMForgeError::NotImplemented(
+                    format!("Missing weight: {}", key)
+                ))
+                .and_then(|t| t.to_f32())
+        };
+
+        let get_tensor_opt = |key: &str| -> Option<Tensor> {
+            weights.get(key).and_then(|t| t.to_f32().ok())
+        };
+
+        // Token embedding
+        let token_embedding = Embedding::from_weights(get_tensor("token_embedding.weight")?);
+
+        // Positional embedding from weights
+        let pos_embedding = if position_encoding == PositionEncoding::Learned {
+            if let Ok(pos_weight) = get_tensor("pos_embedding.weight") {
+                Some(Embedding::from_weights(pos_weight))
+            } else {
+                Some(Embedding::new(max_seq_len, d_model))
+            }
+        } else {
+            None
+        };
+
+        // Transformer layers
+        let mut layers = Vec::with_capacity(num_layers);
+        for i in 0..num_layers {
+            // Split fused QKV
+            let c_attn_weight = get_tensor(&format!("layers.{}.attention.c_attn.weight", i))?;
+            let c_attn_bias = get_tensor_opt(&format!("layers.{}.attention.c_attn.bias", i));
+
+            let (q_w, k_w, v_w) = split_qkv(c_attn_weight, d_model)?;
+            let (q_b, k_b, v_b) = if let Some(bias) = c_attn_bias {
+                let (qb, kb, vb) = split_qkv_bias(bias, d_model)?;
+                (Some(qb), Some(kb), Some(vb))
+            } else {
+                (None, None, None)
+            };
+
+            let q_proj = Linear::from_weights(q_w, q_b);
+            let k_proj = Linear::from_weights(k_w, k_b);
+            let v_proj = Linear::from_weights(v_w, v_b);
+
+            let out_proj = Linear::from_weights(
+                get_tensor(&format!("layers.{}.attention.out_proj.weight", i))?,
+                get_tensor_opt(&format!("layers.{}.attention.out_proj.bias", i)),
+            );
+
+            let attention = MultiHeadAttention::from_weights(
+                d_model, num_heads, config.n_kv_heads,
+                q_proj, k_proj, v_proj, out_proj,
+                causal, position_encoding, max_seq_len, rope_theta,
+            )?;
+
+            // FFN (GELU, no gate_proj)
+            let up_proj = Linear::from_weights(
+                get_tensor(&format!("layers.{}.feed_forward.up_proj.weight", i))?,
+                get_tensor_opt(&format!("layers.{}.feed_forward.up_proj.bias", i)),
+            );
+            let down_proj = Linear::from_weights(
+                get_tensor(&format!("layers.{}.feed_forward.down_proj.weight", i))?,
+                get_tensor_opt(&format!("layers.{}.feed_forward.down_proj.bias", i)),
+            );
+            let feed_forward = FeedForward::from_weights_with_activation(up_proj, down_proj, Activation::Gelu);
+
+            // LayerNorm with bias
+            let attention_norm = LayerNorm::from_weights(
+                get_tensor(&format!("layers.{}.attention_norm.weight", i))?,
+                get_tensor(&format!("layers.{}.attention_norm.bias", i))?,
+                eps,
+            );
+            let ffn_norm = LayerNorm::from_weights(
+                get_tensor(&format!("layers.{}.ffn_norm.weight", i))?,
+                get_tensor(&format!("layers.{}.ffn_norm.bias", i))?,
+                eps,
+            );
+
+            layers.push(TransformerBlock::from_weights(attention, feed_forward, attention_norm, ffn_norm));
+        }
+
+        // Final norm with bias
+        let norm = LayerNorm::from_weights(
+            get_tensor("norm.weight")?,
+            get_tensor("norm.bias")?,
+            eps,
+        );
+
+        // Tied embeddings: output weight = token_embedding weight
+        let output_weight = token_embedding.weight.clone();
+        let output = Linear::from_weights(output_weight, None);
 
         Ok(Self {
             token_embedding,
@@ -303,4 +436,33 @@ impl LlmModel {
 
         (total, frozen)
     }
+}
+
+/// Split a fused QKV weight tensor [3*d_model, d_model] into three [d_model, d_model] tensors.
+fn split_qkv(qkv: Tensor, d_model: usize) -> Result<(Tensor, Tensor, Tensor)> {
+    let q = qkv.slice_rows(0, d_model)?;
+    let k = qkv.slice_rows(d_model, 2 * d_model)?;
+    let v = qkv.slice_rows(2 * d_model, 3 * d_model)?;
+    Ok((q, k, v))
+}
+
+/// Split a fused QKV bias tensor [3*d_model] into three [d_model] tensors.
+fn split_qkv_bias(qkv_bias: Tensor, d_model: usize) -> Result<(Tensor, Tensor, Tensor)> {
+    let data = qkv_bias.as_slice_f32()?;
+    if data.len() != 3 * d_model {
+        return Err(LLMForgeError::ShapeMismatch {
+            expected: vec![3 * d_model],
+            actual: vec![data.len()],
+        });
+    }
+
+    let q_data = crate::core::tensor::f32_vec_to_bytes(data[..d_model].to_vec());
+    let k_data = crate::core::tensor::f32_vec_to_bytes(data[d_model..2 * d_model].to_vec());
+    let v_data = crate::core::tensor::f32_vec_to_bytes(data[2 * d_model..].to_vec());
+
+    Ok((
+        Tensor::new(q_data, vec![d_model], DType::F32),
+        Tensor::new(k_data, vec![d_model], DType::F32),
+        Tensor::new(v_data, vec![d_model], DType::F32),
+    ))
 }

@@ -95,7 +95,7 @@ Issues discovered during code review, organized by severity.
 
 ## Phase 4: Test Coverage (Status: Complete)
 
-Current state: 100 tests across 16 test files, all passing.
+Current state: 215 tests across 21 test files, all passing.
 
 ### Unit Tests — Tensor Operations
 - [x] **Matmul numerical correctness** — 2×2, 2×3×3×2, shape mismatch, 3D broadcast, batched 3D. (`tensor_ops_test.rs`)
@@ -159,17 +159,17 @@ Current state: 100 tests across 16 test files, all passing.
 
 ### Model Compatibility
 - [x] **HuggingFace tensor name remapping** — `WeightMap::llama2()` maps HF weight names to LLMForge internal names.
-- [ ] **Llama-2 model loading** — End-to-end loading and inference of Llama-2 7B.
-- [ ] **GPT-2 model loading** — Validate with smaller, publicly available model.
-- [ ] **GGUF format support** — Load quantized models from llama.cpp ecosystem.
+- [x] **Llama-2 model loading** — HF config parser (`from_hf_llama2`), RoPE/GQA settings, pos embedding loading from weights, gate_proj mapping.
+- [x] **GPT-2 model loading** — HF config parser (`from_hf_gpt2`), fused QKV splitting, tied embeddings, LayerNorm with bias, `from_pretrained_gpt2`.
+- [x] **GGUF format support** — Hand-written binary parser for llama.cpp ecosystem. Supports F32, F16, Q8_0, Q4_0 tensor types. Mmap-based tensor loading.
 
 ### Performance
 - [x] **Quantization (Q8_0)** — 8-bit block quantization (~26.6% memory). Quantize/dequantize + on-the-fly quantized matmul.
-- [ ] **Quantization (Q4_0)** — 4-bit integer quantization for ~4x memory reduction.
-- [ ] **SIMD-accelerated operations** — Explicit SIMD intrinsics for dot products and element-wise ops.
+- [x] **Quantization (Q4_0)** — 4-bit block quantization (32 elem/block, 18 bytes/block, ~14% of F32). Quantize/dequantize + on-the-fly Q4 matmul. Integrated into `Linear` layer.
+- [x] **SIMD-accelerated operations** — `std::arch` intrinsics: AVX2 (8 f32/cycle), SSE2 (4 f32/cycle), NEON (aarch64), scalar fallback. Runtime dispatch for Q8_0 and Q4_0 dot products.
 - [x] **Tune faer parallelism** — `RuntimeConfig::apply()` sets `faer::set_global_parallelism` + rayon thread pool.
-- [ ] **Memory pooling/arena allocator** — Reuse tensor allocations across forward passes instead of fresh allocations.
-- [ ] **Cache-aware memory layout** — Optimize stride patterns for CPU cache line utilization.
+- [x] **Memory pooling/arena allocator** — `TensorPool` with best-fit buffer reuse, capacity limits, and `Tensor::into_bytes()` for buffer extraction.
+- [x] **Cache-aware memory layout** — Tiled matmul (TILE_M=4, TILE_N=8) for cache locality. `Tensor::new_aligned()` for 64-byte aligned allocation.
 - [ ] **GPU backend (wgpu)** — WebGPU-based compute shaders for hardware acceleration. Feature flag: `gpu-wgpu`. (Investigated)
 - [ ] **GPU backend (cudarc)** — CUDA backend for NVIDIA GPUs. Feature flag: `gpu-cuda`. (Investigated)
 

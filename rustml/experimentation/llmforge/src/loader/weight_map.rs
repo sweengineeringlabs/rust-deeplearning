@@ -8,6 +8,11 @@ pub struct WeightMap {
 }
 
 impl WeightMap {
+    /// Construct a WeightMap from an existing mapping HashMap.
+    pub fn from_mapping(mapping: HashMap<String, String>) -> Self {
+        Self { mapping }
+    }
+
     /// Build a weight mapping for Llama-2 style models.
     ///
     /// Produces 3 global mappings + 8 per layer:
@@ -131,6 +136,89 @@ impl WeightMap {
                 format!("Missing required weights: {}", missing.join(", "))
             ))
         }
+    }
+
+    /// Build a weight mapping for GPT-2 style models.
+    ///
+    /// GPT-2 HF naming conventions:
+    /// - `wte.weight` → `token_embedding.weight`
+    /// - `wpe.weight` → `pos_embedding.weight`
+    /// - `ln_f.weight/bias` → `norm.weight/bias`
+    /// - `h.{i}.ln_1.weight/bias` → `layers.{i}.attention_norm.weight/bias`
+    /// - `h.{i}.ln_2.weight/bias` → `layers.{i}.ffn_norm.weight/bias`
+    /// - `h.{i}.attn.c_attn.weight/bias` → `layers.{i}.attention.c_attn.weight/bias` (fused QKV)
+    /// - `h.{i}.attn.c_proj.weight/bias` → `layers.{i}.attention.out_proj.weight/bias`
+    /// - `h.{i}.mlp.c_fc.weight/bias` → `layers.{i}.feed_forward.up_proj.weight/bias`
+    /// - `h.{i}.mlp.c_proj.weight/bias` → `layers.{i}.feed_forward.down_proj.weight/bias`
+    pub fn gpt2(n_layers: usize) -> Self {
+        let mut mapping = HashMap::new();
+
+        // Global mappings
+        mapping.insert("wte.weight".to_string(), "token_embedding.weight".to_string());
+        mapping.insert("wpe.weight".to_string(), "pos_embedding.weight".to_string());
+        mapping.insert("ln_f.weight".to_string(), "norm.weight".to_string());
+        mapping.insert("ln_f.bias".to_string(), "norm.bias".to_string());
+
+        // Per-layer mappings
+        for i in 0..n_layers {
+            // Attention norms
+            mapping.insert(
+                format!("h.{}.ln_1.weight", i),
+                format!("layers.{}.attention_norm.weight", i),
+            );
+            mapping.insert(
+                format!("h.{}.ln_1.bias", i),
+                format!("layers.{}.attention_norm.bias", i),
+            );
+            mapping.insert(
+                format!("h.{}.ln_2.weight", i),
+                format!("layers.{}.ffn_norm.weight", i),
+            );
+            mapping.insert(
+                format!("h.{}.ln_2.bias", i),
+                format!("layers.{}.ffn_norm.bias", i),
+            );
+
+            // Fused QKV attention (split later)
+            mapping.insert(
+                format!("h.{}.attn.c_attn.weight", i),
+                format!("layers.{}.attention.c_attn.weight", i),
+            );
+            mapping.insert(
+                format!("h.{}.attn.c_attn.bias", i),
+                format!("layers.{}.attention.c_attn.bias", i),
+            );
+
+            // Output projection
+            mapping.insert(
+                format!("h.{}.attn.c_proj.weight", i),
+                format!("layers.{}.attention.out_proj.weight", i),
+            );
+            mapping.insert(
+                format!("h.{}.attn.c_proj.bias", i),
+                format!("layers.{}.attention.out_proj.bias", i),
+            );
+
+            // FFN
+            mapping.insert(
+                format!("h.{}.mlp.c_fc.weight", i),
+                format!("layers.{}.feed_forward.up_proj.weight", i),
+            );
+            mapping.insert(
+                format!("h.{}.mlp.c_fc.bias", i),
+                format!("layers.{}.feed_forward.up_proj.bias", i),
+            );
+            mapping.insert(
+                format!("h.{}.mlp.c_proj.weight", i),
+                format!("layers.{}.feed_forward.down_proj.weight", i),
+            );
+            mapping.insert(
+                format!("h.{}.mlp.c_proj.bias", i),
+                format!("layers.{}.feed_forward.down_proj.bias", i),
+            );
+        }
+
+        Self { mapping }
     }
 
     /// Returns the number of mappings.

@@ -27,6 +27,9 @@ pub enum DType {
     /// Block-quantized 8-bit format: 32 elements per block, 34 bytes per block
     /// (2-byte f16 scale + 32 i8 values). Not per-element sized.
     Q8_0,
+    /// Block-quantized 4-bit format: 32 elements per block, 18 bytes per block
+    /// (2-byte f16 scale + 16 bytes of packed 4-bit values). ~14% of F32 memory.
+    Q4_0,
 }
 
 impl DType {
@@ -36,6 +39,7 @@ impl DType {
             DType::F16 | DType::BF16 => 2,
             DType::I8 | DType::U8 => 1,
             DType::Q8_0 => 0, // Block-level sizing, not per-element
+            DType::Q4_0 => 0, // Block-level sizing, not per-element
         }
     }
 }

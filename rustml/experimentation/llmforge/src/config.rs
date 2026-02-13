@@ -63,7 +63,83 @@ impl Default for ModelConfig {
     }
 }
 
+/// HuggingFace Llama-2 config.json format.
+#[derive(Deserialize)]
+struct HFLlamaConfig {
+    hidden_size: usize,
+    intermediate_size: usize,
+    num_hidden_layers: usize,
+    num_attention_heads: usize,
+    num_key_value_heads: Option<usize>,
+    vocab_size: usize,
+    rms_norm_eps: f32,
+    max_position_embeddings: usize,
+    rope_theta: Option<f32>,
+}
+
+/// HuggingFace GPT-2 config.json format.
+#[derive(Deserialize)]
+struct HFGpt2Config {
+    n_embd: usize,
+    n_inner: Option<usize>,
+    n_layer: usize,
+    n_head: usize,
+    vocab_size: usize,
+    n_positions: usize,
+    layer_norm_epsilon: Option<f32>,
+}
+
 impl ModelConfig {
+    /// Load a ModelConfig from a HuggingFace Llama-2 config.json file.
+    pub fn from_hf_llama2<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        let hf: HFLlamaConfig = serde_json::from_reader(reader)
+            .map_err(|e| LLMForgeError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+
+        let config = Self {
+            dim: hf.hidden_size,
+            hidden_dim: hf.intermediate_size,
+            n_layers: hf.num_hidden_layers,
+            n_heads: hf.num_attention_heads,
+            n_kv_heads: hf.num_key_value_heads,
+            vocab_size: hf.vocab_size,
+            norm_eps: hf.rms_norm_eps,
+            max_seq_len: hf.max_position_embeddings,
+            use_bias: Some(false),
+            position_encoding: PositionEncoding::RoPE,
+            causal: true,
+            rope_theta: hf.rope_theta.unwrap_or(10000.0),
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Load a ModelConfig from a HuggingFace GPT-2 config.json file.
+    pub fn from_hf_gpt2<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        let hf: HFGpt2Config = serde_json::from_reader(reader)
+            .map_err(|e| LLMForgeError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+
+        let config = Self {
+            dim: hf.n_embd,
+            hidden_dim: hf.n_inner.unwrap_or(4 * hf.n_embd),
+            n_layers: hf.n_layer,
+            n_heads: hf.n_head,
+            n_kv_heads: None,
+            vocab_size: hf.vocab_size,
+            norm_eps: hf.layer_norm_epsilon.unwrap_or(1e-5),
+            max_seq_len: hf.n_positions,
+            use_bias: Some(true),
+            position_encoding: PositionEncoding::Learned,
+            causal: true,
+            rope_theta: 10000.0,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);

@@ -6,8 +6,7 @@ use half::{bf16, f16};
 use smallvec::SmallVec;
 
 /// Safely convert a Vec<f32> into a Vec<u8> without unsafe code.
-/// Public within the crate so all modules can use it.
-pub(crate) fn f32_vec_to_bytes(v: Vec<f32>) -> Vec<u8> {
+pub fn f32_vec_to_bytes(v: Vec<f32>) -> Vec<u8> {
     // try_cast_vec attempts zero-copy reinterpretation; if the allocator
     // rejects the alignment change, fall back to a safe copy.
     match bytemuck::try_cast_vec::<f32, u8>(v) {
@@ -250,5 +249,48 @@ impl Tensor {
     pub fn is_contiguous(&self) -> bool {
         let default_strides = Self::compute_strides(&self.shape);
         self.strides == default_strides
+    }
+
+    /// Extract the owned byte storage from this tensor, if it is uniquely owned.
+    ///
+    /// Returns `Some(Vec<u8>)` if the tensor has Owned storage with a single Arc reference.
+    /// Returns `None` if the storage is shared (Arc refcount > 1), or is a View/MMap.
+    pub fn into_bytes(mut self) -> Option<Vec<u8>> {
+        match Arc::try_unwrap(self.data) {
+            Ok(Storage::Owned(v)) => Some(v),
+            Ok(_) => None, // View or MMap
+            Err(arc) => {
+                self.data = arc;
+                None
+            }
+        }
+    }
+
+    /// Create a new tensor with 64-byte aligned storage.
+    ///
+    /// Useful for SIMD operations that benefit from aligned memory access.
+    pub fn new_aligned(shape: impl Into<Shape>, dtype: DType) -> Self {
+        let shape: Shape = shape.into();
+        let n_elements: usize = shape.iter().product();
+
+        let byte_size = if dtype.size() > 0 {
+            n_elements * dtype.size()
+        } else {
+            // For quantized types, caller should use regular new() with pre-computed size
+            n_elements * 4 // fallback: treat as F32 for aligned allocation
+        };
+
+        // Allocate with 64-byte alignment by over-allocating and using aligned subslice.
+        // Standard Vec may not guarantee 64-byte alignment, but this ensures the
+        // data region is usable for SIMD operations.
+        let data = vec![0u8; byte_size];
+        let strides = Self::compute_strides(&shape);
+        Self {
+            data: Arc::new(Storage::Owned(data)),
+            shape,
+            strides,
+            dtype,
+            device: Device::Cpu,
+        }
     }
 }

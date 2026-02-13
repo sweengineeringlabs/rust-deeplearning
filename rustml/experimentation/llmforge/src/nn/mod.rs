@@ -60,9 +60,15 @@ impl Linear {
         Ok(())
     }
 
-    /// Returns true if the weight is in quantized (Q8_0) format.
+    /// Quantize this layer's weight to Q4_0 format in-place.
+    pub fn quantize_q4(&mut self) -> Result<()> {
+        self.weight = crate::quantization::quantize_tensor_q4(&self.weight)?;
+        Ok(())
+    }
+
+    /// Returns true if the weight is in a quantized format (Q8_0 or Q4_0).
     pub fn is_quantized(&self) -> bool {
-        self.weight.dtype == DType::Q8_0
+        matches!(self.weight.dtype, DType::Q8_0 | DType::Q4_0)
     }
 }
 
@@ -77,7 +83,9 @@ impl Layer for Linear {
         // Input: [..., In]
         // Weight: [Out, In]
         // Output: [..., Out]
-        let output = if self.is_quantized() {
+        let output = if self.weight.dtype == DType::Q4_0 {
+            crate::quantization::quantized_matmul_q4(input, &self.weight)?
+        } else if self.is_quantized() {
             crate::quantization::quantized_matmul(input, &self.weight)?
         } else {
             let w_t = self.weight.transpose(0, 1)?;
