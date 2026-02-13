@@ -69,6 +69,10 @@ impl WeightMap {
                 format!("model.layers.{}.mlp.down_proj.weight", i),
                 format!("layers.{}.feed_forward.down_proj.weight", i),
             );
+            mapping.insert(
+                format!("model.layers.{}.mlp.gate_proj.weight", i),
+                format!("layers.{}.feed_forward.gate_proj.weight", i),
+            );
         }
 
         Self { mapping }

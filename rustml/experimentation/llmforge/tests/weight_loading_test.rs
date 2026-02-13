@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use llmforge::core::tensor::{Tensor, DType};
 use llmforge::loader::WeightMap;
-use llmforge::config::ModelConfig;
+use llmforge::config::{ModelConfig, PositionEncoding};
 use llmforge::models::LlmModel;
 
 /// Helper: create a random F32 tensor of the given shape (zero-filled for simplicity).
@@ -11,16 +11,16 @@ fn make_tensor(shape: &[usize]) -> Tensor {
 
 #[test]
 fn weight_map_llama2_correct_count() {
-    // 3 global + 8 per layer
+    // 3 global + 9 per layer (including gate_proj)
     let n_layers = 4;
     let wmap = WeightMap::llama2(n_layers);
-    assert_eq!(wmap.len(), 3 + 8 * n_layers);
+    assert_eq!(wmap.len(), 3 + 9 * n_layers);
 }
 
 #[test]
 fn weight_map_llama2_single_layer_count() {
     let wmap = WeightMap::llama2(1);
-    assert_eq!(wmap.len(), 3 + 8);
+    assert_eq!(wmap.len(), 3 + 9);
 }
 
 #[test]
@@ -111,6 +111,9 @@ fn from_pretrained_produces_correct_output_shape() {
         norm_eps: 1e-6,
         max_seq_len: 64,
         use_bias: Some(false),
+        position_encoding: PositionEncoding::Learned,
+        causal: true,
+        rope_theta: 10000.0,
     };
 
     // Build internal-name weights for from_pretrained
@@ -152,6 +155,9 @@ fn from_pretrained_matches_new_output_shape() {
         norm_eps: 1e-6,
         max_seq_len: 64,
         use_bias: Some(false),
+        position_encoding: PositionEncoding::Learned,
+        causal: true,
+        rope_theta: 10000.0,
     };
 
     // Build from_pretrained model

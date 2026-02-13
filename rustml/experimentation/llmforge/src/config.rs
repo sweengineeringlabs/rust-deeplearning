@@ -4,6 +4,23 @@ use std::io::BufReader;
 use std::path::Path;
 use crate::error::{LLMForgeError, Result};
 
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PositionEncoding {
+    Learned,
+    #[serde(rename = "rope")]
+    RoPE,
+    #[serde(rename = "alibi")]
+    ALiBi,
+    None,
+}
+
+impl Default for PositionEncoding {
+    fn default() -> Self {
+        PositionEncoding::Learned
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct ModelConfig {
     pub dim: usize,
@@ -15,7 +32,17 @@ pub struct ModelConfig {
     pub norm_eps: f32,
     pub max_seq_len: usize,
     pub use_bias: Option<bool>, // Default false for Llama, true for others
+    #[serde(default = "default_position_encoding")]
+    pub position_encoding: PositionEncoding,
+    #[serde(default = "default_causal")]
+    pub causal: bool,
+    #[serde(default = "default_rope_theta")]
+    pub rope_theta: f32,
 }
+
+fn default_position_encoding() -> PositionEncoding { PositionEncoding::Learned }
+fn default_causal() -> bool { true }
+fn default_rope_theta() -> f32 { 10000.0 }
 
 impl Default for ModelConfig {
     fn default() -> Self {
@@ -29,6 +56,9 @@ impl Default for ModelConfig {
             norm_eps: 1e-6,
             max_seq_len: 2048,
             use_bias: Some(false),
+            position_encoding: PositionEncoding::Learned,
+            causal: true,
+            rope_theta: 10000.0,
         }
     }
 }
@@ -63,6 +93,16 @@ impl ModelConfig {
         }
         if self.max_seq_len == 0 {
             return Err(LLMForgeError::InvalidConfig("max_seq_len must be > 0".into()));
+        }
+        if let Some(n_kv) = self.n_kv_heads {
+            if n_kv == 0 {
+                return Err(LLMForgeError::InvalidConfig("n_kv_heads must be > 0".into()));
+            }
+            if self.n_heads % n_kv != 0 {
+                return Err(LLMForgeError::InvalidConfig(
+                    format!("n_heads ({}) must be divisible by n_kv_heads ({})", self.n_heads, n_kv)
+                ));
+            }
         }
         Ok(())
     }

@@ -1,4 +1,5 @@
 use llmforge::core::tensor::{Tensor, DType};
+use llmforge::config::PositionEncoding;
 use llmforge::attention::{MultiHeadAttention, KVCache};
 
 #[test]
@@ -9,7 +10,7 @@ fn test_mha_forward() {
     let num_heads = 4;
 
     // Create MHA
-    let mha = MultiHeadAttention::new(d_model, num_heads, false).unwrap();
+    let mha = MultiHeadAttention::new(d_model, num_heads, None, false, false, PositionEncoding::Learned, 128, 10000.0).unwrap();
 
     // Create random input: [Batch, Seq, D_model]
     let input = Tensor::new(
@@ -34,7 +35,7 @@ fn attention_output_shape_with_cache() {
     let head_dim = d_model / num_heads;
     let max_seq_len = 16;
 
-    let mha = MultiHeadAttention::new(d_model, num_heads, false).unwrap();
+    let mha = MultiHeadAttention::new(d_model, num_heads, None, false, false, PositionEncoding::Learned, 128, 10000.0).unwrap();
     let mut cache = KVCache::new(1, max_seq_len, head_dim, num_heads);
 
     // Prefill with seq_len=3
@@ -62,7 +63,7 @@ fn attention_deterministic_with_known_weights() {
     let d_model = 32;
     let num_heads = 4;
 
-    let mha = MultiHeadAttention::new(d_model, num_heads, false).unwrap();
+    let mha = MultiHeadAttention::new(d_model, num_heads, None, false, false, PositionEncoding::Learned, 128, 10000.0).unwrap();
 
     let input = Tensor::new(
         vec![0u8; 1 * 2 * d_model * 4],
@@ -138,7 +139,7 @@ fn kvcache_head_dim_mismatch_detected() {
     let num_heads = 4;
     let _head_dim = d_model / num_heads; // 8
 
-    let mha = MultiHeadAttention::new(d_model, num_heads, false).unwrap();
+    let mha = MultiHeadAttention::new(d_model, num_heads, None, false, false, PositionEncoding::Learned, 128, 10000.0).unwrap();
 
     // Cache with wrong head_dim (16 instead of 8)
     let mut cache = KVCache::new(1, 16, 16, num_heads);
@@ -161,7 +162,7 @@ fn multi_head_splits_dimension_correctly() {
     // d_model=32, num_heads=4 -> head_dim=8
     let d_model = 32;
     let num_heads = 4;
-    let mha = MultiHeadAttention::new(d_model, num_heads, false).unwrap();
+    let mha = MultiHeadAttention::new(d_model, num_heads, None, false, false, PositionEncoding::Learned, 128, 10000.0).unwrap();
 
     // Verify through a forward pass (if head splitting were wrong, forward would fail)
     let input = Tensor::new(
@@ -173,6 +174,6 @@ fn multi_head_splits_dimension_correctly() {
     assert_eq!(output.shape(), &[1, 2, d_model]);
 
     // d_model=7, num_heads=3 -> should error (7 % 3 != 0)
-    let result = MultiHeadAttention::new(7, 3, false);
+    let result = MultiHeadAttention::new(7, 3, None, false, false, PositionEncoding::Learned, 128, 10000.0);
     assert!(result.is_err(), "Expected error for non-divisible d_model/num_heads");
 }

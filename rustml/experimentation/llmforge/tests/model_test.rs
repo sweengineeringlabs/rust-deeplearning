@@ -1,6 +1,6 @@
 use llmforge::core::tensor::{Tensor, DType};
 use llmforge::models::LlmModel;
-use llmforge::config::ModelConfig;
+use llmforge::config::{ModelConfig, PositionEncoding};
 
 #[test]
 fn test_lldm_model_forward() {
@@ -19,6 +19,9 @@ fn test_lldm_model_forward() {
         norm_eps: 1e-5,
         max_seq_len: 128,
         use_bias: Some(true),
+        position_encoding: PositionEncoding::Learned,
+        causal: true,
+        rope_theta: 10000.0,
     };
     
     // Create Model

@@ -7,9 +7,17 @@ pub trait Layer {
     fn forward(&self, input: &Tensor) -> Result<Tensor>;
 }
 
+/// Trait for layers that support parameter freezing (for fine-tuning).
+pub trait Freezable {
+    fn is_frozen(&self) -> bool;
+    fn freeze(&mut self);
+    fn unfreeze(&mut self);
+}
+
 pub struct Linear {
     pub weight: Tensor,
     pub bias: Option<Tensor>,
+    pub frozen: bool,
 }
 
 impl Linear {
@@ -37,12 +45,13 @@ impl Linear {
         Self {
             weight,
             bias: bias_tensor,
+            frozen: false,
         }
     }
 
     /// Construct a Linear layer from pre-loaded weight and optional bias tensors.
     pub fn from_weights(weight: Tensor, bias: Option<Tensor>) -> Self {
-        Self { weight, bias }
+        Self { weight, bias, frozen: false }
     }
 
     /// Quantize this layer's weight to Q8_0 format in-place.
@@ -55,6 +64,12 @@ impl Linear {
     pub fn is_quantized(&self) -> bool {
         self.weight.dtype == DType::Q8_0
     }
+}
+
+impl Freezable for Linear {
+    fn is_frozen(&self) -> bool { self.frozen }
+    fn freeze(&mut self) { self.frozen = true; }
+    fn unfreeze(&mut self) { self.frozen = false; }
 }
 
 impl Layer for Linear {
@@ -81,6 +96,7 @@ pub struct Embedding {
     pub weight: Tensor,
     pub num_embeddings: usize,
     pub embedding_dim: usize,
+    pub frozen: bool,
 }
 
 impl Embedding {
@@ -100,6 +116,7 @@ impl Embedding {
              weight,
              num_embeddings,
              embedding_dim,
+             frozen: false,
          }
     }
 
@@ -108,7 +125,7 @@ impl Embedding {
     pub fn from_weights(weight: Tensor) -> Self {
         let num_embeddings = weight.shape()[0];
         let embedding_dim = weight.shape()[1];
-        Self { weight, num_embeddings, embedding_dim }
+        Self { weight, num_embeddings, embedding_dim, frozen: false }
     }
 
     pub fn forward(&self, indices: &Tensor) -> Result<Tensor> {
@@ -142,11 +159,18 @@ impl Embedding {
     }
 }
 
+impl Freezable for Embedding {
+    fn is_frozen(&self) -> bool { self.frozen }
+    fn freeze(&mut self) { self.frozen = true; }
+    fn unfreeze(&mut self) { self.frozen = false; }
+}
+
 pub struct LayerNorm {
     pub weight: Tensor,
     pub bias: Tensor,
     pub eps: f32,
     pub normalized_shape: Vec<usize>,
+    pub frozen: bool,
 }
 
 impl LayerNorm {
@@ -167,13 +191,14 @@ impl LayerNorm {
             bias,
             eps,
             normalized_shape,
+            frozen: false,
         }
     }
 
     /// Construct a LayerNorm from pre-loaded weight and bias tensors.
     pub fn from_weights(weight: Tensor, bias: Tensor, eps: f32) -> Self {
         let normalized_shape = weight.shape().to_vec();
-        Self { weight, bias, eps, normalized_shape }
+        Self { weight, bias, eps, normalized_shape, frozen: false }
     }
 
     /// Construct a LayerNorm from weight only (zero bias).
@@ -181,8 +206,14 @@ impl LayerNorm {
     pub fn from_weight_only(weight: Tensor, eps: f32) -> Self {
         let normalized_shape = weight.shape().to_vec();
         let bias = Tensor::zeros(&normalized_shape);
-        Self { weight, bias, eps, normalized_shape }
+        Self { weight, bias, eps, normalized_shape, frozen: false }
     }
+}
+
+impl Freezable for LayerNorm {
+    fn is_frozen(&self) -> bool { self.frozen }
+    fn freeze(&mut self) { self.frozen = true; }
+    fn unfreeze(&mut self) { self.frozen = false; }
 }
 
 impl Layer for LayerNorm {

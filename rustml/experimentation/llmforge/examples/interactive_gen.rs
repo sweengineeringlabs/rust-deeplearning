@@ -1,6 +1,6 @@
 use llmforge::inference::Generator;
 use llmforge::models::LlmModel;
-use llmforge::config::ModelConfig;
+use llmforge::config::{ModelConfig, PositionEncoding};
 use llmforge::tokenization::NaiveTokenizer;
 use std::io::{self, Write};
 
@@ -18,6 +18,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         norm_eps: 1e-5,
          max_seq_len: 128,
         use_bias: Some(true),
+        position_encoding: PositionEncoding::Learned,
+        causal: true,
+        rope_theta: 10000.0,
     };
     
     let tokenizer = NaiveTokenizer::new();

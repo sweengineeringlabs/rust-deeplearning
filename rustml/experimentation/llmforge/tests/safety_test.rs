@@ -1,5 +1,5 @@
 use llmforge::core::tensor::{Tensor, DType};
-use llmforge::config::ModelConfig;
+use llmforge::config::{ModelConfig, PositionEncoding};
 use llmforge::attention::{MultiHeadAttention, KVCache};
 use llmforge::tokenization::{NaiveTokenizer, Tokenizer};
 use llmforge::transformer::{FeedForward, Activation};
@@ -55,6 +55,9 @@ fn config_validate_dim_zero_fails() {
         norm_eps: 1e-5,
         max_seq_len: 128,
         use_bias: None,
+        position_encoding: PositionEncoding::Learned,
+        causal: true,
+        rope_theta: 10000.0,
     };
     assert!(config.validate().is_err());
 }
@@ -71,6 +74,9 @@ fn config_validate_n_heads_zero_fails() {
         norm_eps: 1e-5,
         max_seq_len: 128,
         use_bias: None,
+        position_encoding: PositionEncoding::Learned,
+        causal: true,
+        rope_theta: 10000.0,
     };
     assert!(config.validate().is_err());
 }
@@ -87,6 +93,9 @@ fn config_validate_dim_not_divisible_by_heads_fails() {
         norm_eps: 1e-5,
         max_seq_len: 128,
         use_bias: None,
+        position_encoding: PositionEncoding::Learned,
+        causal: true,
+        rope_theta: 10000.0,
     };
     assert!(config.validate().is_err());
 }
@@ -103,6 +112,9 @@ fn config_validate_valid_config_passes() {
         norm_eps: 1e-5,
         max_seq_len: 128,
         use_bias: None,
+        position_encoding: PositionEncoding::Learned,
+        causal: true,
+        rope_theta: 10000.0,
     };
     assert!(config.validate().is_ok());
 }
@@ -139,14 +151,14 @@ fn naive_tokenizer_ascii_roundtrip() {
 #[test]
 fn mha_new_invalid_divisibility() {
     // d_model=33, num_heads=4 → 33 % 4 != 0 → should return Err
-    let result = MultiHeadAttention::new(33, 4, false);
+    let result = MultiHeadAttention::new(33, 4, None, false, false, PositionEncoding::Learned, 128, 10000.0);
     assert!(result.is_err(), "Expected error when d_model % num_heads != 0");
 }
 
 #[test]
 fn mha_new_valid_divisibility() {
     // d_model=64, num_heads=4 → 64 % 4 == 0 → should be Ok
-    let result = MultiHeadAttention::new(64, 4, false);
+    let result = MultiHeadAttention::new(64, 4, None, false, false, PositionEncoding::Learned, 128, 10000.0);
     assert!(result.is_ok());
 }
 
@@ -179,6 +191,9 @@ fn generator_eos_field_exists() {
         norm_eps: 1e-5,
         max_seq_len: 128,
         use_bias: Some(true),
+        position_encoding: PositionEncoding::Learned,
+        causal: true,
+        rope_theta: 10000.0,
     };
     let model = LlmModel::new(&config).unwrap();
     let tokenizer = NaiveTokenizer::new();
@@ -205,6 +220,9 @@ fn temperature_zero_is_deterministic() {
         norm_eps: 1e-5,
         max_seq_len: 128,
         use_bias: Some(true),
+        position_encoding: PositionEncoding::Learned,
+        causal: true,
+        rope_theta: 10000.0,
     };
     let model = LlmModel::new(&config).unwrap();
     let tokenizer = NaiveTokenizer::new();
@@ -291,7 +309,7 @@ fn kvcache_head_dim_mismatch_returns_error() {
     let num_heads = 4;
     let _head_dim = d_model / num_heads; // 8
 
-    let mha = MultiHeadAttention::new(d_model, num_heads, false).unwrap();
+    let mha = MultiHeadAttention::new(d_model, num_heads, None, false, false, PositionEncoding::Learned, 128, 10000.0).unwrap();
 
     // Create cache with wrong head_dim (16 instead of 8)
     let mut cache = KVCache::new(1, 64, 16, num_heads);

@@ -1,4 +1,5 @@
 use llmforge::core::tensor::{Tensor, DType};
+use llmforge::config::PositionEncoding;
 use llmforge::transformer::TransformerBlock;
 
 #[test]
@@ -8,14 +9,19 @@ fn test_transformer_block_forward() {
     let d_model = 32;
     let num_heads = 4;
     let hidden_dim = 64;
-    
+
     // Create Transformer Block
     let block = TransformerBlock::new(
         d_model,
         num_heads,
+        None,
         hidden_dim,
         true, // bias
         1e-5, // eps
+        false,
+        PositionEncoding::Learned,
+        128,
+        10000.0,
     ).unwrap();
     
     // Create random input: [Batch, Seq, D_model]

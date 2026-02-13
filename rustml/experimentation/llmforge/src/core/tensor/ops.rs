@@ -290,6 +290,138 @@ impl Tensor {
         Ok(Tensor::new(out_bytes, self.shape.clone(), self.dtype))
     }
 
+    // Element-wise multiplication with broadcasting support
+    pub fn mul(&self, other: &Tensor) -> Result<Tensor> {
+        let lhs_data = self.as_slice_f32()?;
+        let rhs_data = other.as_slice_f32()?;
+
+        let lhs_len = lhs_data.len();
+        let rhs_len = rhs_data.len();
+
+        let mut out_data = Vec::with_capacity(lhs_len);
+
+        if lhs_len == rhs_len {
+            for (a, b) in lhs_data.iter().zip(rhs_data.iter()) {
+                out_data.push(a * b);
+            }
+        } else if rhs_len > 0 && lhs_len % rhs_len == 0 {
+            if !is_valid_broadcast(&self.shape, &other.shape) {
+                return Err(LLMForgeError::ShapeMismatch {
+                    expected: self.shape.to_vec(),
+                    actual: other.shape.to_vec(),
+                });
+            }
+            for (i, &a) in lhs_data.iter().enumerate() {
+                out_data.push(a * rhs_data[i % rhs_len]);
+            }
+        } else {
+            return Err(LLMForgeError::ShapeMismatch {
+                expected: self.shape.to_vec(),
+                actual: other.shape.to_vec(),
+            });
+        }
+
+        let out_bytes = f32_vec_to_bytes(out_data);
+        Ok(Tensor::new(out_bytes, self.shape.clone(), self.dtype))
+    }
+
+    // Element-wise cosine
+    pub fn cos(&self) -> Result<Tensor> {
+        let input_data = self.as_slice_f32()?;
+        let mut out_data = Vec::with_capacity(input_data.len());
+        for &x in input_data {
+            out_data.push(x.cos());
+        }
+        let out_bytes = f32_vec_to_bytes(out_data);
+        Ok(Tensor::new(out_bytes, self.shape.clone(), self.dtype))
+    }
+
+    // Element-wise sine
+    pub fn sin(&self) -> Result<Tensor> {
+        let input_data = self.as_slice_f32()?;
+        let mut out_data = Vec::with_capacity(input_data.len());
+        for &x in input_data {
+            out_data.push(x.sin());
+        }
+        let out_bytes = f32_vec_to_bytes(out_data);
+        Ok(Tensor::new(out_bytes, self.shape.clone(), self.dtype))
+    }
+
+    // Element-wise negation
+    pub fn neg(&self) -> Result<Tensor> {
+        let input_data = self.as_slice_f32()?;
+        let mut out_data = Vec::with_capacity(input_data.len());
+        for &x in input_data {
+            out_data.push(-x);
+        }
+        let out_bytes = f32_vec_to_bytes(out_data);
+        Ok(Tensor::new(out_bytes, self.shape.clone(), self.dtype))
+    }
+
+    pub fn mul_scalar(&self, scalar: f32) -> Result<Tensor> {
+        let input_data = self.as_slice_f32()?;
+        let mut out_data = Vec::with_capacity(input_data.len());
+        for &val in input_data {
+            out_data.push(val * scalar);
+        }
+        let out_bytes = f32_vec_to_bytes(out_data);
+        Ok(Tensor::new(out_bytes, self.shape.clone(), self.dtype))
+    }
+
+    /// Repeat KV heads for GQA: [B, n_kv_heads, S, D] -> [B, n_kv_heads*n_rep, S, D]
+    pub fn repeat_kv(&self, n_rep: usize) -> Result<Tensor> {
+        if n_rep == 1 {
+            return Ok(self.clone());
+        }
+        if self.shape.len() != 4 {
+            return Err(LLMForgeError::ShapeMismatch {
+                expected: vec![4],
+                actual: vec![self.shape.len()],
+            });
+        }
+
+        let batch = self.shape[0];
+        let n_kv_heads = self.shape[1];
+        let seq_len = self.shape[2];
+        let head_dim = self.shape[3];
+
+        let input_data = self.as_slice_f32()?;
+        let out_heads = n_kv_heads * n_rep;
+        let mut out_data = Vec::with_capacity(batch * out_heads * seq_len * head_dim);
+
+        let head_size = seq_len * head_dim;
+        for b in 0..batch {
+            for h in 0..n_kv_heads {
+                let start = (b * n_kv_heads + h) * head_size;
+                let head_data = &input_data[start..start + head_size];
+                for _ in 0..n_rep {
+                    out_data.extend_from_slice(head_data);
+                }
+            }
+        }
+
+        let out_bytes = f32_vec_to_bytes(out_data);
+        Ok(Tensor::new(out_bytes, smallvec![batch, out_heads, seq_len, head_dim], DType::F32))
+    }
+
+    /// Create a causal attention mask: [1, 1, seq_len, total_len]
+    /// Returns 0.0 for allowed positions and NEG_INFINITY for masked positions.
+    pub fn causal_mask(seq_len: usize, total_len: usize) -> Tensor {
+        let mut data = Vec::with_capacity(seq_len * total_len);
+        let offset = total_len - seq_len;
+        for i in 0..seq_len {
+            for j in 0..total_len {
+                if j <= i + offset {
+                    data.push(0.0f32);
+                } else {
+                    data.push(f32::NEG_INFINITY);
+                }
+            }
+        }
+        let out_bytes = f32_vec_to_bytes(data);
+        Tensor::new(out_bytes, smallvec![1usize, 1, seq_len, total_len], DType::F32)
+    }
+
     // Softmax along last dimension
     pub fn softmax(&self, axis: isize) -> Result<Tensor> {
         let ndim = self.shape.len();

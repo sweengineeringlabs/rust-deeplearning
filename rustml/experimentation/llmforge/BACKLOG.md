@@ -140,22 +140,22 @@ Current state: 100 tests across 16 test files, all passing.
 
 ## Phase 5: Feature Enhancements
 
-### Sampling & Generation
-- [ ] **Top-k sampling** — Select from top-k highest probability tokens.
-- [ ] **Nucleus (top-p) sampling** — Select from smallest set exceeding cumulative probability p.
-- [ ] **Repetition penalty** — Penalize tokens that appear in recent context.
-- [ ] **Beam search** — Maintain k candidate sequences; return highest scoring.
-- [ ] **Streaming generation** — Yield tokens as they are generated (callback or async iterator).
-- [ ] **Batch generation** — Process multiple prompts in parallel.
+### Sampling & Generation (Status: Complete)
+- [x] **Top-k sampling** — Select from top-k highest probability tokens. Builder: `with_top_k(k)`.
+- [x] **Nucleus (top-p) sampling** — Select from smallest set exceeding cumulative probability p. Builder: `with_top_p(p)`.
+- [x] **Repetition penalty** — Penalize tokens that appear in recent context (HF convention: divide positive, multiply negative). Builder: `with_repetition_penalty(penalty)`.
+- [x] **Beam search** — `generate_beam(prompt, max_tokens, beam_width)` with per-beam `KVCache::deep_clone()`.
+- [x] **Streaming generation** — `generate_stream(prompt, max_tokens, callback)` with `FnMut(u32) -> bool` closure.
+- [x] **Batch generation** — `generate_batch(prompts, max_tokens)` sequential per-prompt generation.
 
-### Model Architecture
-- [ ] **RoPE positional encoding** — Replace absolute positional embeddings for better length extrapolation.
-- [ ] **ALiBi positional bias** — Alternative to RoPE; no learned parameters.
-- [ ] **SwiGLU activation** — Required for Llama-family model compatibility.
-- [ ] **Grouped-Query Attention (GQA)** — Wire `n_kv_heads` config into attention; share K/V heads across Q heads.
-- [ ] **Causal attention mask support** — Explicit mask tensor instead of implicit full attention.
-- [ ] **Cross-attention support** — For encoder-decoder architectures.
-- [ ] **Parameter freezing API** — Freeze embeddings or early layers for fine-tuning.
+### Model Architecture (Status: Complete)
+- [x] **RoPE positional encoding** — `RoPEFreqs` precomputes cos/sin tables; applied to Q/K before cache update. Configurable via `PositionEncoding::RoPE` and `rope_theta`.
+- [x] **ALiBi positional bias** — Additive bias with geometric slopes `2^(-8h/H)`. Naturally includes causal masking. Configurable via `PositionEncoding::ALiBi`.
+- [x] **SwiGLU activation** — `Activation::SwiGLU` variant + `gate_proj: Option<Linear>` on `FeedForward`. Forward: `down_proj(silu(gate_proj(x)) * up_proj(x))`.
+- [x] **Grouped-Query Attention (GQA)** — K/V projections sized to `n_kv_heads * head_dim`; `repeat_kv` expands K/V heads before matmul. Supports MQA (n_kv_heads=1).
+- [x] **Causal attention mask support** — `Tensor::causal_mask(seq_len, total_len)` produces `[1,1,S,T]` additive mask. Controlled by `causal: bool`. Skipped for seq_len=1.
+- [x] **Cross-attention support** — `CrossAttention` struct in `attention/cross.rs`. Q from decoder, K/V from encoder. Optional GQA. No causal mask.
+- [x] **Parameter freezing API** — `Freezable` trait on Linear/Embedding/LayerNorm. `LlmModel::freeze_embeddings()` and `parameter_count() -> (total, frozen)`.
 
 ### Model Compatibility
 - [x] **HuggingFace tensor name remapping** — `WeightMap::llama2()` maps HF weight names to LLMForge internal names.

@@ -1,7 +1,7 @@
 use llmforge::core::tensor::{Tensor, DType};
 use llmforge::models::LlmModel;
 use llmforge::tokenization::{Tokenizer, NaiveTokenizer};
-use llmforge::config::ModelConfig;
+use llmforge::config::{ModelConfig, PositionEncoding};
 use bytemuck;
 
 #[test]
@@ -42,6 +42,9 @@ fn test_end_to_end_flow() {
         norm_eps: 1e-5,
          max_seq_len: 128,
         use_bias: Some(true),
+        position_encoding: PositionEncoding::Learned,
+        causal: true,
+        rope_theta: 10000.0,
     };
     
     let model = LlmModel::new(&config).unwrap();

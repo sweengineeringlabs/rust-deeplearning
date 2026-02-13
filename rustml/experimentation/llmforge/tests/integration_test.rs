@@ -1,4 +1,4 @@
-use llmforge::config::ModelConfig;
+use llmforge::config::{ModelConfig, PositionEncoding};
 use llmforge::models::LlmModel;
 use llmforge::inference::Generator;
 use llmforge::tokenization::NaiveTokenizer;
@@ -16,6 +16,9 @@ fn tiny_config() -> ModelConfig {
         norm_eps: 1e-5,
         max_seq_len: 32,
         use_bias: Some(false),
+        position_encoding: PositionEncoding::Learned,
+        causal: true,
+        rope_theta: 10000.0,
     }
 }
 
@@ -62,6 +65,9 @@ fn long_context_fills_cache_then_errors() {
         norm_eps: 1e-5,
         max_seq_len: 8, // Very small
         use_bias: Some(false),
+        position_encoding: PositionEncoding::Learned,
+        causal: true,
+        rope_theta: 10000.0,
     };
     let model = LlmModel::new(&config).unwrap();
 
@@ -92,6 +98,9 @@ fn long_context_within_limit_succeeds() {
         norm_eps: 1e-5,
         max_seq_len: 16,
         use_bias: Some(false),
+        position_encoding: PositionEncoding::Learned,
+        causal: true,
+        rope_theta: 10000.0,
     };
     let model = LlmModel::new(&config).unwrap();
 
@@ -124,6 +133,9 @@ fn error_propagation_invalid_config() {
         norm_eps: 1e-5,
         max_seq_len: 32,
         use_bias: Some(false),
+        position_encoding: PositionEncoding::Learned,
+        causal: true,
+        rope_theta: 10000.0,
     };
     let result = config.validate();
     assert!(result.is_err(), "dim=0 should fail validation");
