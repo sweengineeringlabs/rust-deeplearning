@@ -33,6 +33,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         bos_token_id: None,
         eos_token_id: None,
         chat_template: None,
+        sliding_window: None,
+        attn_logit_cap: None,
+        embedding_scale: None,
+        rms_norm_offset: None,
+        attention_bias: None,
+        parallel_residual: None,
+        num_local_experts: None,
+        num_experts_per_tok: None,
     };
 
     let gpt2_model = LlmModel::new(&gpt2_config)?;
@@ -66,6 +74,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         bos_token_id: Some(1),
         eos_token_id: Some(2),
         chat_template: None,
+        sliding_window: None,
+        attn_logit_cap: None,
+        embedding_scale: None,
+        rms_norm_offset: None,
+        attention_bias: None,
+        parallel_residual: None,
+        num_local_experts: None,
+        num_experts_per_tok: None,
     };
 
     let llama_model = LlmModel::new(&llama_config)?;

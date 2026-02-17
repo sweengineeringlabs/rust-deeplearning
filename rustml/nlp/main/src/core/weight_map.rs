@@ -132,6 +132,134 @@ impl WeightMap {
         Self { mapping }
     }
 
+    /// Build a weight mapping for Llama-2 style models with attention bias (Qwen-2).
+    ///
+    /// Extends `llama2()` with Q/K/V/O `.bias` entries.
+    pub fn llama2_with_attn_bias(n_layers: usize) -> Self {
+        let mut base = Self::llama2(n_layers);
+        for i in 0..n_layers {
+            base.mapping.insert(
+                format!("model.layers.{}.self_attn.q_proj.bias", i),
+                format!("layers.{}.attention.q_proj.bias", i),
+            );
+            base.mapping.insert(
+                format!("model.layers.{}.self_attn.k_proj.bias", i),
+                format!("layers.{}.attention.k_proj.bias", i),
+            );
+            base.mapping.insert(
+                format!("model.layers.{}.self_attn.v_proj.bias", i),
+                format!("layers.{}.attention.v_proj.bias", i),
+            );
+            base.mapping.insert(
+                format!("model.layers.{}.self_attn.o_proj.bias", i),
+                format!("layers.{}.attention.out_proj.bias", i),
+            );
+        }
+        base
+    }
+
+    /// Build a weight mapping for Falcon models.
+    ///
+    /// Maps fused QKV, LayerNorm with bias, and parallel residual architecture.
+    pub fn falcon(n_layers: usize) -> Self {
+        let mut mapping = HashMap::new();
+
+        mapping.insert(
+            "transformer.word_embeddings.weight".into(),
+            "token_embedding.weight".into(),
+        );
+        mapping.insert("transformer.ln_f.weight".into(), "norm.weight".into());
+        mapping.insert("transformer.ln_f.bias".into(), "norm.bias".into());
+        mapping.insert("lm_head.weight".into(), "output.weight".into());
+
+        for i in 0..n_layers {
+            // Fused QKV
+            for suffix in &["weight", "bias"] {
+                mapping.insert(
+                    format!("transformer.h.{}.self_attention.query_key_value.{}", i, suffix),
+                    format!("layers.{}.attention.qkv.{}", i, suffix),
+                );
+                mapping.insert(
+                    format!("transformer.h.{}.self_attention.dense.{}", i, suffix),
+                    format!("layers.{}.attention.out_proj.{}", i, suffix),
+                );
+                mapping.insert(
+                    format!("transformer.h.{}.mlp.dense_h_to_4h.{}", i, suffix),
+                    format!("layers.{}.feed_forward.up_proj.{}", i, suffix),
+                );
+                mapping.insert(
+                    format!("transformer.h.{}.mlp.dense_4h_to_h.{}", i, suffix),
+                    format!("layers.{}.feed_forward.down_proj.{}", i, suffix),
+                );
+            }
+
+            // Attention norm (input_layernorm / ln_attn)
+            for suffix in &["weight", "bias"] {
+                mapping.insert(
+                    format!("transformer.h.{}.input_layernorm.{}", i, suffix),
+                    format!("layers.{}.attention_norm.{}", i, suffix),
+                );
+                mapping.insert(
+                    format!("transformer.h.{}.ln_attn.{}", i, suffix),
+                    format!("layers.{}.attention_norm.{}", i, suffix),
+                );
+            }
+
+            // FFN norm (post_attention_layernorm / ln_mlp)
+            for suffix in &["weight", "bias"] {
+                mapping.insert(
+                    format!("transformer.h.{}.post_attention_layernorm.{}", i, suffix),
+                    format!("layers.{}.ffn_norm.{}", i, suffix),
+                );
+                mapping.insert(
+                    format!("transformer.h.{}.ln_mlp.{}", i, suffix),
+                    format!("layers.{}.ffn_norm.{}", i, suffix),
+                );
+            }
+        }
+
+        Self { mapping }
+    }
+
+    /// Build a weight mapping for Mixtral MoE models.
+    ///
+    /// Attention follows Llama-2 style. MoE replaces the MLP with a router gate
+    /// and N expert SwiGLU FFNs.
+    pub fn mixtral(n_layers: usize, num_experts: usize) -> Self {
+        let mut base = Self::llama2(n_layers);
+
+        for i in 0..n_layers {
+            // Remove Llama-2 MLP mappings for this layer
+            base.mapping.remove(&format!("model.layers.{}.mlp.up_proj.weight", i));
+            base.mapping.remove(&format!("model.layers.{}.mlp.down_proj.weight", i));
+            base.mapping.remove(&format!("model.layers.{}.mlp.gate_proj.weight", i));
+
+            // Router gate
+            base.mapping.insert(
+                format!("model.layers.{}.block_sparse_moe.gate.weight", i),
+                format!("layers.{}.moe.gate.weight", i),
+            );
+
+            // Expert FFNs
+            for j in 0..num_experts {
+                base.mapping.insert(
+                    format!("model.layers.{}.block_sparse_moe.experts.{}.w1.weight", i, j),
+                    format!("layers.{}.moe.experts.{}.gate_proj.weight", i, j),
+                );
+                base.mapping.insert(
+                    format!("model.layers.{}.block_sparse_moe.experts.{}.w2.weight", i, j),
+                    format!("layers.{}.moe.experts.{}.down_proj.weight", i, j),
+                );
+                base.mapping.insert(
+                    format!("model.layers.{}.block_sparse_moe.experts.{}.w3.weight", i, j),
+                    format!("layers.{}.moe.experts.{}.up_proj.weight", i, j),
+                );
+            }
+        }
+
+        base
+    }
+
     /// Remap HuggingFace weight names to internal names.
     /// Unmapped keys are skipped with a warning to stderr.
     pub fn remap(&self, hf_weights: HashMap<String, Tensor>) -> HashMap<String, Tensor> {
@@ -234,6 +362,34 @@ mod tests {
         let remapped = wm.remap(hf_weights);
         assert!(remapped.contains_key("token_embedding.weight"));
         assert!(remapped.contains_key("pos_embedding.weight"));
+    }
+
+    #[test]
+    fn test_falcon_weight_map() {
+        let wm = WeightMap::falcon(2);
+        // 4 global + per-layer: 8 (qkv/dense/h_to_4h/4h_to_h * w+b) + 4 (ln_attn/ln_mlp * w+b)
+        //   + 4 (input_layernorm/post_attention_layernorm * w+b) = 16 per layer
+        // But ln_attn maps to same target as input_layernorm so count source keys:
+        // 4 global + 16*2 = 36
+        assert_eq!(wm.len(), 4 + 16 * 2);
+    }
+
+    #[test]
+    fn test_mixtral_weight_map() {
+        let wm = WeightMap::mixtral(2, 4);
+        // Base llama2: 3 global + 9*2 per-layer = 21
+        // Minus 3 MLP per layer (up/down/gate) = 21 - 6 = 15
+        // Plus per layer: 1 gate + 4 experts * 3 weights = 13
+        // Total: 15 + 13*2 = 41
+        assert_eq!(wm.len(), 15 + 13 * 2);
+    }
+
+    #[test]
+    fn test_llama2_with_attn_bias_weight_map() {
+        let wm = WeightMap::llama2_with_attn_bias(2);
+        // Base llama2: 3 + 9*2 = 21
+        // Plus 4 bias entries per layer = 21 + 4*2 = 29
+        assert_eq!(wm.len(), 21 + 4 * 2);
     }
 
     #[test]

@@ -7,6 +7,7 @@ use crate::core::cross_attention::CrossAttention;
 use crate::core::feed_forward::FeedForward;
 use crate::core::kv_cache::KVCache;
 use crate::core::layer_norm::LayerNorm;
+use crate::core::moe::MoeLayer;
 use crate::core::rms_norm::RMSNorm;
 use rustml_core::Tensor;
 
@@ -45,6 +46,10 @@ pub struct TransformerBlock {
     pub feed_forward: FeedForward,
     pub attention_norm: NormLayer,
     pub ffn_norm: NormLayer,
+    /// Parallel residual connections (Falcon): x = input + attn(norm1(input)) + ffn(norm2(input))
+    pub parallel_residual: bool,
+    /// Optional MoE layer (Mixtral): replaces feed_forward when present
+    pub moe: Option<MoeLayer>,
 }
 
 impl TransformerBlock {
@@ -77,6 +82,8 @@ impl TransformerBlock {
             feed_forward: FeedForward::new(d_model, hidden_dim, bias),
             attention_norm: NormLayer::LayerNorm(LayerNorm::with_eps(d_model, eps)),
             ffn_norm: NormLayer::LayerNorm(LayerNorm::with_eps(d_model, eps)),
+            parallel_residual: false,
+            moe: None,
         })
     }
 
@@ -94,6 +101,8 @@ impl TransformerBlock {
             feed_forward,
             attention_norm: NormLayer::LayerNorm(attention_norm),
             ffn_norm: NormLayer::LayerNorm(ffn_norm),
+            parallel_residual: false,
+            moe: None,
         }
     }
 
@@ -111,6 +120,8 @@ impl TransformerBlock {
             feed_forward,
             attention_norm: NormLayer::RMSNorm(attention_norm),
             ffn_norm: NormLayer::RMSNorm(ffn_norm),
+            parallel_residual: false,
+            moe: None,
         }
     }
 
@@ -130,7 +141,14 @@ impl TransformerBlock {
             feed_forward,
             attention_norm: NormLayer::LayerNorm(attention_norm),
             ffn_norm: NormLayer::LayerNorm(ffn_norm),
+            parallel_residual: false,
+            moe: None,
         }
+    }
+
+    /// Set parallel residual mode (Falcon-style).
+    pub fn set_parallel_residual(&mut self, parallel: bool) {
+        self.parallel_residual = parallel;
     }
 
     /// Access the self-attention layer (e.g. for cache sizing queries).
@@ -169,6 +187,12 @@ impl TransformerBlock {
             frozen += f;
         }
 
+        if let Some(ref moe) = self.moe {
+            let (t, f) = moe.parameter_count();
+            total += t;
+            frozen += f;
+        }
+
         (total, frozen)
     }
 
@@ -176,19 +200,38 @@ impl TransformerBlock {
     pub fn set_native_q4_matmul(&mut self, enabled: bool) {
         self.attention.set_native_q4_matmul(enabled);
         self.feed_forward.set_native_q4_matmul(enabled);
+        if let Some(ref mut moe) = self.moe {
+            moe.set_native_q4_matmul(enabled);
+        }
     }
 
     /// Forward pass without KV cache.
     pub fn forward(&self, input: &Tensor) -> NnResult<Tensor> {
-        // Pre-norm architecture: x = x + attn(ln(x))
-        let norm_1 = self.attention_norm.forward(input)?;
-        let attn_out = self.attention.forward(&norm_1)?;
-        let x = input.add(&attn_out)?;
-
-        // x = x + ffn(ln(x))
-        let norm_2 = self.ffn_norm.forward(&x)?;
-        let ffn_out = self.feed_forward.forward(&norm_2)?;
-        x.add(&ffn_out).map_err(Into::into)
+        if self.parallel_residual {
+            // Falcon: x = input + attn(norm1(input)) + ffn(norm2(input))
+            let norm_1 = self.attention_norm.forward(input)?;
+            let attn_out = self.attention.forward(&norm_1)?;
+            let norm_2 = self.ffn_norm.forward(input)?;
+            let ffn_out = self.feed_forward.forward(&norm_2)?;
+            let x = input.add(&attn_out)?;
+            x.add(&ffn_out).map_err(Into::into)
+        } else if let Some(ref moe) = self.moe {
+            // Mixtral: MoE replaces FFN
+            let norm_1 = self.attention_norm.forward(input)?;
+            let attn_out = self.attention.forward(&norm_1)?;
+            let x = input.add(&attn_out)?;
+            let norm_2 = self.ffn_norm.forward(&x)?;
+            let moe_out = moe.forward(&norm_2)?;
+            x.add(&moe_out).map_err(Into::into)
+        } else {
+            // Standard: sequential pre-norm
+            let norm_1 = self.attention_norm.forward(input)?;
+            let attn_out = self.attention.forward(&norm_1)?;
+            let x = input.add(&attn_out)?;
+            let norm_2 = self.ffn_norm.forward(&x)?;
+            let ffn_out = self.feed_forward.forward(&norm_2)?;
+            x.add(&ffn_out).map_err(Into::into)
+        }
     }
 
     /// Forward pass with KV cache for autoregressive decoding.
@@ -199,26 +242,44 @@ impl TransformerBlock {
         cache: &mut KVCache,
         layer_idx: usize,
     ) -> NnResult<Tensor> {
-        // Pre-norm architecture: self-attention
-        let norm_1 = self.attention_norm.forward(input)?;
-        let attn_out = self.attention.forward_with_cache(&norm_1, cache, layer_idx)?;
+        if self.parallel_residual {
+            // Falcon: x = input + attn(norm1(input)) + ffn(norm2(input))
+            let norm_1 = self.attention_norm.forward(input)?;
+            let attn_out = self.attention.forward_with_cache(&norm_1, cache, layer_idx)?;
+            let norm_2 = self.ffn_norm.forward(input)?;
+            let ffn_out = self.feed_forward.forward(&norm_2)?;
+            let x = input.add(&attn_out)?;
+            x.add(&ffn_out).map_err(Into::into)
+        } else if let Some(ref moe) = self.moe {
+            // Mixtral: MoE replaces FFN
+            let norm_1 = self.attention_norm.forward(input)?;
+            let attn_out = self.attention.forward_with_cache(&norm_1, cache, layer_idx)?;
+            let x = input.add(&attn_out)?;
+            let norm_2 = self.ffn_norm.forward(&x)?;
+            let moe_out = moe.forward(&norm_2)?;
+            x.add(&moe_out).map_err(Into::into)
+        } else {
+            // Standard: sequential pre-norm
+            let norm_1 = self.attention_norm.forward(input)?;
+            let attn_out = self.attention.forward_with_cache(&norm_1, cache, layer_idx)?;
 
-        let mut x = input.add(&attn_out)?;
+            let mut x = input.add(&attn_out)?;
 
-        // Cross-attention (if present)
-        if let (Some(cross_attn), Some(cross_norm), Some(enc_out)) =
-            (&self.cross_attention, &self.cross_attention_norm, encoder_output)
-        {
-            let norm_cross = cross_norm.forward(&x)?;
-            let cross_out = cross_attn.forward(&norm_cross, enc_out)?;
-            x = x.add(&cross_out)?;
+            // Cross-attention (if present)
+            if let (Some(cross_attn), Some(cross_norm), Some(enc_out)) =
+                (&self.cross_attention, &self.cross_attention_norm, encoder_output)
+            {
+                let norm_cross = cross_norm.forward(&x)?;
+                let cross_out = cross_attn.forward(&norm_cross, enc_out)?;
+                x = x.add(&cross_out)?;
+            }
+
+            // FFN
+            let norm_2 = self.ffn_norm.forward(&x)?;
+            let ffn_out = self.feed_forward.forward(&norm_2)?;
+
+            x.add(&ffn_out).map_err(Into::into)
         }
-
-        // FFN
-        let norm_2 = self.ffn_norm.forward(&x)?;
-        let ffn_out = self.feed_forward.forward(&norm_2)?;
-
-        x.add(&ffn_out).map_err(Into::into)
     }
 }
 
@@ -255,6 +316,40 @@ mod tests {
         cache.advance(8);
 
         // Decode 1 token
+        let x = Tensor::randn(vec![1, 1, 64]);
+        let y = block.forward_with_cache(&x, None, &mut cache, 0).unwrap();
+        assert_eq!(y.shape(), &[1, 1, 64]);
+    }
+
+    #[test]
+    fn test_transformer_block_parallel_residual() {
+        let mut block = TransformerBlock::new(
+            64, 4, None, 256, true, 1e-5, true,
+            PositionEncoding::None, 128, 10000.0,
+        )
+        .unwrap();
+        block.set_parallel_residual(true);
+        let x = Tensor::randn(vec![1, 8, 64]);
+        let y = block.forward(&x).unwrap();
+        assert_eq!(y.shape(), &[1, 8, 64]);
+    }
+
+    #[test]
+    fn test_transformer_block_parallel_residual_with_cache() {
+        let mut block = TransformerBlock::new(
+            64, 4, None, 256, false, 1e-5, true,
+            PositionEncoding::None, 128, 10000.0,
+        )
+        .unwrap();
+        block.set_parallel_residual(true);
+
+        let mut cache = KVCache::new(1, 128, 16, 4);
+
+        let x = Tensor::randn(vec![1, 8, 64]);
+        let y = block.forward_with_cache(&x, None, &mut cache, 0).unwrap();
+        assert_eq!(y.shape(), &[1, 8, 64]);
+        cache.advance(8);
+
         let x = Tensor::randn(vec![1, 1, 64]);
         let y = block.forward_with_cache(&x, None, &mut cache, 0).unwrap();
         assert_eq!(y.shape(), &[1, 1, 64]);

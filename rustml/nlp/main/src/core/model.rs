@@ -8,8 +8,8 @@ use crate::api::error::{NlpError, NlpResult};
 use crate::api::types::{LanguageModel, ModelConfig};
 use rustml_core::{DType, Tensor, f32_vec_to_bytes};
 use rustml_nn::{
-    Activation, Embedding, FeedForward, KVCache, LayerNorm, Linear, MultiHeadAttention,
-    NormLayer, PositionEncoding, RMSNorm, TransformerBlock,
+    Activation, Embedding, FeedForward, KVCache, LayerNorm, Linear, MoeLayer,
+    MultiHeadAttention, NormLayer, PositionEncoding, RMSNorm, TransformerBlock,
 };
 use std::collections::HashMap;
 
@@ -122,25 +122,43 @@ impl LlmModel {
             None
         };
 
+        let has_attn_bias = config.attention_bias == Some(true);
+        let get_bias_opt = |key: &str| -> Option<Tensor> {
+            weights.get(key).and_then(|t| t.to_f32().ok())
+        };
+
         let mut layers = Vec::with_capacity(num_layers);
         for i in 0..num_layers {
+            let q_bias = if has_attn_bias {
+                get_bias_opt(&format!("layers.{}.attention.q_proj.bias", i))
+            } else { None };
+            let k_bias = if has_attn_bias {
+                get_bias_opt(&format!("layers.{}.attention.k_proj.bias", i))
+            } else { None };
+            let v_bias = if has_attn_bias {
+                get_bias_opt(&format!("layers.{}.attention.v_proj.bias", i))
+            } else { None };
+            let o_bias = if has_attn_bias {
+                get_bias_opt(&format!("layers.{}.attention.out_proj.bias", i))
+            } else { None };
+
             let q_proj = Linear::from_weights(
                 get_weight(&format!("layers.{}.attention.q_proj.weight", i))?,
-                None,
+                q_bias,
             )?;
             let k_proj = Linear::from_weights(
                 get_weight(&format!("layers.{}.attention.k_proj.weight", i))?,
-                None,
+                k_bias,
             )?;
             let v_proj = Linear::from_weights(
                 get_weight(&format!("layers.{}.attention.v_proj.weight", i))?,
-                None,
+                v_bias,
             )?;
             let out_proj = Linear::from_weights(
                 get_weight(&format!("layers.{}.attention.out_proj.weight", i))?,
-                None,
+                o_bias,
             )?;
-            let attention = MultiHeadAttention::from_weights(
+            let mut attention = MultiHeadAttention::from_weights(
                 d_model,
                 num_heads,
                 config.n_kv_heads,
@@ -153,6 +171,14 @@ impl LlmModel {
                 max_seq_len,
                 rope_theta,
             )?;
+
+            // Sliding window (Mistral: all layers; Gemma-2: even layers only)
+            if let Some(window) = config.sliding_window {
+                let apply = if config.attn_logit_cap.is_some() { i % 2 == 0 } else { true };
+                if apply { attention.set_window_size(window); }
+            }
+            // Logit capping (Gemma-2)
+            if let Some(cap) = config.attn_logit_cap { attention.set_attn_logit_cap(cap); }
 
             let up_proj = Linear::from_weights(
                 get_weight(&format!("layers.{}.feed_forward.up_proj.weight", i))?,
@@ -172,13 +198,17 @@ impl LlmModel {
                 FeedForward::from_weights_with_activation(up_proj, down_proj, Activation::Silu)
             };
 
-            let attention_norm = RMSNorm::from_weight(
+            // RMSNorm with optional offset (Gemma-2: offset=1.0)
+            let offset = config.rms_norm_offset.unwrap_or(0.0);
+            let attention_norm = RMSNorm::from_weight_with_offset(
                 get_tensor(&format!("layers.{}.attention_norm.weight", i))?,
                 eps,
+                offset,
             );
-            let ffn_norm = RMSNorm::from_weight(
+            let ffn_norm = RMSNorm::from_weight_with_offset(
                 get_tensor(&format!("layers.{}.ffn_norm.weight", i))?,
                 eps,
+                offset,
             );
 
             layers.push(TransformerBlock::from_weights_rms(
@@ -351,9 +381,300 @@ impl LlmModel {
         })
     }
 
+    /// Construct Falcon model from weights (already remapped to internal names).
+    ///
+    /// Handles Falcon specifics:
+    /// - Fused QKV split with separate Q/KV dimensions for MQA/GQA
+    /// - LayerNorm with bias (not RMSNorm)
+    /// - GELU activation (no gate_proj)
+    /// - Parallel residual connections
+    /// - ALiBi or RoPE from config
+    /// - Tied embeddings fallback
+    pub fn from_pretrained_falcon(
+        config: &ModelConfig,
+        weights: HashMap<String, Tensor>,
+    ) -> NlpResult<Self> {
+        let d_model = config.dim;
+        let num_heads = config.n_heads;
+        let num_kv_heads = config.n_kv_heads.unwrap_or(num_heads);
+        let num_layers = config.n_layers;
+        let max_seq_len = config.max_seq_len;
+        let eps = config.norm_eps;
+        let position_encoding = config.position_encoding;
+        let causal = config.causal;
+        let rope_theta = config.rope_theta;
+        let head_dim = d_model / num_heads;
+
+        let get_tensor = |key: &str| -> NlpResult<Tensor> {
+            weights
+                .get(key)
+                .ok_or_else(|| NlpError::ModelError(format!("Missing weight: {}", key)))
+                .and_then(|t| Ok(t.to_f32()?))
+        };
+
+        let get_tensor_opt = |key: &str| -> Option<Tensor> {
+            weights.get(key).and_then(|t| t.to_f32().ok())
+        };
+
+        let token_embedding = Embedding::from_weights(get_tensor("token_embedding.weight")?)?;
+
+        let mut layers = Vec::with_capacity(num_layers);
+        for i in 0..num_layers {
+            // Fused QKV: split [q_dim + kv_dim + kv_dim, d_model]
+            let qkv_weight = get_tensor(&format!("layers.{}.attention.qkv.weight", i))?;
+            let qkv_bias = get_tensor_opt(&format!("layers.{}.attention.qkv.bias", i));
+
+            let q_dim = num_heads * head_dim;
+            let kv_dim = num_kv_heads * head_dim;
+
+            let q_w = qkv_weight.slice(0, 0, q_dim)?;
+            let k_w = qkv_weight.slice(0, q_dim, q_dim + kv_dim)?;
+            let v_w = qkv_weight.slice(0, q_dim + kv_dim, q_dim + 2 * kv_dim)?;
+
+            let (q_b, k_b, v_b) = if let Some(ref bias) = qkv_bias {
+                let bias_data: Vec<f32> = bias.iter().collect();
+                let q_b_data = f32_vec_to_bytes(bias_data[..q_dim].to_vec());
+                let k_b_data = f32_vec_to_bytes(bias_data[q_dim..q_dim + kv_dim].to_vec());
+                let v_b_data = f32_vec_to_bytes(bias_data[q_dim + kv_dim..].to_vec());
+                (
+                    Some(Tensor::new(q_b_data, vec![q_dim], DType::F32)),
+                    Some(Tensor::new(k_b_data, vec![kv_dim], DType::F32)),
+                    Some(Tensor::new(v_b_data, vec![kv_dim], DType::F32)),
+                )
+            } else {
+                (None, None, None)
+            };
+
+            let q_proj = Linear::from_weights(q_w, q_b)?;
+            let k_proj = Linear::from_weights(k_w, k_b)?;
+            let v_proj = Linear::from_weights(v_w, v_b)?;
+
+            let out_proj = Linear::from_weights(
+                get_tensor(&format!("layers.{}.attention.out_proj.weight", i))?,
+                get_tensor_opt(&format!("layers.{}.attention.out_proj.bias", i)),
+            )?;
+
+            let attention = MultiHeadAttention::from_weights(
+                d_model,
+                num_heads,
+                config.n_kv_heads,
+                q_proj,
+                k_proj,
+                v_proj,
+                out_proj,
+                causal,
+                position_encoding,
+                max_seq_len,
+                rope_theta,
+            )?;
+
+            // GELU FFN (no gate_proj)
+            let up_proj = Linear::from_weights(
+                get_tensor(&format!("layers.{}.feed_forward.up_proj.weight", i))?,
+                get_tensor_opt(&format!("layers.{}.feed_forward.up_proj.bias", i)),
+            )?;
+            let down_proj = Linear::from_weights(
+                get_tensor(&format!("layers.{}.feed_forward.down_proj.weight", i))?,
+                get_tensor_opt(&format!("layers.{}.feed_forward.down_proj.bias", i)),
+            )?;
+            let feed_forward =
+                FeedForward::from_weights_with_activation(up_proj, down_proj, Activation::Gelu);
+
+            // LayerNorm with bias
+            let attention_norm = LayerNorm::from_weights(
+                get_tensor(&format!("layers.{}.attention_norm.weight", i))?,
+                get_tensor(&format!("layers.{}.attention_norm.bias", i))?,
+                eps,
+            )?;
+            let ffn_norm = LayerNorm::from_weights(
+                get_tensor(&format!("layers.{}.ffn_norm.weight", i))?,
+                get_tensor(&format!("layers.{}.ffn_norm.bias", i))?,
+                eps,
+            )?;
+
+            let mut block = TransformerBlock::from_weights(
+                attention,
+                feed_forward,
+                attention_norm,
+                ffn_norm,
+            );
+            block.set_parallel_residual(config.parallel_residual.unwrap_or(true));
+
+            layers.push(block);
+        }
+
+        // Final LayerNorm with bias
+        let norm = NormLayer::LayerNorm(LayerNorm::from_weights(
+            get_tensor("norm.weight")?,
+            get_tensor("norm.bias")?,
+            eps,
+        )?);
+
+        // Tied embeddings fallback if output.weight missing
+        let output = if let Ok(w) = get_tensor("output.weight") {
+            Linear::from_weights(w, None)?
+        } else {
+            Linear::from_weights(token_embedding.weight.clone(), None)?
+        };
+
+        Ok(Self {
+            token_embedding,
+            pos_embedding: None,
+            layers,
+            norm,
+            output,
+            config: config.clone(),
+        })
+    }
+
+    /// Construct Mixtral MoE model from weights (already remapped to internal names).
+    ///
+    /// Handles Mixtral specifics:
+    /// - Attention follows Llama + sliding window
+    /// - Per-layer: router gate + N expert SwiGLU FFNs → MoeLayer
+    /// - TransformerBlock's feed_forward is unused (MoE path in forward takes precedence)
+    pub fn from_pretrained_mixtral(
+        config: &ModelConfig,
+        weights: HashMap<String, Tensor>,
+    ) -> NlpResult<Self> {
+        let d_model = config.dim;
+        let num_heads = config.n_heads;
+        let num_layers = config.n_layers;
+        let max_seq_len = config.max_seq_len;
+        let eps = config.norm_eps;
+        let position_encoding = config.position_encoding;
+        let causal = config.causal;
+        let rope_theta = config.rope_theta;
+        let num_experts = config.num_local_experts.unwrap_or(8);
+        let num_experts_per_tok = config.num_experts_per_tok.unwrap_or(2);
+
+        let get_tensor = |key: &str| -> NlpResult<Tensor> {
+            weights
+                .get(key)
+                .ok_or_else(|| NlpError::ModelError(format!("Missing weight: {}", key)))
+                .and_then(|t| Ok(t.to_f32()?))
+        };
+
+        let get_weight = |key: &str| -> NlpResult<Tensor> {
+            weights
+                .get(key)
+                .ok_or_else(|| NlpError::ModelError(format!("Missing weight: {}", key)))
+                .and_then(|t| match t.dtype() {
+                    DType::Q4_0 | DType::Q8_0 | DType::F32 => Ok(t.clone()),
+                    _ => Ok(t.to_f32()?),
+                })
+        };
+
+        let token_embedding = Embedding::from_weights(get_tensor("token_embedding.weight")?)?;
+
+        let mut layers = Vec::with_capacity(num_layers);
+        for i in 0..num_layers {
+            // Attention: same as Llama
+            let q_proj = Linear::from_weights(
+                get_weight(&format!("layers.{}.attention.q_proj.weight", i))?,
+                None,
+            )?;
+            let k_proj = Linear::from_weights(
+                get_weight(&format!("layers.{}.attention.k_proj.weight", i))?,
+                None,
+            )?;
+            let v_proj = Linear::from_weights(
+                get_weight(&format!("layers.{}.attention.v_proj.weight", i))?,
+                None,
+            )?;
+            let out_proj = Linear::from_weights(
+                get_weight(&format!("layers.{}.attention.out_proj.weight", i))?,
+                None,
+            )?;
+            let mut attention = MultiHeadAttention::from_weights(
+                d_model,
+                num_heads,
+                config.n_kv_heads,
+                q_proj,
+                k_proj,
+                v_proj,
+                out_proj,
+                causal,
+                position_encoding,
+                max_seq_len,
+                rope_theta,
+            )?;
+
+            // Sliding window
+            if let Some(window) = config.sliding_window {
+                attention.set_window_size(window);
+            }
+
+            // MoE: router gate + expert FFNs
+            let gate = Linear::from_weights(
+                get_weight(&format!("layers.{}.moe.gate.weight", i))?,
+                None,
+            )?;
+
+            let mut experts = Vec::with_capacity(num_experts);
+            for j in 0..num_experts {
+                let gate_proj = Linear::from_weights(
+                    get_weight(&format!("layers.{}.moe.experts.{}.gate_proj.weight", i, j))?,
+                    None,
+                )?;
+                let up_proj = Linear::from_weights(
+                    get_weight(&format!("layers.{}.moe.experts.{}.up_proj.weight", i, j))?,
+                    None,
+                )?;
+                let down_proj = Linear::from_weights(
+                    get_weight(&format!("layers.{}.moe.experts.{}.down_proj.weight", i, j))?,
+                    None,
+                )?;
+                experts.push(FeedForward::from_weights_swiglu(up_proj, gate_proj, down_proj));
+            }
+
+            let moe_layer = MoeLayer::from_weights(gate, experts, num_experts_per_tok);
+
+            // RMSNorm
+            let attention_norm = RMSNorm::from_weight(
+                get_tensor(&format!("layers.{}.attention_norm.weight", i))?,
+                eps,
+            );
+            let ffn_norm = RMSNorm::from_weight(
+                get_tensor(&format!("layers.{}.ffn_norm.weight", i))?,
+                eps,
+            );
+
+            // Placeholder feed_forward (unused — MoE path takes precedence)
+            let placeholder_ff = FeedForward::swiglu(d_model, config.hidden_dim, false);
+
+            let mut block = TransformerBlock::from_weights_rms(
+                attention,
+                placeholder_ff,
+                attention_norm,
+                ffn_norm,
+            );
+            block.moe = Some(moe_layer);
+
+            layers.push(block);
+        }
+
+        let norm = NormLayer::RMSNorm(RMSNorm::from_weight(get_tensor("norm.weight")?, eps));
+        let output = Linear::from_weights(get_weight("output.weight")?, None)?;
+
+        Ok(Self {
+            token_embedding,
+            pos_embedding: None,
+            layers,
+            norm,
+            output,
+            config: config.clone(),
+        })
+    }
+
     /// Forward pass without KV cache.
     pub fn forward_pass(&self, input_ids: &Tensor) -> NlpResult<Tensor> {
         let x_emb = self.token_embedding.forward(input_ids)?;
+        let x_emb = if let Some(scale) = self.config.embedding_scale {
+            x_emb.mul_scalar(scale)
+        } else {
+            x_emb
+        };
 
         let batch_size = input_ids.shape()[0];
         let seq_len = input_ids.shape()[input_ids.ndim() - 1];
@@ -396,6 +717,11 @@ impl LlmModel {
         cache: &mut KVCache,
     ) -> NlpResult<Tensor> {
         let x_emb = self.token_embedding.forward(input_ids)?;
+        let x_emb = if let Some(scale) = self.config.embedding_scale {
+            x_emb.mul_scalar(scale)
+        } else {
+            x_emb
+        };
 
         let batch_size = input_ids.shape()[0];
         let seq_len = input_ids.shape()[input_ids.ndim() - 1];
@@ -623,6 +949,14 @@ mod tests {
             bos_token_id: None,
             eos_token_id: None,
             chat_template: None,
+            sliding_window: None,
+            attn_logit_cap: None,
+            embedding_scale: None,
+            rms_norm_offset: None,
+            attention_bias: None,
+            parallel_residual: None,
+            num_local_experts: None,
+            num_experts_per_tok: None,
         }
     }
 
@@ -795,5 +1129,151 @@ mod tests {
         assert!(mapped.contains_key("layers.0.attention.c_attn.weight"));
         assert!(mapped.contains_key("layers.0.feed_forward.up_proj.weight"));
         assert!(mapped.contains_key("norm.weight"));
+    }
+
+    #[test]
+    fn test_gemma2_embedding_scale() {
+        let config = ModelConfig {
+            embedding_scale: Some(8.0), // sqrt(64)
+            position_encoding: PositionEncoding::RoPE,
+            ..tiny_config()
+        };
+        let model = LlmModel::new(&config).unwrap();
+
+        let input = Tensor::from_vec(
+            (0..4).map(|i| (i % 100) as f32).collect(),
+            vec![1, 4],
+        ).unwrap();
+
+        // Should not panic — embedding scale applied in forward
+        let logits = model.forward(&input).unwrap();
+        assert_eq!(logits.shape(), &[1, 4, 100]);
+    }
+
+    #[test]
+    fn test_falcon_tiny_forward() {
+        // Build a tiny Falcon model manually
+        let d = 64;
+        let num_heads = 4;
+        let num_kv = 2;
+        let hidden = 256;
+        let n_layers = 1;
+        let vocab = 100;
+        let config = ModelConfig {
+            dim: d,
+            hidden_dim: hidden,
+            n_layers,
+            n_heads: num_heads,
+            n_kv_heads: Some(num_kv),
+            vocab_size: vocab,
+            norm_eps: 1e-5,
+            max_seq_len: 32,
+            use_bias: Some(true),
+            position_encoding: PositionEncoding::ALiBi,
+            causal: true,
+            rope_theta: 10000.0,
+            parallel_residual: Some(true),
+            ..tiny_config()
+        };
+
+        // Create weights dict for from_pretrained_falcon
+        let head_dim = d / num_heads;
+        let q_dim = num_heads * head_dim;
+        let kv_dim = num_kv * head_dim;
+        let qkv_total = q_dim + 2 * kv_dim;
+
+        let mut weights: HashMap<String, Tensor> = HashMap::new();
+        weights.insert("token_embedding.weight".into(), Tensor::randn(vec![vocab, d]));
+        weights.insert("norm.weight".into(), Tensor::ones(vec![d]));
+        weights.insert("norm.bias".into(), Tensor::zeros(vec![d]));
+        weights.insert("output.weight".into(), Tensor::randn(vec![vocab, d]));
+
+        for i in 0..n_layers {
+            weights.insert(format!("layers.{}.attention.qkv.weight", i), Tensor::randn(vec![qkv_total, d]));
+            weights.insert(format!("layers.{}.attention.qkv.bias", i), Tensor::zeros(vec![qkv_total]));
+            weights.insert(format!("layers.{}.attention.out_proj.weight", i), Tensor::randn(vec![d, d]));
+            weights.insert(format!("layers.{}.attention.out_proj.bias", i), Tensor::zeros(vec![d]));
+            weights.insert(format!("layers.{}.feed_forward.up_proj.weight", i), Tensor::randn(vec![hidden, d]));
+            weights.insert(format!("layers.{}.feed_forward.up_proj.bias", i), Tensor::zeros(vec![hidden]));
+            weights.insert(format!("layers.{}.feed_forward.down_proj.weight", i), Tensor::randn(vec![d, hidden]));
+            weights.insert(format!("layers.{}.feed_forward.down_proj.bias", i), Tensor::zeros(vec![d]));
+            weights.insert(format!("layers.{}.attention_norm.weight", i), Tensor::ones(vec![d]));
+            weights.insert(format!("layers.{}.attention_norm.bias", i), Tensor::zeros(vec![d]));
+            weights.insert(format!("layers.{}.ffn_norm.weight", i), Tensor::ones(vec![d]));
+            weights.insert(format!("layers.{}.ffn_norm.bias", i), Tensor::zeros(vec![d]));
+        }
+
+        let model = LlmModel::from_pretrained_falcon(&config, weights).unwrap();
+        let input = Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![1, 4]).unwrap();
+        let logits = model.forward(&input).unwrap();
+        assert_eq!(logits.shape(), &[1, 4, vocab]);
+    }
+
+    #[test]
+    fn test_mixtral_tiny_forward() {
+        let d = 64;
+        let hidden = 128;
+        let n_layers = 1;
+        let vocab = 100;
+        let num_experts = 4;
+        let num_experts_per_tok = 2;
+        let config = ModelConfig {
+            dim: d,
+            hidden_dim: hidden,
+            n_layers,
+            n_heads: 4,
+            n_kv_heads: Some(2),
+            vocab_size: vocab,
+            norm_eps: 1e-5,
+            max_seq_len: 32,
+            use_bias: Some(false),
+            position_encoding: PositionEncoding::RoPE,
+            causal: true,
+            rope_theta: 10000.0,
+            num_local_experts: Some(num_experts),
+            num_experts_per_tok: Some(num_experts_per_tok),
+            ..tiny_config()
+        };
+
+        let kv_dim = 2 * (d / 4); // n_kv_heads * head_dim
+        let mut weights: HashMap<String, Tensor> = HashMap::new();
+        weights.insert("token_embedding.weight".into(), Tensor::randn(vec![vocab, d]));
+        weights.insert("norm.weight".into(), Tensor::ones(vec![d]));
+        weights.insert("output.weight".into(), Tensor::randn(vec![vocab, d]));
+
+        for i in 0..n_layers {
+            weights.insert(format!("layers.{}.attention.q_proj.weight", i), Tensor::randn(vec![d, d]));
+            weights.insert(format!("layers.{}.attention.k_proj.weight", i), Tensor::randn(vec![kv_dim, d]));
+            weights.insert(format!("layers.{}.attention.v_proj.weight", i), Tensor::randn(vec![kv_dim, d]));
+            weights.insert(format!("layers.{}.attention.out_proj.weight", i), Tensor::randn(vec![d, d]));
+            weights.insert(format!("layers.{}.attention_norm.weight", i), Tensor::ones(vec![d]));
+            weights.insert(format!("layers.{}.ffn_norm.weight", i), Tensor::ones(vec![d]));
+            // MoE gate
+            weights.insert(format!("layers.{}.moe.gate.weight", i), Tensor::randn(vec![num_experts, d]));
+            // Expert FFNs
+            for j in 0..num_experts {
+                weights.insert(format!("layers.{}.moe.experts.{}.gate_proj.weight", i, j), Tensor::randn(vec![hidden, d]));
+                weights.insert(format!("layers.{}.moe.experts.{}.up_proj.weight", i, j), Tensor::randn(vec![hidden, d]));
+                weights.insert(format!("layers.{}.moe.experts.{}.down_proj.weight", i, j), Tensor::randn(vec![d, hidden]));
+            }
+        }
+
+        let model = LlmModel::from_pretrained_mixtral(&config, weights).unwrap();
+        let input = Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![1, 4]).unwrap();
+        let logits = model.forward(&input).unwrap();
+        assert_eq!(logits.shape(), &[1, 4, vocab]);
+    }
+
+    #[test]
+    fn test_qwen2_attention_bias_config() {
+        // Verify that a config with attention_bias=true can be created and model runs
+        let config = ModelConfig {
+            attention_bias: Some(true),
+            position_encoding: PositionEncoding::RoPE,
+            ..tiny_config()
+        };
+        // Just verify config is valid; actual bias loading tested via from_pretrained
+        assert!(config.validate().is_ok());
+        assert_eq!(config.attention_bias, Some(true));
     }
 }

@@ -12,4 +12,5 @@ pub use crate::core::kv_cache::KVCache;
 pub use crate::core::rope::{RoPEFreqs, compute_alibi_slopes, alibi_bias};
 pub use crate::core::cross_attention::CrossAttention;
 pub use crate::core::feed_forward::FeedForward;
+pub use crate::core::moe::MoeLayer;
 pub use crate::core::transformer_block::{TransformerBlock, NormLayer};

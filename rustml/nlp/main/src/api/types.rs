@@ -220,6 +220,30 @@ pub struct ModelConfig {
     /// Chat template string (e.g. from GGUF metadata or HF config)
     #[serde(default)]
     pub chat_template: Option<String>,
+    /// Sliding window attention size (Mistral, Gemma-2, Mixtral)
+    #[serde(default)]
+    pub sliding_window: Option<usize>,
+    /// Attention logit soft-capping value (Gemma-2)
+    #[serde(default)]
+    pub attn_logit_cap: Option<f32>,
+    /// Embedding scale factor (Gemma-2: sqrt(dim))
+    #[serde(default)]
+    pub embedding_scale: Option<f32>,
+    /// RMSNorm weight offset (Gemma-2: 1.0)
+    #[serde(default)]
+    pub rms_norm_offset: Option<f32>,
+    /// Whether attention projections use bias (Qwen-2)
+    #[serde(default)]
+    pub attention_bias: Option<bool>,
+    /// Use parallel residual connections (Falcon)
+    #[serde(default)]
+    pub parallel_residual: Option<bool>,
+    /// Number of MoE experts (Mixtral)
+    #[serde(default)]
+    pub num_local_experts: Option<usize>,
+    /// Number of experts used per token (Mixtral)
+    #[serde(default)]
+    pub num_experts_per_tok: Option<usize>,
 }
 
 fn default_position_encoding() -> PositionEncoding { PositionEncoding::Learned }
@@ -244,6 +268,14 @@ impl Default for ModelConfig {
             bos_token_id: None,
             eos_token_id: None,
             chat_template: None,
+            sliding_window: None,
+            attn_logit_cap: None,
+            embedding_scale: None,
+            rms_norm_offset: None,
+            attention_bias: None,
+            parallel_residual: None,
+            num_local_experts: None,
+            num_experts_per_tok: None,
         }
     }
 }
@@ -260,6 +292,80 @@ struct HFLlamaConfig {
     rms_norm_eps: f32,
     max_position_embeddings: usize,
     rope_theta: Option<f32>,
+}
+
+/// HuggingFace Mistral/Qwen-2/Phi-3 config.json format (internal).
+#[derive(serde::Deserialize)]
+struct HFMistralConfig {
+    hidden_size: usize,
+    intermediate_size: usize,
+    num_hidden_layers: usize,
+    num_attention_heads: usize,
+    num_key_value_heads: Option<usize>,
+    vocab_size: usize,
+    rms_norm_eps: f32,
+    max_position_embeddings: usize,
+    rope_theta: Option<f32>,
+    sliding_window: Option<usize>,
+    #[serde(default)]
+    attention_bias: Option<bool>,
+}
+
+/// HuggingFace Gemma-2 config.json format (internal).
+#[derive(serde::Deserialize)]
+struct HFGemma2Config {
+    hidden_size: usize,
+    intermediate_size: usize,
+    num_hidden_layers: usize,
+    num_attention_heads: usize,
+    num_key_value_heads: Option<usize>,
+    vocab_size: usize,
+    rms_norm_eps: f32,
+    max_position_embeddings: usize,
+    rope_theta: Option<f32>,
+    #[serde(default)]
+    attn_logit_softcapping: Option<f32>,
+    #[serde(default)]
+    sliding_window: Option<usize>,
+}
+
+/// HuggingFace Falcon config.json format (internal).
+#[derive(serde::Deserialize)]
+struct HFFalconConfig {
+    hidden_size: usize,
+    n_inner: Option<usize>,
+    num_hidden_layers: usize,
+    num_attention_heads: usize,
+    #[serde(alias = "n_head_kv")]
+    num_key_value_heads: Option<usize>,
+    vocab_size: usize,
+    layer_norm_epsilon: Option<f32>,
+    #[serde(default)]
+    parallel_attn: Option<bool>,
+    #[serde(default)]
+    alibi: Option<bool>,
+    #[serde(default)]
+    max_position_embeddings: Option<usize>,
+}
+
+/// HuggingFace Mixtral config.json format (internal).
+#[derive(serde::Deserialize)]
+struct HFMixtralConfig {
+    hidden_size: usize,
+    intermediate_size: usize,
+    num_hidden_layers: usize,
+    num_attention_heads: usize,
+    num_key_value_heads: Option<usize>,
+    vocab_size: usize,
+    rms_norm_eps: f32,
+    max_position_embeddings: usize,
+    rope_theta: Option<f32>,
+    #[serde(default)]
+    sliding_window: Option<usize>,
+    #[serde(default)]
+    num_local_experts: Option<usize>,
+    #[serde(default)]
+    num_experts_per_tok: Option<usize>,
 }
 
 /// HuggingFace GPT-2 config.json format (internal).
@@ -298,6 +404,14 @@ impl ModelConfig {
             bos_token_id: Some(1),
             eos_token_id: Some(2),
             chat_template: None,
+            sliding_window: None,
+            attn_logit_cap: None,
+            embedding_scale: None,
+            rms_norm_offset: None,
+            attention_bias: None,
+            parallel_residual: None,
+            num_local_experts: None,
+            num_experts_per_tok: None,
         };
         config.validate()?;
         Ok(config)
@@ -326,6 +440,14 @@ impl ModelConfig {
             bos_token_id: None,
             eos_token_id: Some(50256),
             chat_template: None,
+            sliding_window: None,
+            attn_logit_cap: None,
+            embedding_scale: None,
+            rms_norm_offset: None,
+            attention_bias: None,
+            parallel_residual: None,
+            num_local_experts: None,
+            num_experts_per_tok: None,
         };
         config.validate()?;
         Ok(config)
@@ -355,6 +477,139 @@ impl ModelConfig {
                     bos_token_id: Some(1),
                     eos_token_id: Some(2),
                     chat_template: None,
+                    sliding_window: None,
+                    attn_logit_cap: None,
+                    embedding_scale: None,
+                    rms_norm_offset: None,
+                    attention_bias: None,
+                    parallel_residual: None,
+                    num_local_experts: None,
+                    num_experts_per_tok: None,
+                };
+                c.validate()?;
+                Ok(c)
+            }
+            "mistral" | "qwen2" | "phi3" => {
+                let hf: HFMistralConfig = serde_json::from_value(config.clone())
+                    .map_err(|e| NlpError::ModelError(format!("Invalid Mistral/Qwen2/Phi3 config: {}", e)))?;
+                let c = Self {
+                    dim: hf.hidden_size,
+                    hidden_dim: hf.intermediate_size,
+                    n_layers: hf.num_hidden_layers,
+                    n_heads: hf.num_attention_heads,
+                    n_kv_heads: hf.num_key_value_heads,
+                    vocab_size: hf.vocab_size,
+                    norm_eps: hf.rms_norm_eps,
+                    max_seq_len: hf.max_position_embeddings,
+                    use_bias: Some(false),
+                    position_encoding: PositionEncoding::RoPE,
+                    causal: true,
+                    rope_theta: hf.rope_theta.unwrap_or(10000.0),
+                    bos_token_id: Some(1),
+                    eos_token_id: Some(2),
+                    chat_template: None,
+                    sliding_window: hf.sliding_window,
+                    attn_logit_cap: None,
+                    embedding_scale: None,
+                    rms_norm_offset: None,
+                    attention_bias: hf.attention_bias,
+                    parallel_residual: None,
+                    num_local_experts: None,
+                    num_experts_per_tok: None,
+                };
+                c.validate()?;
+                Ok(c)
+            }
+            "gemma2" => {
+                let hf: HFGemma2Config = serde_json::from_value(config.clone())
+                    .map_err(|e| NlpError::ModelError(format!("Invalid Gemma-2 config: {}", e)))?;
+                let c = Self {
+                    dim: hf.hidden_size,
+                    hidden_dim: hf.intermediate_size,
+                    n_layers: hf.num_hidden_layers,
+                    n_heads: hf.num_attention_heads,
+                    n_kv_heads: hf.num_key_value_heads,
+                    vocab_size: hf.vocab_size,
+                    norm_eps: hf.rms_norm_eps,
+                    max_seq_len: hf.max_position_embeddings,
+                    use_bias: Some(false),
+                    position_encoding: PositionEncoding::RoPE,
+                    causal: true,
+                    rope_theta: hf.rope_theta.unwrap_or(10000.0),
+                    bos_token_id: Some(1),
+                    eos_token_id: Some(2),
+                    chat_template: None,
+                    sliding_window: hf.sliding_window,
+                    attn_logit_cap: hf.attn_logit_softcapping,
+                    embedding_scale: Some((hf.hidden_size as f32).sqrt()),
+                    rms_norm_offset: Some(1.0),
+                    attention_bias: None,
+                    parallel_residual: None,
+                    num_local_experts: None,
+                    num_experts_per_tok: None,
+                };
+                c.validate()?;
+                Ok(c)
+            }
+            "falcon" => {
+                let hf: HFFalconConfig = serde_json::from_value(config.clone())
+                    .map_err(|e| NlpError::ModelError(format!("Invalid Falcon config: {}", e)))?;
+                let use_alibi = hf.alibi.unwrap_or(false);
+                let c = Self {
+                    dim: hf.hidden_size,
+                    hidden_dim: hf.n_inner.unwrap_or(4 * hf.hidden_size),
+                    n_layers: hf.num_hidden_layers,
+                    n_heads: hf.num_attention_heads,
+                    n_kv_heads: hf.num_key_value_heads,
+                    vocab_size: hf.vocab_size,
+                    norm_eps: hf.layer_norm_epsilon.unwrap_or(1e-5),
+                    max_seq_len: hf.max_position_embeddings.unwrap_or(2048),
+                    use_bias: Some(true),
+                    position_encoding: if use_alibi { PositionEncoding::ALiBi } else { PositionEncoding::RoPE },
+                    causal: true,
+                    rope_theta: 10000.0,
+                    bos_token_id: Some(1),
+                    eos_token_id: Some(11),
+                    chat_template: None,
+                    sliding_window: None,
+                    attn_logit_cap: None,
+                    embedding_scale: None,
+                    rms_norm_offset: None,
+                    attention_bias: None,
+                    parallel_residual: Some(hf.parallel_attn.unwrap_or(true)),
+                    num_local_experts: None,
+                    num_experts_per_tok: None,
+                };
+                c.validate()?;
+                Ok(c)
+            }
+            "mixtral" => {
+                let hf: HFMixtralConfig = serde_json::from_value(config.clone())
+                    .map_err(|e| NlpError::ModelError(format!("Invalid Mixtral config: {}", e)))?;
+                let c = Self {
+                    dim: hf.hidden_size,
+                    hidden_dim: hf.intermediate_size,
+                    n_layers: hf.num_hidden_layers,
+                    n_heads: hf.num_attention_heads,
+                    n_kv_heads: hf.num_key_value_heads,
+                    vocab_size: hf.vocab_size,
+                    norm_eps: hf.rms_norm_eps,
+                    max_seq_len: hf.max_position_embeddings,
+                    use_bias: Some(false),
+                    position_encoding: PositionEncoding::RoPE,
+                    causal: true,
+                    rope_theta: hf.rope_theta.unwrap_or(10000.0),
+                    bos_token_id: Some(1),
+                    eos_token_id: Some(2),
+                    chat_template: None,
+                    sliding_window: hf.sliding_window,
+                    attn_logit_cap: None,
+                    embedding_scale: None,
+                    rms_norm_offset: None,
+                    attention_bias: None,
+                    parallel_residual: None,
+                    num_local_experts: hf.num_local_experts,
+                    num_experts_per_tok: hf.num_experts_per_tok,
                 };
                 c.validate()?;
                 Ok(c)
@@ -379,6 +634,14 @@ impl ModelConfig {
                     bos_token_id: None,
                     eos_token_id: Some(50256),
                     chat_template: None,
+                    sliding_window: None,
+                    attn_logit_cap: None,
+                    embedding_scale: None,
+                    rms_norm_offset: None,
+                    attention_bias: None,
+                    parallel_residual: None,
+                    num_local_experts: None,
+                    num_experts_per_tok: None,
                 };
                 c.validate()?;
                 Ok(c)
@@ -459,4 +722,121 @@ pub trait LanguageModel {
 
     /// Head dimension (for cache sizing).
     fn head_dim(&self) -> usize;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mistral_config_from_json() {
+        let json = serde_json::json!({
+            "model_type": "mistral",
+            "hidden_size": 4096,
+            "intermediate_size": 14336,
+            "num_hidden_layers": 32,
+            "num_attention_heads": 32,
+            "num_key_value_heads": 8,
+            "vocab_size": 32000,
+            "rms_norm_eps": 1e-5,
+            "max_position_embeddings": 32768,
+            "rope_theta": 1000000.0,
+            "sliding_window": 4096
+        });
+        let c = ModelConfig::from_json_value(&json).unwrap();
+        assert_eq!(c.dim, 4096);
+        assert_eq!(c.n_kv_heads, Some(8));
+        assert_eq!(c.sliding_window, Some(4096));
+        assert_eq!(c.position_encoding, PositionEncoding::RoPE);
+        assert_eq!(c.use_bias, Some(false));
+    }
+
+    #[test]
+    fn test_qwen2_config_from_json() {
+        let json = serde_json::json!({
+            "model_type": "qwen2",
+            "hidden_size": 4096,
+            "intermediate_size": 11008,
+            "num_hidden_layers": 32,
+            "num_attention_heads": 32,
+            "num_key_value_heads": 32,
+            "vocab_size": 151936,
+            "rms_norm_eps": 1e-6,
+            "max_position_embeddings": 32768,
+            "attention_bias": true
+        });
+        let c = ModelConfig::from_json_value(&json).unwrap();
+        assert_eq!(c.dim, 4096);
+        assert_eq!(c.attention_bias, Some(true));
+        assert_eq!(c.vocab_size, 151936);
+    }
+
+    #[test]
+    fn test_gemma2_config_from_json() {
+        let json = serde_json::json!({
+            "model_type": "gemma2",
+            "hidden_size": 2304,
+            "intermediate_size": 9216,
+            "num_hidden_layers": 26,
+            "num_attention_heads": 8,
+            "num_key_value_heads": 4,
+            "vocab_size": 256000,
+            "rms_norm_eps": 1e-6,
+            "max_position_embeddings": 8192,
+            "attn_logit_softcapping": 50.0,
+            "sliding_window": 4096
+        });
+        let c = ModelConfig::from_json_value(&json).unwrap();
+        assert_eq!(c.dim, 2304);
+        assert_eq!(c.attn_logit_cap, Some(50.0));
+        assert!((c.embedding_scale.unwrap() - (2304.0_f32).sqrt()).abs() < 1e-3);
+        assert_eq!(c.rms_norm_offset, Some(1.0));
+        assert_eq!(c.sliding_window, Some(4096));
+    }
+
+    #[test]
+    fn test_falcon_config_from_json() {
+        let json = serde_json::json!({
+            "model_type": "falcon",
+            "hidden_size": 4544,
+            "num_hidden_layers": 32,
+            "num_attention_heads": 71,
+            "num_key_value_heads": 1,
+            "vocab_size": 65024,
+            "layer_norm_epsilon": 1e-5,
+            "parallel_attn": true,
+            "alibi": true,
+            "n_inner": 18176
+        });
+        let c = ModelConfig::from_json_value(&json).unwrap();
+        assert_eq!(c.dim, 4544);
+        assert_eq!(c.hidden_dim, 18176);
+        assert_eq!(c.position_encoding, PositionEncoding::ALiBi);
+        assert_eq!(c.parallel_residual, Some(true));
+        assert_eq!(c.use_bias, Some(true));
+    }
+
+    #[test]
+    fn test_mixtral_config_from_json() {
+        let json = serde_json::json!({
+            "model_type": "mixtral",
+            "hidden_size": 4096,
+            "intermediate_size": 14336,
+            "num_hidden_layers": 32,
+            "num_attention_heads": 32,
+            "num_key_value_heads": 8,
+            "vocab_size": 32000,
+            "rms_norm_eps": 1e-5,
+            "max_position_embeddings": 32768,
+            "sliding_window": 4096,
+            "num_local_experts": 8,
+            "num_experts_per_tok": 2
+        });
+        let c = ModelConfig::from_json_value(&json).unwrap();
+        assert_eq!(c.dim, 4096);
+        assert_eq!(c.num_local_experts, Some(8));
+        assert_eq!(c.num_experts_per_tok, Some(2));
+        assert_eq!(c.sliding_window, Some(4096));
+        assert_eq!(c.position_encoding, PositionEncoding::RoPE);
+    }
 }
