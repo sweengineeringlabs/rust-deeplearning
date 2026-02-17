@@ -145,6 +145,7 @@ pub enum LoadedDType {
     F16,
     Q8_0,
     Q4_0,
+    Q4_1,
 }
 
 /// A loaded tensor from a GGUF file (raw bytes + metadata).

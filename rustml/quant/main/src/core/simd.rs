@@ -42,6 +42,25 @@ fn dot_q4q8_block_scalar(packed_q4: &[u8], q8_values: &[i8]) -> i32 {
     sum
 }
 
+/// Scalar Q4_1 x Q8_0 dot product → (unsigned_dot, q8_sum).
+///
+/// Q4_1 uses unsigned nibbles [0,15] with separate scale (d) and min (m):
+///   val[i] = d * nibble[i] + m
+/// The caller computes: result = d * unsigned_dot + m * q8_sum
+fn dot_q4_1_q8_block_scalar(packed_q4: &[u8], q8_values: &[i8]) -> (i32, i32) {
+    let mut dot = 0i32;
+    let mut q8_sum = 0i32;
+    for j in 0..16 {
+        let lo = (packed_q4[j] & 0x0F) as i32;
+        let hi = ((packed_q4[j] >> 4) & 0x0F) as i32;
+        dot += lo * (q8_values[j] as i32);
+        dot += hi * (q8_values[j + 16] as i32);
+        q8_sum += q8_values[j] as i32;
+        q8_sum += q8_values[j + 16] as i32;
+    }
+    (dot, q8_sum)
+}
+
 // --- x86_64 SIMD implementations ---
 
 #[cfg(target_arch = "x86_64")]
@@ -173,6 +192,51 @@ mod x86 {
         biased_dot - 8 * q8_sum
     }
 
+    #[target_feature(enable = "avx2")]
+    pub(super) unsafe fn dot_q4_1_q8_block_avx2(packed_q4: &[u8], q8_values: &[i8]) -> (i32, i32) {
+        use std::arch::x86_64::*;
+
+        let packed = _mm_loadu_si128(packed_q4.as_ptr() as *const __m128i);
+        let mask_0f = _mm_set1_epi8(0x0F);
+
+        let lo = _mm_and_si128(packed, mask_0f);
+        let hi = _mm_and_si128(_mm_srli_epi16(packed, 4), mask_0f);
+
+        // [lo0..lo15, hi0..hi15] as unsigned bytes — no centering needed for Q4_1
+        let q4_unsigned = _mm256_set_m128i(hi, lo);
+        let q8 = _mm256_loadu_si256(q8_values.as_ptr() as *const __m256i);
+
+        // unsigned_dot = sum(nibble[i] * q8[i])
+        let products = _mm256_maddubs_epi16(q4_unsigned, q8);
+        let ones_i16 = _mm256_set1_epi16(1);
+        let products_i32 = _mm256_madd_epi16(products, ones_i16);
+
+        let hi128 = _mm256_extracti128_si256(products_i32, 1);
+        let lo128 = _mm256_castsi256_si128(products_i32);
+        let sum128 = _mm_add_epi32(lo128, hi128);
+        let hi64 = _mm_srli_si128(sum128, 8);
+        let sum64 = _mm_add_epi32(sum128, hi64);
+        let hi32 = _mm_srli_si128(sum64, 4);
+        let sum32 = _mm_add_epi32(sum64, hi32);
+        let unsigned_dot = _mm_cvtsi128_si32(sum32);
+
+        // q8_sum = sum(q8[i])
+        let ones_u8 = _mm256_set1_epi8(1);
+        let q8_pairwise = _mm256_maddubs_epi16(ones_u8, q8);
+        let q8_i32 = _mm256_madd_epi16(q8_pairwise, ones_i16);
+
+        let q8_hi128 = _mm256_extracti128_si256(q8_i32, 1);
+        let q8_lo128 = _mm256_castsi256_si128(q8_i32);
+        let q8_sum128 = _mm_add_epi32(q8_lo128, q8_hi128);
+        let q8_hi64 = _mm_srli_si128(q8_sum128, 8);
+        let q8_sum64 = _mm_add_epi32(q8_sum128, q8_hi64);
+        let q8_hi32 = _mm_srli_si128(q8_sum64, 4);
+        let q8_sum32 = _mm_add_epi32(q8_sum64, q8_hi32);
+        let q8_sum = _mm_cvtsi128_si32(q8_sum32);
+
+        (unsigned_dot, q8_sum)
+    }
+
     #[target_feature(enable = "sse2")]
     pub(super) unsafe fn dot_q8_block_sse2(input: &[f32], quantized: &[i8], scale: f32) -> f32 {
         use std::arch::x86_64::*;
@@ -259,6 +323,51 @@ mod x86 {
         let hi32 = _mm_srli_si128(sum64, 4);
         let sum32 = _mm_add_epi32(sum64, hi32);
         _mm_cvtsi128_si32(sum32)
+    }
+
+    #[target_feature(enable = "sse2")]
+    pub(super) unsafe fn dot_q4_1_q8_block_sse2(packed_q4: &[u8], q8_values: &[i8]) -> (i32, i32) {
+        use std::arch::x86_64::*;
+
+        let mut unpacked_unsigned = [0u8; 32];
+        for j in 0..16 {
+            let byte = packed_q4[j];
+            unpacked_unsigned[j] = byte & 0x0F;
+            unpacked_unsigned[j + 16] = (byte >> 4) & 0x0F;
+        }
+
+        let zero = _mm_setzero_si128();
+        let mut dot_acc = _mm_setzero_si128();
+        let mut q8_acc = _mm_setzero_si128();
+
+        for chunk in 0..4 {
+            let base = chunk * 8;
+            // Unsigned nibbles → i16
+            let q4_raw = _mm_loadl_epi64(unpacked_unsigned.as_ptr().add(base) as *const __m128i);
+            let q4_i16 = _mm_unpacklo_epi8(q4_raw, zero);
+
+            // Signed q8 values → i16
+            let q8_raw = _mm_loadl_epi64(q8_values.as_ptr().add(base) as *const __m128i);
+            let q8_sign = _mm_cmpgt_epi8(zero, q8_raw);
+            let q8_i16 = _mm_unpacklo_epi8(q8_raw, q8_sign);
+
+            dot_acc = _mm_add_epi32(dot_acc, _mm_madd_epi16(q4_i16, q8_i16));
+            q8_acc = _mm_add_epi32(q8_acc, _mm_madd_epi16(q8_i16, _mm_set1_epi16(1)));
+        }
+
+        let hi64 = _mm_srli_si128(dot_acc, 8);
+        let sum64 = _mm_add_epi32(dot_acc, hi64);
+        let hi32 = _mm_srli_si128(sum64, 4);
+        let sum32 = _mm_add_epi32(sum64, hi32);
+        let unsigned_dot = _mm_cvtsi128_si32(sum32);
+
+        let q8_hi64 = _mm_srli_si128(q8_acc, 8);
+        let q8_sum64 = _mm_add_epi32(q8_acc, q8_hi64);
+        let q8_hi32 = _mm_srli_si128(q8_sum64, 4);
+        let q8_sum32 = _mm_add_epi32(q8_sum64, q8_hi32);
+        let q8_sum = _mm_cvtsi128_si32(q8_sum32);
+
+        (unsigned_dot, q8_sum)
     }
 }
 
@@ -354,6 +463,53 @@ mod arm {
 
         vaddvq_s32(acc)
     }
+
+    pub(super) unsafe fn dot_q4_1_q8_block_neon(packed_q4: &[u8], q8_values: &[i8]) -> (i32, i32) {
+        use std::arch::aarch64::*;
+
+        let packed = vld1q_u8(packed_q4.as_ptr());
+        let mask_0f = vdupq_n_u8(0x0F);
+
+        // Unsigned nibbles — no offset subtraction for Q4_1
+        let lo_u8 = vandq_u8(packed, mask_0f);
+        let hi_u8 = vshrq_n_u8(packed, 4);
+
+        // Reinterpret unsigned nibbles as signed for vmull_s8
+        // Since values are 0-15, they fit in signed i8 without overflow
+        let lo_i8 = vreinterpretq_s8_u8(lo_u8);
+        let hi_i8 = vreinterpretq_s8_u8(hi_u8);
+
+        let lo_low = vget_low_s8(lo_i8);
+        let lo_high = vget_high_s8(lo_i8);
+        let hi_low = vget_low_s8(hi_i8);
+        let hi_high = vget_high_s8(hi_i8);
+
+        let q8_0_15 = vld1q_s8(q8_values.as_ptr());
+        let q8_16_31 = vld1q_s8(q8_values.as_ptr().add(16));
+        let q8_0_7 = vget_low_s8(q8_0_15);
+        let q8_8_15 = vget_high_s8(q8_0_15);
+        let q8_16_23 = vget_low_s8(q8_16_31);
+        let q8_24_31 = vget_high_s8(q8_16_31);
+
+        // unsigned_dot
+        let mut dot_acc = vdupq_n_s32(0);
+        dot_acc = vpadalq_s16(dot_acc, vmull_s8(lo_low, q8_0_7));
+        dot_acc = vpadalq_s16(dot_acc, vmull_s8(lo_high, q8_8_15));
+        dot_acc = vpadalq_s16(dot_acc, vmull_s8(hi_low, q8_16_23));
+        dot_acc = vpadalq_s16(dot_acc, vmull_s8(hi_high, q8_24_31));
+        let unsigned_dot = vaddvq_s32(dot_acc);
+
+        // q8_sum
+        let ones = vdup_n_s8(1);
+        let mut q8_acc = vdupq_n_s32(0);
+        q8_acc = vpadalq_s16(q8_acc, vmull_s8(q8_0_7, ones));
+        q8_acc = vpadalq_s16(q8_acc, vmull_s8(q8_8_15, ones));
+        q8_acc = vpadalq_s16(q8_acc, vmull_s8(q8_16_23, ones));
+        q8_acc = vpadalq_s16(q8_acc, vmull_s8(q8_24_31, ones));
+        let q8_sum = vaddvq_s32(q8_acc);
+
+        (unsigned_dot, q8_sum)
+    }
 }
 
 // --- Public dispatch functions ---
@@ -424,6 +580,37 @@ pub fn dot_q4q8_block(packed_q4: &[u8], q8_values: &[i8]) -> i32 {
     dot_q4q8_block_scalar(packed_q4, q8_values)
 }
 
+/// Runtime-dispatched Q4_1 x Q8_0 dot product → (unsigned_dot, q8_sum).
+///
+/// Returns the raw integer dot product of unsigned nibbles × signed q8 values,
+/// and the sum of all q8 values. Caller computes:
+///   result = d * unsigned_dot + m * q8_sum
+pub fn dot_q4_1_q8_block(packed_q4: &[u8], q8_values: &[i8]) -> (i32, i32) {
+    debug_assert!(packed_q4.len() >= 16);
+    debug_assert!(q8_values.len() >= 32);
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("avx2") {
+            return unsafe { x86::dot_q4_1_q8_block_avx2(packed_q4, q8_values) };
+        }
+        return unsafe { x86::dot_q4_1_q8_block_sse2(packed_q4, q8_values) };
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        return unsafe { arm::dot_q4_1_q8_block_neon(packed_q4, q8_values) };
+    }
+
+    #[allow(unreachable_code)]
+    dot_q4_1_q8_block_scalar(packed_q4, q8_values)
+}
+
+/// Scalar-only Q4_1 x Q8_0 dot product (for testing).
+pub fn dot_q4_1_q8_block_scalar_ref(packed_q4: &[u8], q8_values: &[i8]) -> (i32, i32) {
+    dot_q4_1_q8_block_scalar(packed_q4, q8_values)
+}
+
 /// Scalar-only dot product for Q8_0 block (for testing).
 pub fn dot_q8_block_scalar_ref(input: &[f32], quantized: &[i8], scale: f32) -> f32 {
     dot_q8_block_scalar(input, quantized, scale)
@@ -473,6 +660,23 @@ mod tests {
 
         assert!((scalar - dispatched).abs() < 1e-3,
             "Q4 scalar {} vs dispatched {}", scalar, dispatched);
+    }
+
+    #[test]
+    fn test_q4_1_q8_dot_scalar_vs_dispatch() {
+        let mut packed_q4 = [0u8; 16];
+        for j in 0..16 {
+            packed_q4[j] = ((j as u8 + 1) << 4) | (j as u8);
+        }
+        let q8_values: Vec<i8> = (0..32).map(|i| (i - 16) as i8).collect();
+
+        let (scalar_dot, scalar_sum) = dot_q4_1_q8_block_scalar_ref(&packed_q4, &q8_values);
+        let (dispatch_dot, dispatch_sum) = dot_q4_1_q8_block(&packed_q4, &q8_values);
+
+        assert_eq!(scalar_dot, dispatch_dot,
+            "Q4_1 unsigned_dot scalar {} vs dispatched {}", scalar_dot, dispatch_dot);
+        assert_eq!(scalar_sum, dispatch_sum,
+            "Q4_1 q8_sum scalar {} vs dispatched {}", scalar_sum, dispatch_sum);
     }
 
     #[test]

@@ -393,6 +393,184 @@ pub fn matmul_f32_q4_native(
     Ok(output)
 }
 
+/// Dequantize Q4_1 bytes back to f32.
+///
+/// Q4_1 block layout (20 bytes): [f16 d][f16 m][16 bytes packed nibbles]
+/// val[i] = d * nibble[i] + m
+pub fn dequantize_q4_1(raw: &[u8], n_elements: usize) -> QuantResult<Vec<f32>> {
+    let n_blocks = n_elements / Q4_1_BLOCK_SIZE;
+    if raw.len() != n_blocks * Q4_1_BLOCK_BYTES {
+        return Err(QuantError::ShapeMismatch {
+            expected: vec![n_blocks * Q4_1_BLOCK_BYTES],
+            actual: vec![raw.len()],
+        });
+    }
+
+    let mut out_f32 = Vec::with_capacity(n_elements);
+    for block_idx in 0..n_blocks {
+        let offset = block_idx * Q4_1_BLOCK_BYTES;
+        let d = f16::from_le_bytes([raw[offset], raw[offset + 1]]).to_f32();
+        let m = f16::from_le_bytes([raw[offset + 2], raw[offset + 3]]).to_f32();
+
+        for i in 0..16 {
+            let packed = raw[offset + 4 + i];
+            let lo = (packed & 0x0F) as f32;
+            let hi = ((packed >> 4) & 0x0F) as f32;
+
+            out_f32.push(d * lo + m);
+            out_f32.push(d * hi + m);
+        }
+    }
+
+    Ok(out_f32)
+}
+
+/// Compute F32 input x Q4_1 weights -> F32 output (float dequant path).
+pub fn matmul_f32_q4_1(
+    input_data: &[f32],
+    weight_bytes: &[u8],
+    m: usize,
+    in_features: usize,
+    out_features: usize,
+) -> QuantResult<Vec<f32>> {
+    if in_features % Q4_1_BLOCK_SIZE != 0 {
+        return Err(QuantError::BlockAlignment(format!(
+            "in_features {} not divisible by Q4_1 block size {}",
+            in_features, Q4_1_BLOCK_SIZE
+        )));
+    }
+
+    let blocks_per_row = in_features / Q4_1_BLOCK_SIZE;
+    let row_bytes = blocks_per_row * Q4_1_BLOCK_BYTES;
+
+    let mut output = vec![0.0f32; m * out_features];
+
+    output
+        .par_chunks_mut(out_features)
+        .enumerate()
+        .for_each(|(row_idx, out_row)| {
+            let input_row = &input_data[row_idx * in_features..(row_idx + 1) * in_features];
+
+            let mut col_idx = 0;
+            while col_idx < out_features {
+                let tile_end = (col_idx + TILE_N).min(out_features);
+                for c in col_idx..tile_end {
+                    let w_row_offset = c * row_bytes;
+                    let mut dot = 0.0f32;
+
+                    for block_idx in 0..blocks_per_row {
+                        let block_offset = w_row_offset + block_idx * Q4_1_BLOCK_BYTES;
+                        let d = f16::from_le_bytes([
+                            weight_bytes[block_offset],
+                            weight_bytes[block_offset + 1],
+                        ]).to_f32();
+                        let m_val = f16::from_le_bytes([
+                            weight_bytes[block_offset + 2],
+                            weight_bytes[block_offset + 3],
+                        ]).to_f32();
+                        let input_offset = block_idx * Q4_1_BLOCK_SIZE;
+                        let packed = &weight_bytes[block_offset + 4..block_offset + 4 + 16];
+
+                        // Dequantize-then-dot path
+                        let mut block_dot = 0.0f32;
+                        let mut input_sum = 0.0f32;
+                        for j in 0..16 {
+                            let lo = (packed[j] & 0x0F) as f32;
+                            let hi = ((packed[j] >> 4) & 0x0F) as f32;
+                            block_dot += input_row[input_offset + j] * lo;
+                            block_dot += input_row[input_offset + j + 16] * hi;
+                            input_sum += input_row[input_offset + j];
+                            input_sum += input_row[input_offset + j + 16];
+                        }
+                        dot += d * block_dot + m_val * input_sum;
+                    }
+
+                    out_row[c] = dot;
+                }
+                col_idx = tile_end;
+            }
+        });
+
+    Ok(output)
+}
+
+/// Compute F32 input x Q4_1 weights -> F32 output using native integer dot products.
+///
+/// Quantizes F32 activations to Q8_0 on-the-fly, performs integer dot products
+/// within each 32-element block, and applies Q4_1 scale + min per block.
+pub fn matmul_f32_q4_1_native(
+    input_data: &[f32],
+    weight_bytes: &[u8],
+    m: usize,
+    in_features: usize,
+    out_features: usize,
+) -> QuantResult<Vec<f32>> {
+    if in_features % Q4_1_BLOCK_SIZE != 0 {
+        return Err(QuantError::BlockAlignment(format!(
+            "in_features {} not divisible by Q4_1 block size {}",
+            in_features, Q4_1_BLOCK_SIZE
+        )));
+    }
+
+    let blocks_per_row = in_features / Q4_1_BLOCK_SIZE;
+    let row_bytes = blocks_per_row * Q4_1_BLOCK_BYTES;
+
+    let mut output = vec![0.0f32; m * out_features];
+
+    output
+        .par_chunks_mut(out_features)
+        .enumerate()
+        .for_each(|(row_idx, out_row)| {
+            let input_row = &input_data[row_idx * in_features..(row_idx + 1) * in_features];
+
+            // Thread-local Q8_0 buffers
+            let mut q8_buf = vec![0u8; blocks_per_row * Q8_0_BLOCK_BYTES];
+            let mut q8_scales = vec![0.0f32; blocks_per_row];
+
+            quantize_row_q8_0(input_row, &mut q8_buf, &mut q8_scales);
+
+            let mut col_idx = 0;
+            while col_idx < out_features {
+                let tile_end = (col_idx + TILE_N).min(out_features);
+                for c in col_idx..tile_end {
+                    let w_row_offset = c * row_bytes;
+                    let mut dot = 0.0f32;
+
+                    for block_idx in 0..blocks_per_row {
+                        let block_offset = w_row_offset + block_idx * Q4_1_BLOCK_BYTES;
+                        let d = f16::from_le_bytes([
+                            weight_bytes[block_offset],
+                            weight_bytes[block_offset + 1],
+                        ]).to_f32();
+                        let m_val = f16::from_le_bytes([
+                            weight_bytes[block_offset + 2],
+                            weight_bytes[block_offset + 3],
+                        ]).to_f32();
+                        let packed_q4 = &weight_bytes[block_offset + 4..block_offset + 4 + 16];
+
+                        let q8_block_offset = block_idx * Q8_0_BLOCK_BYTES;
+                        // SAFETY: q8_buf[+2..+34] contains i8 values stored as u8
+                        let q8_i8: &[i8] = unsafe {
+                            std::slice::from_raw_parts(
+                                q8_buf[q8_block_offset + 2..q8_block_offset + 2 + Q8_0_BLOCK_SIZE]
+                                    .as_ptr() as *const i8,
+                                Q8_0_BLOCK_SIZE,
+                            )
+                        };
+
+                        let (unsigned_dot, q8_sum) = simd::dot_q4_1_q8_block(packed_q4, q8_i8);
+                        dot += q8_scales[block_idx] * (d * unsigned_dot as f32 + m_val * q8_sum as f32);
+                    }
+
+                    out_row[c] = dot;
+                }
+                col_idx = tile_end;
+            }
+        });
+
+    Ok(output)
+}
+
 /// Safely convert a Vec<f32> into a Vec<u8>.
 pub fn f32_vec_to_bytes(v: Vec<f32>) -> Vec<u8> {
     match bytemuck::try_cast_vec::<f32, u8>(v) {

@@ -17,6 +17,7 @@ pub fn loaded_dtype_to_dtype(dtype: LoadedDType) -> DType {
         LoadedDType::F16 => DType::F16,
         LoadedDType::Q8_0 => DType::Q8_0,
         LoadedDType::Q4_0 => DType::Q4_0,
+        LoadedDType::Q4_1 => DType::Q4_1,
     }
 }
 

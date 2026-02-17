@@ -28,6 +28,8 @@ pub enum DType {
     Q8_0,
     /// Block-quantized 4-bit: 32 elements/block, 18 bytes/block
     Q4_0,
+    /// Block-quantized 4-bit with min: 32 elements/block, 20 bytes/block
+    Q4_1,
 }
 
 impl DType {
@@ -39,6 +41,7 @@ impl DType {
             DType::I8 | DType::U8 => 1,
             DType::Q8_0 => 0,
             DType::Q4_0 => 0,
+            DType::Q4_1 => 0,
         }
     }
 }

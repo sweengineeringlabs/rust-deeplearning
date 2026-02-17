@@ -10,6 +10,12 @@ pub const Q4_0_BLOCK_SIZE: usize = 32;
 /// Bytes per Q4_0 block: 2-byte f16 scale + 16 bytes (32 x 4-bit packed).
 pub const Q4_0_BLOCK_BYTES: usize = 18;
 
+/// Number of elements per Q4_1 block.
+pub const Q4_1_BLOCK_SIZE: usize = 32;
+
+/// Bytes per Q4_1 block: 2-byte f16 scale (d) + 2-byte f16 min (m) + 16 bytes (32 x 4-bit packed).
+pub const Q4_1_BLOCK_BYTES: usize = 20;
+
 /// Tile size for input rows (cache-aware tiled matmul).
 pub const TILE_M: usize = 4;
 

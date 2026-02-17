@@ -89,7 +89,7 @@ impl Linear {
 
     /// Returns true if the weight is in a quantized format (Q8_0 or Q4_0).
     pub fn is_quantized(&self) -> bool {
-        matches!(self.weight.dtype(), DType::Q8_0 | DType::Q4_0)
+        matches!(self.weight.dtype(), DType::Q8_0 | DType::Q4_0 | DType::Q4_1)
     }
 
     /// Toggle native Q4_0×Q8_0 integer matmul for Q4_0 weights.
@@ -131,7 +131,23 @@ impl Linear {
                 rustml_quant::matmul_f32_q4(x_data, w_bytes, m, in_features, out_features)?
             };
 
-            // Reconstruct shape: replace last dim with out_features
+            let mut out_shape: Vec<usize> = x.shape().to_vec();
+            *out_shape.last_mut().unwrap() = out_features;
+            Tensor::from_vec(result_data, out_shape)?
+        } else if self.weight.dtype() == DType::Q4_1 {
+            let x_f32 = x.to_f32()?;
+            let x_data = x_f32.data()?;
+            let w_bytes = self.weight.as_raw_bytes()?;
+            let in_features = self.in_features;
+            let out_features = self.out_features;
+            let m = x_data.len() / in_features;
+
+            let result_data = if self.use_native_q4 {
+                rustml_quant::matmul_f32_q4_1_native(x_data, w_bytes, m, in_features, out_features)?
+            } else {
+                rustml_quant::matmul_f32_q4_1(x_data, w_bytes, m, in_features, out_features)?
+            };
+
             let mut out_shape: Vec<usize> = x.shape().to_vec();
             *out_shape.last_mut().unwrap() = out_features;
             Tensor::from_vec(result_data, out_shape)?

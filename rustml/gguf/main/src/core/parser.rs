@@ -329,7 +329,8 @@ impl GGUFFile {
                     GGMLType::F16 => LoadedDType::F16,
                     GGMLType::Q8_0 => LoadedDType::Q8_0,
                     GGMLType::Q4_0 => LoadedDType::Q4_0,
-                    GGMLType::Q4_1 | GGMLType::Q5_0 | GGMLType::Q5_1 | GGMLType::Q8_1 => {
+                    GGMLType::Q4_1 => LoadedDType::Q4_1,
+                    GGMLType::Q5_0 | GGMLType::Q5_1 | GGMLType::Q8_1 => {
                         // Legacy quant types: dequantize to F32 at load time
                         let f32_data = dequantize_legacy(raw_data, n_elements, info.ggml_type)?;
                         let f32_bytes = rustml_quant::f32_vec_to_bytes(f32_data);

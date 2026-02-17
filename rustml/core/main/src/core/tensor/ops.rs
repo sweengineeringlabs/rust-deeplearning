@@ -6,6 +6,117 @@ use crate::core::shape::Shape;
 use super::tensor::{Tensor, f32_vec_to_bytes, TensorShape};
 use smallvec::{smallvec, SmallVec};
 
+// ==================== SIMD-accelerated kernels ====================
+
+/// Process one row of RMSNorm using AVX2: sum of squares → normalize × gamma.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn rms_norm_row_avx2(row: &[f32], gamma: &[f32], out: &mut [f32], eps: f32) {
+    use std::arch::x86_64::*;
+    let dim = row.len();
+
+    // Phase 1: Sum of squares
+    let mut acc0 = _mm256_setzero_ps();
+    let mut acc1 = _mm256_setzero_ps();
+    let mut i = 0;
+    while i + 16 <= dim {
+        let v0 = _mm256_loadu_ps(row.as_ptr().add(i));
+        let v1 = _mm256_loadu_ps(row.as_ptr().add(i + 8));
+        acc0 = _mm256_add_ps(acc0, _mm256_mul_ps(v0, v0));
+        acc1 = _mm256_add_ps(acc1, _mm256_mul_ps(v1, v1));
+        i += 16;
+    }
+    while i + 8 <= dim {
+        let v = _mm256_loadu_ps(row.as_ptr().add(i));
+        acc0 = _mm256_add_ps(acc0, _mm256_mul_ps(v, v));
+        i += 8;
+    }
+    let sum_vec = _mm256_add_ps(acc0, acc1);
+    // Horizontal sum of 8 floats
+    let hi = _mm256_extractf128_ps(sum_vec, 1);
+    let lo = _mm256_castps256_ps128(sum_vec);
+    let sum128 = _mm_add_ps(lo, hi);
+    let shuf = _mm_movehdup_ps(sum128);
+    let sums = _mm_add_ps(sum128, shuf);
+    let shuf2 = _mm_movehl_ps(sums, sums);
+    let result = _mm_add_ss(sums, shuf2);
+    let mut sum_sq = _mm_cvtss_f32(result);
+    // Scalar remainder
+    while i < dim {
+        sum_sq += row[i] * row[i];
+        i += 1;
+    }
+
+    // Phase 2: Compute 1/rms and fused normalize × scale
+    let rms = (sum_sq / dim as f32 + eps).sqrt();
+    let inv_rms = 1.0 / rms;
+    let inv_rms_vec = _mm256_set1_ps(inv_rms);
+
+    i = 0;
+    while i + 8 <= dim {
+        let v = _mm256_loadu_ps(row.as_ptr().add(i));
+        let g = _mm256_loadu_ps(gamma.as_ptr().add(i));
+        let normalized = _mm256_mul_ps(v, inv_rms_vec);
+        let scaled = _mm256_mul_ps(normalized, g);
+        _mm256_storeu_ps(out.as_mut_ptr().add(i), scaled);
+        i += 8;
+    }
+    // Scalar remainder
+    while i < dim {
+        out[i] = row[i] * inv_rms * gamma[i];
+        i += 1;
+    }
+}
+
+/// Process one row of RMSNorm using NEON: sum of squares → normalize × gamma.
+#[cfg(target_arch = "aarch64")]
+unsafe fn rms_norm_row_neon(row: &[f32], gamma: &[f32], out: &mut [f32], eps: f32) {
+    use std::arch::aarch64::*;
+    let dim = row.len();
+
+    // Phase 1: Sum of squares
+    let mut acc0 = vdupq_n_f32(0.0);
+    let mut acc1 = vdupq_n_f32(0.0);
+    let mut i = 0;
+    while i + 8 <= dim {
+        let v0 = vld1q_f32(row.as_ptr().add(i));
+        let v1 = vld1q_f32(row.as_ptr().add(i + 4));
+        acc0 = vfmaq_f32(acc0, v0, v0);
+        acc1 = vfmaq_f32(acc1, v1, v1);
+        i += 8;
+    }
+    while i + 4 <= dim {
+        let v = vld1q_f32(row.as_ptr().add(i));
+        acc0 = vfmaq_f32(acc0, v, v);
+        i += 4;
+    }
+    let sum_vec = vaddq_f32(acc0, acc1);
+    let mut sum_sq = vaddvq_f32(sum_vec);
+    while i < dim {
+        sum_sq += row[i] * row[i];
+        i += 1;
+    }
+
+    // Phase 2: Normalize × scale
+    let rms = (sum_sq / dim as f32 + eps).sqrt();
+    let inv_rms = 1.0 / rms;
+    let inv_rms_vec = vdupq_n_f32(inv_rms);
+
+    i = 0;
+    while i + 4 <= dim {
+        let v = vld1q_f32(row.as_ptr().add(i));
+        let g = vld1q_f32(gamma.as_ptr().add(i));
+        let normalized = vmulq_f32(v, inv_rms_vec);
+        let scaled = vmulq_f32(normalized, g);
+        vst1q_f32(out.as_mut_ptr().add(i), scaled);
+        i += 4;
+    }
+    while i < dim {
+        out[i] = row[i] * inv_rms * gamma[i];
+        i += 1;
+    }
+}
+
 /// Check that rhs shape is a valid broadcast suffix of lhs shape.
 fn is_valid_broadcast(lhs_shape: &[usize], rhs_shape: &[usize]) -> bool {
     if rhs_shape.len() > lhs_shape.len() {
@@ -154,6 +265,100 @@ impl Tensor {
         }
 
         Ok(Tensor::new(f32_vec_to_bytes(out_data), self.shape_sv.clone(), self.dtype))
+    }
+
+    // ==================== In-place ops ====================
+
+    /// In-place element-wise addition (same-shape only, no broadcasting).
+    ///
+    /// If the tensor is uniquely owned, mutates in place with zero allocation.
+    /// Otherwise copies data first.
+    pub fn add_inplace(&mut self, other: &Tensor) -> TensorResult<()> {
+        let rhs = other.as_slice_f32()?;
+        let lhs = self.as_mut_slice_f32()?;
+        if lhs.len() != rhs.len() {
+            return Err(TensorError::ShapeMismatch {
+                expected: self.shape_sv.to_vec(),
+                got: other.shape_sv.to_vec(),
+            });
+        }
+        for (a, b) in lhs.iter_mut().zip(rhs.iter()) {
+            *a += *b;
+        }
+        Ok(())
+    }
+
+    /// In-place scalar multiplication.
+    pub fn mul_scalar_inplace(&mut self, scalar: f32) -> TensorResult<()> {
+        let data = self.as_mut_slice_f32()?;
+        for v in data.iter_mut() {
+            *v *= scalar;
+        }
+        Ok(())
+    }
+
+    /// In-place RMSNorm: overwrites self with rms_norm(self, weight, eps).
+    /// SIMD-accelerated on x86_64 (AVX2) and aarch64 (NEON).
+    pub fn rms_norm_inplace(&mut self, weight: &Tensor, eps: f32) -> TensorResult<()> {
+        if self.shape_sv.is_empty() {
+            return Err(TensorError::ShapeMismatch {
+                expected: vec![1],
+                got: vec![],
+            });
+        }
+        let last_dim = self.shape_sv[self.shape_sv.len() - 1];
+        let gamma = weight.as_slice_f32()?;
+        if gamma.len() != last_dim {
+            return Err(TensorError::ShapeMismatch {
+                expected: vec![last_dim],
+                got: vec![gamma.len()],
+            });
+        }
+
+        let data = self.as_mut_slice_f32()?;
+        let num_rows = data.len() / last_dim;
+
+        #[cfg(target_arch = "x86_64")]
+        let use_avx2 = is_x86_feature_detected!("avx2") && last_dim >= 8;
+        #[cfg(not(target_arch = "x86_64"))]
+        let use_avx2 = false;
+
+        // We need a scratch buffer because we read and write the same row
+        let mut scratch = vec![0.0f32; last_dim];
+
+        for i in 0..num_rows {
+            let start = i * last_dim;
+
+            #[cfg(target_arch = "x86_64")]
+            if use_avx2 {
+                scratch.copy_from_slice(&data[start..start + last_dim]);
+                let out_row = &mut data[start..start + last_dim];
+                unsafe { rms_norm_row_avx2(&scratch, gamma, out_row, eps) };
+                continue;
+            }
+
+            #[cfg(target_arch = "aarch64")]
+            if last_dim >= 4 {
+                scratch.copy_from_slice(&data[start..start + last_dim]);
+                let out_row = &mut data[start..start + last_dim];
+                unsafe { rms_norm_row_neon(&scratch, gamma, out_row, eps) };
+                continue;
+            }
+
+            // Scalar fallback
+            let row = &data[start..start + last_dim];
+            let mut sum_sq = 0.0f32;
+            for &x in row.iter() {
+                sum_sq += x * x;
+            }
+            let rms = (sum_sq / last_dim as f32 + eps).sqrt();
+            let inv_rms = 1.0 / rms;
+            for j in 0..last_dim {
+                data[start + j] = data[start + j] * inv_rms * gamma[j];
+            }
+        }
+
+        Ok(())
     }
 
     // ==================== Scalar ops ====================
@@ -474,7 +679,7 @@ impl Tensor {
         ))
     }
 
-    /// RMSNorm over the last dimension.
+    /// RMSNorm over the last dimension. SIMD-accelerated on x86_64 (AVX2) and aarch64 (NEON).
     pub fn rms_norm(&self, weight: &Tensor, eps: f32) -> TensorResult<Tensor> {
         if self.shape_sv.is_empty() {
             return Err(TensorError::ShapeMismatch {
@@ -494,12 +699,32 @@ impl Tensor {
         }
 
         let num_rows = input.len() / last_dim;
-        let mut out_data = Vec::with_capacity(input.len());
+        let mut out_data = vec![0.0f32; input.len()];
+
+        // SIMD dispatch
+        #[cfg(target_arch = "x86_64")]
+        let use_avx2 = is_x86_feature_detected!("avx2") && last_dim >= 8;
+        #[cfg(not(target_arch = "x86_64"))]
+        let use_avx2 = false;
 
         for i in 0..num_rows {
             let start = i * last_dim;
             let row = &input[start..start + last_dim];
+            let out_row = &mut out_data[start..start + last_dim];
 
+            #[cfg(target_arch = "x86_64")]
+            if use_avx2 {
+                unsafe { rms_norm_row_avx2(row, gamma, out_row, eps) };
+                continue;
+            }
+
+            #[cfg(target_arch = "aarch64")]
+            if last_dim >= 4 {
+                unsafe { rms_norm_row_neon(row, gamma, out_row, eps) };
+                continue;
+            }
+
+            // Scalar fallback
             let mut sum_sq = 0.0f32;
             for &x in row {
                 sum_sq += x * x;
@@ -507,7 +732,7 @@ impl Tensor {
             let rms = (sum_sq / last_dim as f32 + eps).sqrt();
 
             for j in 0..last_dim {
-                out_data.push(row[j] / rms * gamma[j]);
+                out_row[j] = row[j] / rms * gamma[j];
             }
         }
 

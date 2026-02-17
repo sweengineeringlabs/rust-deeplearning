@@ -283,6 +283,7 @@ fn dtype_to_byte(dtype: DType) -> u8 {
         DType::U8 => 4,
         DType::Q8_0 => 5,
         DType::Q4_0 => 6,
+        DType::Q4_1 => 7,
     }
 }
 
@@ -295,6 +296,7 @@ fn byte_to_dtype(b: u8) -> Result<DType, SafeTensorsError> {
         4 => Ok(DType::U8),
         5 => Ok(DType::Q8_0),
         6 => Ok(DType::Q4_0),
+        7 => Ok(DType::Q4_1),
         _ => Err(SafeTensorsError::UnsupportedDtype(format!("Unknown dtype byte: {}", b))),
     }
 }

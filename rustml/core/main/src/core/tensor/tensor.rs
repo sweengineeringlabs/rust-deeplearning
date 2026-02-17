@@ -377,6 +377,38 @@ impl Tensor {
         })
     }
 
+    /// Get mutable access to the underlying f32 data.
+    ///
+    /// If the storage is shared (Arc refcount > 1) or not Owned, this will
+    /// copy the data first to ensure unique ownership.
+    pub fn as_mut_slice_f32(&mut self) -> TensorResult<&mut [f32]> {
+        if self.dtype != DType::F32 {
+            return Err(TensorError::DTypeMismatch {
+                expected: DType::F32,
+                got: self.dtype,
+            });
+        }
+        // Try to get mutable access without copying
+        if Arc::get_mut(&mut self.data)
+            .and_then(|s| match s {
+                Storage::Owned(_) => Some(()),
+                _ => None,
+            })
+            .is_none()
+        {
+            // Copy data to get unique ownership
+            let bytes = self.as_raw_bytes()?.to_vec();
+            self.data = Arc::new(Storage::Owned(bytes));
+        }
+        // Now we have unique Owned storage
+        match Arc::get_mut(&mut self.data).unwrap() {
+            Storage::Owned(v) => bytemuck::try_cast_slice_mut(v.as_mut_slice()).map_err(
+                |_| TensorError::ConversionError("as_mut_slice_f32: data not 4-byte aligned".into()),
+            ),
+            _ => unreachable!(),
+        }
+    }
+
     /// Returns raw byte slice from any Storage variant.
     pub fn as_raw_bytes(&self) -> TensorResult<&[u8]> {
         match self.data.as_ref() {
@@ -528,6 +560,43 @@ impl Tensor {
                         let hi = ((byte >> 4) & 0x0F) as i32 - 8;
                         out[base + j] = scale * lo as f32;
                         out[base + j + 16] = scale * hi as f32;
+                    }
+                }
+                Ok(Tensor::new(
+                    f32_vec_to_bytes(out),
+                    self.shape_sv.clone(),
+                    DType::F32,
+                ))
+            }
+            DType::Q4_1 => {
+                let bytes = self.as_raw_bytes()?;
+                let n_elements = self.element_count();
+                if n_elements % 32 != 0 {
+                    return Err(TensorError::ConversionError(format!(
+                        "Q4_1 element count {} not divisible by 32",
+                        n_elements
+                    )));
+                }
+                let n_blocks = n_elements / 32;
+                let expected_bytes = n_blocks * 20; // Q4_1: 20 bytes/block
+                if bytes.len() < expected_bytes {
+                    return Err(TensorError::ShapeMismatch {
+                        expected: vec![expected_bytes],
+                        got: vec![bytes.len()],
+                    });
+                }
+                let mut out = vec![0.0f32; n_elements];
+                for b in 0..n_blocks {
+                    let block = &bytes[b * 20..(b + 1) * 20];
+                    let d = f16::from_le_bytes([block[0], block[1]]).to_f32();
+                    let m = f16::from_le_bytes([block[2], block[3]]).to_f32();
+                    let base = b * 32;
+                    for j in 0..16 {
+                        let byte = block[4 + j];
+                        let lo = (byte & 0x0F) as f32;
+                        let hi = ((byte >> 4) & 0x0F) as f32;
+                        out[base + j] = d * lo + m;
+                        out[base + j + 16] = d * hi + m;
                     }
                 }
                 Ok(Tensor::new(

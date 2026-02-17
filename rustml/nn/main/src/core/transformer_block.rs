@@ -291,6 +291,9 @@ impl TransformerBlock {
     }
 
     /// Forward pass with KV cache for autoregressive decoding.
+    ///
+    /// Uses in-place operations for residual connections to minimize allocation
+    /// overhead in the decode loop.
     pub fn forward_with_cache(
         &self,
         input: &Tensor,
@@ -301,28 +304,34 @@ impl TransformerBlock {
         if self.parallel_residual {
             // Falcon: x = input + attn(norm1(input)) + ffn(norm2(input))
             let norm_1 = self.attention_norm.forward(input)?;
-            let attn_out = self.attention.forward_with_cache(&norm_1, cache, layer_idx)?;
+            let mut attn_out = self.attention.forward_with_cache(&norm_1, cache, layer_idx)?;
             let norm_2 = self.ffn_norm.forward(input)?;
             let ffn_out = self.feed_forward.forward(&norm_2)?;
-            let x = input.add(&attn_out)?;
-            x.add(&ffn_out).map_err(Into::into)
+            // attn_out += input (in-place, attn_out is fresh with refcount 1)
+            attn_out.add_inplace(input)?;
+            // attn_out += ffn_out
+            attn_out.add_inplace(&ffn_out)?;
+            Ok(attn_out)
         } else if let Some(ref moe) = self.moe {
             // Mixtral: MoE replaces FFN
             let norm_1 = self.attention_norm.forward(input)?;
-            let attn_out = self.attention.forward_with_cache(&norm_1, cache, layer_idx)?;
-            let x = input.add(&attn_out)?;
-            let norm_2 = self.ffn_norm.forward(&x)?;
+            let mut attn_out = self.attention.forward_with_cache(&norm_1, cache, layer_idx)?;
+            attn_out.add_inplace(input)?;
+            let norm_2 = self.ffn_norm.forward(&attn_out)?;
             let moe_out = moe.forward(&norm_2)?;
-            x.add(&moe_out).map_err(Into::into)
+            attn_out.add_inplace(&moe_out)?;
+            Ok(attn_out)
         } else {
             // Standard pre-norm (with optional sandwich norms for Gemma 3)
             let norm_1 = self.attention_norm.forward(input)?;
-            let attn_out = self.attention.forward_with_cache(&norm_1, cache, layer_idx)?;
-            let attn_out = if let Some(ref pan) = self.post_attention_norm {
-                pan.forward(&attn_out)?
-            } else { attn_out };
+            let mut attn_out = self.attention.forward_with_cache(&norm_1, cache, layer_idx)?;
+            if let Some(ref pan) = self.post_attention_norm {
+                attn_out = pan.forward(&attn_out)?;
+            }
 
-            let mut x = input.add(&attn_out)?;
+            // x = attn_out + input (in-place on attn_out, which is fresh)
+            attn_out.add_inplace(input)?;
+            let mut x = attn_out;
 
             // Cross-attention (if present)
             if let (Some(cross_attn), Some(cross_norm), Some(enc_out)) =
@@ -330,17 +339,19 @@ impl TransformerBlock {
             {
                 let norm_cross = cross_norm.forward(&x)?;
                 let cross_out = cross_attn.forward(&norm_cross, enc_out)?;
-                x = x.add(&cross_out)?;
+                x.add_inplace(&cross_out)?;
             }
 
             // FFN
             let norm_2 = self.ffn_norm.forward(&x)?;
-            let ffn_out = self.feed_forward.forward(&norm_2)?;
-            let ffn_out = if let Some(ref pfn) = self.post_ffn_norm {
-                pfn.forward(&ffn_out)?
-            } else { ffn_out };
+            let mut ffn_out = self.feed_forward.forward(&norm_2)?;
+            if let Some(ref pfn) = self.post_ffn_norm {
+                ffn_out = pfn.forward(&ffn_out)?;
+            }
 
-            x.add(&ffn_out).map_err(Into::into)
+            // x += ffn_out (in-place on x, which is uniquely owned)
+            x.add_inplace(&ffn_out)?;
+            Ok(x)
         }
     }
 }

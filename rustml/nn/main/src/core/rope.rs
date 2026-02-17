@@ -3,6 +3,83 @@
 use crate::api::error::NnResult;
 use rustml_core::{DType, Tensor, f32_vec_to_bytes};
 
+/// Apply RoPE rotation to half_dim pairs using AVX2.
+/// Writes both halves of head_dim into contiguous out slice.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn rope_apply_avx2(
+    x1: &[f32],       // [half_dim] — first half of head
+    x2: &[f32],       // [half_dim] — second half of head
+    cos: &[f32],      // [half_dim]
+    sin: &[f32],      // [half_dim]
+    out: &mut [f32],   // [head_dim] — first half then second half
+    half_dim: usize,
+) {
+    use std::arch::x86_64::*;
+    let mut i = 0;
+    while i + 8 <= half_dim {
+        let v_x1 = _mm256_loadu_ps(x1.as_ptr().add(i));
+        let v_x2 = _mm256_loadu_ps(x2.as_ptr().add(i));
+        let v_cos = _mm256_loadu_ps(cos.as_ptr().add(i));
+        let v_sin = _mm256_loadu_ps(sin.as_ptr().add(i));
+
+        // first_half[i] = x1*cos - x2*sin
+        let first = _mm256_sub_ps(
+            _mm256_mul_ps(v_x1, v_cos),
+            _mm256_mul_ps(v_x2, v_sin),
+        );
+        // second_half[i] = x1*sin + x2*cos
+        let second = _mm256_add_ps(
+            _mm256_mul_ps(v_x1, v_sin),
+            _mm256_mul_ps(v_x2, v_cos),
+        );
+
+        _mm256_storeu_ps(out.as_mut_ptr().add(i), first);
+        _mm256_storeu_ps(out.as_mut_ptr().add(half_dim + i), second);
+        i += 8;
+    }
+    // Scalar remainder
+    while i < half_dim {
+        out[i] = x1[i] * cos[i] - x2[i] * sin[i];
+        out[half_dim + i] = x1[i] * sin[i] + x2[i] * cos[i];
+        i += 1;
+    }
+}
+
+/// Apply RoPE rotation to half_dim pairs using NEON.
+#[cfg(target_arch = "aarch64")]
+unsafe fn rope_apply_neon(
+    x1: &[f32],
+    x2: &[f32],
+    cos: &[f32],
+    sin: &[f32],
+    out: &mut [f32],
+    half_dim: usize,
+) {
+    use std::arch::aarch64::*;
+    let mut i = 0;
+    while i + 4 <= half_dim {
+        let v_x1 = vld1q_f32(x1.as_ptr().add(i));
+        let v_x2 = vld1q_f32(x2.as_ptr().add(i));
+        let v_cos = vld1q_f32(cos.as_ptr().add(i));
+        let v_sin = vld1q_f32(sin.as_ptr().add(i));
+
+        // first = x1*cos - x2*sin
+        let first = vsubq_f32(vmulq_f32(v_x1, v_cos), vmulq_f32(v_x2, v_sin));
+        // second = x1*sin + x2*cos
+        let second = vaddq_f32(vmulq_f32(v_x1, v_sin), vmulq_f32(v_x2, v_cos));
+
+        vst1q_f32(out.as_mut_ptr().add(i), first);
+        vst1q_f32(out.as_mut_ptr().add(half_dim + i), second);
+        i += 4;
+    }
+    while i < half_dim {
+        out[i] = x1[i] * cos[i] - x2[i] * sin[i];
+        out[half_dim + i] = x1[i] * sin[i] + x2[i] * cos[i];
+        i += 1;
+    }
+}
+
 /// Precomputed cos/sin tables for Rotary Position Encoding.
 #[derive(Clone)]
 pub struct RoPEFreqs {
@@ -53,6 +130,7 @@ impl RoPEFreqs {
     }
 
     /// Apply RoPE to tensor [B, H, S, D] starting from position `start_pos`.
+    /// SIMD-accelerated on x86_64 (AVX2) and aarch64 (NEON).
     pub fn apply(&self, x: &Tensor, start_pos: usize) -> NnResult<Tensor> {
         let shape = x.shape();
         if shape.len() != 4 {
@@ -70,7 +148,12 @@ impl RoPEFreqs {
         // Ensure contiguous layout for element access
         let x = if x.is_contiguous() { x.clone() } else { x.contiguous()? };
         let data = x.as_slice_f32()?;
-        let mut out = Vec::with_capacity(data.len());
+        let mut out = vec![0.0f32; data.len()];
+
+        #[cfg(target_arch = "x86_64")]
+        let use_avx2 = is_x86_feature_detected!("avx2") && self.half_dim >= 8;
+        #[cfg(not(target_arch = "x86_64"))]
+        let use_avx2 = false;
 
         for b in 0..batch {
             for h in 0..heads {
@@ -79,19 +162,32 @@ impl RoPEFreqs {
                     let base = (b * heads * seq_len + h * seq_len + s) * head_dim;
                     let table_offset = pos * self.half_dim;
 
-                    for i in 0..self.half_dim {
-                        let x1 = data[base + i];
-                        let x2 = data[base + self.half_dim + i];
-                        let cos_val = self.cos_table[table_offset + i];
-                        let sin_val = self.sin_table[table_offset + i];
-                        out.push(x1 * cos_val - x2 * sin_val);
+                    let x1 = &data[base..base + self.half_dim];
+                    let x2 = &data[base + self.half_dim..base + head_dim];
+                    let cos_slice = &self.cos_table[table_offset..table_offset + self.half_dim];
+                    let sin_slice = &self.sin_table[table_offset..table_offset + self.half_dim];
+                    let out_slice = &mut out[base..base + head_dim];
+
+                    #[cfg(target_arch = "x86_64")]
+                    if use_avx2 {
+                        unsafe {
+                            rope_apply_avx2(x1, x2, cos_slice, sin_slice, out_slice, self.half_dim);
+                        }
+                        continue;
                     }
+
+                    #[cfg(target_arch = "aarch64")]
+                    if self.half_dim >= 4 {
+                        unsafe {
+                            rope_apply_neon(x1, x2, cos_slice, sin_slice, out_slice, self.half_dim);
+                        }
+                        continue;
+                    }
+
+                    // Scalar fallback
                     for i in 0..self.half_dim {
-                        let x1 = data[base + i];
-                        let x2 = data[base + self.half_dim + i];
-                        let cos_val = self.cos_table[table_offset + i];
-                        let sin_val = self.sin_table[table_offset + i];
-                        out.push(x1 * sin_val + x2 * cos_val);
+                        out_slice[i] = x1[i] * cos_slice[i] - x2[i] * sin_slice[i];
+                        out_slice[self.half_dim + i] = x1[i] * sin_slice[i] + x2[i] * cos_slice[i];
                     }
                 }
             }
