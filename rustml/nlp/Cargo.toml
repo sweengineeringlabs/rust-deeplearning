@@ -29,3 +29,15 @@ path = "examples/gpt2_generate.rs"
 [[example]]
 name = "unified_model_demo"
 path = "examples/unified_model_demo.rs"
+
+[[example]]
+name = "gemma3_load"
+path = "examples/gemma3_load.rs"
+
+[[example]]
+name = "gguf_inspect"
+path = "examples/gguf_inspect.rs"
+
+[[example]]
+name = "gemma3_gguf"
+path = "examples/gemma3_gguf.rs"

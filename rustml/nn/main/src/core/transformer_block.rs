@@ -39,6 +39,8 @@ impl NormLayer {
 /// A single transformer block with pre-norm architecture.
 ///
 /// Structure: x -> norm1 -> self_attn -> + -> [norm_cross -> cross_attn -> +] -> norm2 -> ffn -> +
+///
+/// With 4-norm (Gemma 3): x -> norm1 -> attn -> post_attn_norm -> + -> ffn_norm -> ffn -> post_ffn_norm -> +
 pub struct TransformerBlock {
     pub attention: MultiHeadAttention,
     pub cross_attention: Option<CrossAttention>,
@@ -46,6 +48,10 @@ pub struct TransformerBlock {
     pub feed_forward: FeedForward,
     pub attention_norm: NormLayer,
     pub ffn_norm: NormLayer,
+    /// Post-attention norm (Gemma 3 sandwich norm): applied to attention output before residual add.
+    pub post_attention_norm: Option<NormLayer>,
+    /// Post-FFN norm (Gemma 3 sandwich norm): applied to FFN output before residual add.
+    pub post_ffn_norm: Option<NormLayer>,
     /// Parallel residual connections (Falcon): x = input + attn(norm1(input)) + ffn(norm2(input))
     pub parallel_residual: bool,
     /// Optional MoE layer (Mixtral): replaces feed_forward when present
@@ -82,6 +88,8 @@ impl TransformerBlock {
             feed_forward: FeedForward::new(d_model, hidden_dim, bias),
             attention_norm: NormLayer::LayerNorm(LayerNorm::with_eps(d_model, eps)),
             ffn_norm: NormLayer::LayerNorm(LayerNorm::with_eps(d_model, eps)),
+            post_attention_norm: None,
+            post_ffn_norm: None,
             parallel_residual: false,
             moe: None,
         })
@@ -101,6 +109,8 @@ impl TransformerBlock {
             feed_forward,
             attention_norm: NormLayer::LayerNorm(attention_norm),
             ffn_norm: NormLayer::LayerNorm(ffn_norm),
+            post_attention_norm: None,
+            post_ffn_norm: None,
             parallel_residual: false,
             moe: None,
         }
@@ -120,6 +130,33 @@ impl TransformerBlock {
             feed_forward,
             attention_norm: NormLayer::RMSNorm(attention_norm),
             ffn_norm: NormLayer::RMSNorm(ffn_norm),
+            post_attention_norm: None,
+            post_ffn_norm: None,
+            parallel_residual: false,
+            moe: None,
+        }
+    }
+
+    /// Construct from pre-loaded components with 4 RMSNorms (Gemma 3 sandwich norm).
+    ///
+    /// Architecture: norm1 → attn → post_attn_norm → +residual → ffn_norm → ffn → post_ffn_norm → +residual
+    pub fn from_weights_rms_4norm(
+        attention: MultiHeadAttention,
+        feed_forward: FeedForward,
+        attention_norm: RMSNorm,
+        post_attention_norm: RMSNorm,
+        ffn_norm: RMSNorm,
+        post_ffn_norm: RMSNorm,
+    ) -> Self {
+        Self {
+            attention,
+            cross_attention: None,
+            cross_attention_norm: None,
+            feed_forward,
+            attention_norm: NormLayer::RMSNorm(attention_norm),
+            ffn_norm: NormLayer::RMSNorm(ffn_norm),
+            post_attention_norm: Some(NormLayer::RMSNorm(post_attention_norm)),
+            post_ffn_norm: Some(NormLayer::RMSNorm(post_ffn_norm)),
             parallel_residual: false,
             moe: None,
         }
@@ -141,6 +178,8 @@ impl TransformerBlock {
             feed_forward,
             attention_norm: NormLayer::LayerNorm(attention_norm),
             ffn_norm: NormLayer::LayerNorm(ffn_norm),
+            post_attention_norm: None,
+            post_ffn_norm: None,
             parallel_residual: false,
             moe: None,
         }
@@ -187,6 +226,17 @@ impl TransformerBlock {
             frozen += f;
         }
 
+        if let Some(ref post_attn) = self.post_attention_norm {
+            let (t, f) = post_attn.parameter_count();
+            total += t;
+            frozen += f;
+        }
+        if let Some(ref post_ffn) = self.post_ffn_norm {
+            let (t, f) = post_ffn.parameter_count();
+            total += t;
+            frozen += f;
+        }
+
         if let Some(ref moe) = self.moe {
             let (t, f) = moe.parameter_count();
             total += t;
@@ -224,12 +274,18 @@ impl TransformerBlock {
             let moe_out = moe.forward(&norm_2)?;
             x.add(&moe_out).map_err(Into::into)
         } else {
-            // Standard: sequential pre-norm
+            // Standard pre-norm (with optional sandwich norms for Gemma 3)
             let norm_1 = self.attention_norm.forward(input)?;
             let attn_out = self.attention.forward(&norm_1)?;
+            let attn_out = if let Some(ref pan) = self.post_attention_norm {
+                pan.forward(&attn_out)?
+            } else { attn_out };
             let x = input.add(&attn_out)?;
             let norm_2 = self.ffn_norm.forward(&x)?;
             let ffn_out = self.feed_forward.forward(&norm_2)?;
+            let ffn_out = if let Some(ref pfn) = self.post_ffn_norm {
+                pfn.forward(&ffn_out)?
+            } else { ffn_out };
             x.add(&ffn_out).map_err(Into::into)
         }
     }
@@ -259,9 +315,12 @@ impl TransformerBlock {
             let moe_out = moe.forward(&norm_2)?;
             x.add(&moe_out).map_err(Into::into)
         } else {
-            // Standard: sequential pre-norm
+            // Standard pre-norm (with optional sandwich norms for Gemma 3)
             let norm_1 = self.attention_norm.forward(input)?;
             let attn_out = self.attention.forward_with_cache(&norm_1, cache, layer_idx)?;
+            let attn_out = if let Some(ref pan) = self.post_attention_norm {
+                pan.forward(&attn_out)?
+            } else { attn_out };
 
             let mut x = input.add(&attn_out)?;
 
@@ -277,6 +336,9 @@ impl TransformerBlock {
             // FFN
             let norm_2 = self.ffn_norm.forward(&x)?;
             let ffn_out = self.feed_forward.forward(&norm_2)?;
+            let ffn_out = if let Some(ref pfn) = self.post_ffn_norm {
+                pfn.forward(&ffn_out)?
+            } else { ffn_out };
 
             x.add(&ffn_out).map_err(Into::into)
         }
@@ -365,5 +427,32 @@ mod tests {
         let (total, frozen) = block.parameter_count();
         assert!(total > 0);
         assert_eq!(frozen, 0);
+    }
+
+    #[test]
+    fn test_transformer_block_4norm() {
+        let attention = MultiHeadAttention::new(
+            64, 4, None, false, true,
+            PositionEncoding::RoPE, 128, 10000.0,
+        ).unwrap();
+        let feed_forward = FeedForward::new(64, 256, false);
+        let block = TransformerBlock::from_weights_rms_4norm(
+            attention,
+            feed_forward,
+            RMSNorm::new(64, 1e-6),
+            RMSNorm::new(64, 1e-6),
+            RMSNorm::new(64, 1e-6),
+            RMSNorm::new(64, 1e-6),
+        );
+
+        // Forward without cache
+        let x = Tensor::randn(vec![1, 8, 64]);
+        let y = block.forward(&x).unwrap();
+        assert_eq!(y.shape(), &[1, 8, 64]);
+
+        // Forward with cache
+        let mut cache = KVCache::new(1, 128, 16, 4);
+        let y = block.forward_with_cache(&x, None, &mut cache, 0).unwrap();
+        assert_eq!(y.shape(), &[1, 8, 64]);
     }
 }

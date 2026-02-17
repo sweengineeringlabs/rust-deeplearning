@@ -5,6 +5,7 @@ use crate::api::error::{NnError, NnResult};
 use crate::api::types::PositionEncoding;
 use crate::core::kv_cache::KVCache;
 use crate::core::linear::Linear;
+use crate::core::rms_norm::RMSNorm;
 use crate::core::rope::{alibi_bias, compute_alibi_slopes, RoPEFreqs};
 use rustml_core::Tensor;
 
@@ -28,6 +29,8 @@ pub struct MultiHeadAttention {
     attn_logit_cap: Option<f32>,
     window_size: Option<usize>,
     attn_scale: Option<f32>,
+    q_norm: Option<RMSNorm>,
+    k_norm: Option<RMSNorm>,
 
     pub q_proj: Linear,
     pub k_proj: Linear,
@@ -99,6 +102,8 @@ impl MultiHeadAttention {
             attn_logit_cap: None,
             window_size: None,
             attn_scale: None,
+            q_norm: None,
+            k_norm: None,
             q_proj: Linear::with_bias(d_model, d_model, bias),
             k_proj: Linear::with_bias(d_model, kv_dim, bias),
             v_proj: Linear::with_bias(d_model, kv_dim, bias),
@@ -153,6 +158,8 @@ impl MultiHeadAttention {
             attn_logit_cap: None,
             window_size: None,
             attn_scale: None,
+            q_norm: None,
+            k_norm: None,
             q_proj,
             k_proj,
             v_proj,
@@ -198,6 +205,8 @@ impl MultiHeadAttention {
             attn_logit_cap: None,
             window_size: None,
             attn_scale,
+            q_norm: None,
+            k_norm: None,
             q_proj,
             k_proj,
             v_proj,
@@ -223,6 +232,16 @@ impl MultiHeadAttention {
             total += t;
             frozen += f;
         }
+        if let Some(ref qn) = self.q_norm {
+            let (t, f) = qn.parameter_count();
+            total += t;
+            frozen += f;
+        }
+        if let Some(ref kn) = self.k_norm {
+            let (t, f) = kn.parameter_count();
+            total += t;
+            frozen += f;
+        }
         (total, frozen)
     }
 
@@ -242,6 +261,12 @@ impl MultiHeadAttention {
     /// Set sliding window size for local attention (Mistral/Gemma2).
     pub fn set_window_size(&mut self, window_size: usize) {
         self.window_size = Some(window_size);
+    }
+
+    /// Set QK normalization (Gemma 3): RMSNorm applied to Q and K after projection.
+    pub fn set_qk_norms(&mut self, q_norm: RMSNorm, k_norm: RMSNorm) {
+        self.q_norm = Some(q_norm);
+        self.k_norm = Some(k_norm);
     }
 
     /// Forward pass without KV cache.
@@ -268,6 +293,10 @@ impl MultiHeadAttention {
         let v = v
             .reshape(&[batch_size, seq_len, self.num_kv_heads, self.head_dim])?
             .transpose(1, 2)?;
+
+        // QK normalization (Gemma 3)
+        let q = if let Some(ref qn) = self.q_norm { qn.forward(&q)? } else { q };
+        let k = if let Some(ref kn) = self.k_norm { kn.forward(&k)? } else { k };
 
         // Apply RoPE
         let (q, k) = if let Some(ref rope) = self.rope_freqs {
@@ -356,6 +385,10 @@ impl MultiHeadAttention {
         let v = v
             .reshape(&[batch_size, seq_len, self.num_kv_heads, self.head_dim])?
             .transpose(1, 2)?;
+
+        // QK normalization (Gemma 3)
+        let q = if let Some(ref qn) = self.q_norm { qn.forward(&q)? } else { q };
+        let k = if let Some(ref kn) = self.k_norm { kn.forward(&k)? } else { k };
 
         // Apply RoPE before cache update
         let (q, k) = if let Some(ref rope) = self.rope_freqs {
@@ -746,5 +779,32 @@ mod tests {
         let x2 = Tensor::randn(vec![1, 1, 64]);
         let y2 = mha.forward_with_cache(&x2, &mut cache, 0).unwrap();
         assert_eq!(y2.shape(), &[1, 1, 64]);
+    }
+
+    #[test]
+    fn test_multi_head_attention_qk_norms() {
+        use crate::core::rms_norm::RMSNorm;
+        let d_model = 64;
+        let num_heads = 4;
+        let head_dim = 16;
+
+        let mut mha = MultiHeadAttention::new(
+            d_model, num_heads, None, false, true,
+            PositionEncoding::RoPE, 128, 10000.0,
+        ).unwrap();
+
+        mha.set_qk_norms(
+            RMSNorm::new(head_dim, 1e-6),
+            RMSNorm::new(head_dim, 1e-6),
+        );
+
+        let x = Tensor::randn(vec![1, 8, d_model]);
+        let y = mha.forward(&x).unwrap();
+        assert_eq!(y.shape(), &[1, 8, d_model]);
+
+        // Also test with cache
+        let mut cache = KVCache::new(1, 128, head_dim, num_heads);
+        let y2 = mha.forward_with_cache(&x, &mut cache, 0).unwrap();
+        assert_eq!(y2.shape(), &[1, 8, d_model]);
     }
 }

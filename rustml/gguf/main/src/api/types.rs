@@ -165,6 +165,7 @@ pub struct GgufBundle {
 /// Model configuration extracted from GGUF metadata.
 #[derive(Debug, Clone)]
 pub struct GgufModelConfig {
+    pub architecture: String,
     pub dim: usize,
     pub hidden_dim: usize,
     pub n_layers: usize,
@@ -177,4 +178,8 @@ pub struct GgufModelConfig {
     pub bos_token_id: Option<u32>,
     pub eos_token_id: Option<u32>,
     pub chat_template: Option<String>,
+    /// Explicit head dimension (Gemma 3: key_length from GGUF)
+    pub head_dim: Option<usize>,
+    /// Sliding window size
+    pub sliding_window: Option<usize>,
 }

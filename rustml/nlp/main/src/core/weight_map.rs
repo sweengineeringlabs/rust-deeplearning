@@ -260,6 +260,88 @@ impl WeightMap {
         base
     }
 
+    /// Build a weight mapping for Gemma 3 models.
+    ///
+    /// Gemma 3 extends Llama-2 naming with:
+    /// - 4 layer norms per block: input_layernorm, post_attention_layernorm,
+    ///   pre_feedforward_layernorm, post_feedforward_layernorm
+    /// - QK normalization: q_norm, k_norm (RMSNorm on Q/K after projection)
+    /// - Same MLP/attention projection names as Llama-2
+    pub fn gemma3(n_layers: usize) -> Self {
+        let mut mapping = HashMap::new();
+
+        mapping.insert(
+            "model.embed_tokens.weight".into(),
+            "token_embedding.weight".into(),
+        );
+        mapping.insert("model.norm.weight".into(), "norm.weight".into());
+        mapping.insert("lm_head.weight".into(), "output.weight".into());
+
+        for i in 0..n_layers {
+            // Attention projections (same as Llama-2)
+            mapping.insert(
+                format!("model.layers.{}.self_attn.q_proj.weight", i),
+                format!("layers.{}.attention.q_proj.weight", i),
+            );
+            mapping.insert(
+                format!("model.layers.{}.self_attn.k_proj.weight", i),
+                format!("layers.{}.attention.k_proj.weight", i),
+            );
+            mapping.insert(
+                format!("model.layers.{}.self_attn.v_proj.weight", i),
+                format!("layers.{}.attention.v_proj.weight", i),
+            );
+            mapping.insert(
+                format!("model.layers.{}.self_attn.o_proj.weight", i),
+                format!("layers.{}.attention.out_proj.weight", i),
+            );
+
+            // QK normalization (Gemma 3 specific)
+            mapping.insert(
+                format!("model.layers.{}.self_attn.q_norm.weight", i),
+                format!("layers.{}.attention.q_norm.weight", i),
+            );
+            mapping.insert(
+                format!("model.layers.{}.self_attn.k_norm.weight", i),
+                format!("layers.{}.attention.k_norm.weight", i),
+            );
+
+            // 4 layer norms (Gemma 3 sandwich norm)
+            mapping.insert(
+                format!("model.layers.{}.input_layernorm.weight", i),
+                format!("layers.{}.attention_norm.weight", i),
+            );
+            mapping.insert(
+                format!("model.layers.{}.post_attention_layernorm.weight", i),
+                format!("layers.{}.post_attention_norm.weight", i),
+            );
+            mapping.insert(
+                format!("model.layers.{}.pre_feedforward_layernorm.weight", i),
+                format!("layers.{}.ffn_norm.weight", i),
+            );
+            mapping.insert(
+                format!("model.layers.{}.post_feedforward_layernorm.weight", i),
+                format!("layers.{}.post_ffn_norm.weight", i),
+            );
+
+            // MLP (same as Llama-2)
+            mapping.insert(
+                format!("model.layers.{}.mlp.up_proj.weight", i),
+                format!("layers.{}.feed_forward.up_proj.weight", i),
+            );
+            mapping.insert(
+                format!("model.layers.{}.mlp.down_proj.weight", i),
+                format!("layers.{}.feed_forward.down_proj.weight", i),
+            );
+            mapping.insert(
+                format!("model.layers.{}.mlp.gate_proj.weight", i),
+                format!("layers.{}.feed_forward.gate_proj.weight", i),
+            );
+        }
+
+        Self { mapping }
+    }
+
     /// Remap HuggingFace weight names to internal names.
     /// Unmapped keys are skipped with a warning to stderr.
     pub fn remap(&self, hf_weights: HashMap<String, Tensor>) -> HashMap<String, Tensor> {
@@ -390,6 +472,38 @@ mod tests {
         // Base llama2: 3 + 9*2 = 21
         // Plus 4 bias entries per layer = 21 + 4*2 = 29
         assert_eq!(wm.len(), 21 + 4 * 2);
+    }
+
+    #[test]
+    fn test_gemma3_weight_map() {
+        let wm = WeightMap::gemma3(2);
+        // 3 global + per-layer: 4 attn_proj + 2 qk_norm + 4 norms + 3 mlp = 13
+        // Total: 3 + 13*2 = 29
+        assert_eq!(wm.len(), 3 + 13 * 2);
+
+        let mut hf_weights = HashMap::new();
+        hf_weights.insert(
+            "model.embed_tokens.weight".into(),
+            Tensor::randn(vec![100, 64]),
+        );
+        hf_weights.insert(
+            "model.layers.0.self_attn.q_norm.weight".into(),
+            Tensor::randn(vec![32]),
+        );
+        hf_weights.insert(
+            "model.layers.0.pre_feedforward_layernorm.weight".into(),
+            Tensor::randn(vec![64]),
+        );
+        hf_weights.insert(
+            "model.layers.0.post_feedforward_layernorm.weight".into(),
+            Tensor::randn(vec![64]),
+        );
+
+        let remapped = wm.remap(hf_weights);
+        assert!(remapped.contains_key("token_embedding.weight"));
+        assert!(remapped.contains_key("layers.0.attention.q_norm.weight"));
+        assert!(remapped.contains_key("layers.0.ffn_norm.weight"));
+        assert!(remapped.contains_key("layers.0.post_ffn_norm.weight"));
     }
 
     #[test]

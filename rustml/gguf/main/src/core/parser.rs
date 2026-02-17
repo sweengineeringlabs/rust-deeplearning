@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::api::error::{GgufError, GgufResult};
 use crate::api::types::*;
-use crate::core::weight_map::gguf_llama_weight_map;
+use crate::core::weight_map::{gguf_llama_weight_map, gguf_gemma3_weight_map};
 
 /// GGUF magic bytes: "GGUF"
 pub const GGUF_MAGIC: [u8; 4] = [0x47, 0x47, 0x55, 0x46];
@@ -208,29 +208,59 @@ impl GGUFFile {
     }
 
     /// Extract a model config from GGUF metadata.
+    ///
+    /// Detects the architecture from `general.architecture` and uses the
+    /// appropriate metadata key prefix (e.g. `llama.`, `gemma3.`).
     pub fn to_model_config(&self) -> GgufResult<GgufModelConfig> {
+        let arch = self.metadata.get("general.architecture")
+            .and_then(|v| v.as_string())
+            .unwrap_or("llama")
+            .to_string();
+
         let get_u32 = |key: &str| -> GgufResult<u32> {
             self.metadata.get(key)
                 .and_then(|v| v.as_u32())
                 .ok_or_else(|| GgufError::MissingMetadata(key.to_string()))
         };
 
+        let get_u32_opt = |key: &str| -> Option<u32> {
+            self.metadata.get(key).and_then(|v| v.as_u32())
+        };
+
         let get_f32_opt = |key: &str| -> Option<f32> {
             self.metadata.get(key).and_then(|v| v.as_f32())
         };
 
-        let dim = get_u32("llama.embedding_length")? as usize;
-        let n_heads = get_u32("llama.attention.head_count")? as usize;
-        let n_layers = get_u32("llama.block_count")? as usize;
-        let vocab_size = get_u32("llama.vocab_size")
+        let dim = get_u32(&format!("{}.embedding_length", arch))? as usize;
+        let n_heads = get_u32(&format!("{}.attention.head_count", arch))? as usize;
+        let n_layers = get_u32(&format!("{}.block_count", arch))? as usize;
+        let vocab_size = get_u32(&format!("{}.vocab_size", arch))
             .or_else(|_| get_u32("tokenizer.ggml.tokens_count"))
+            .or_else(|_| -> GgufResult<u32> {
+                // Infer vocab size from tokenizer tokens array length
+                if let Some(GGUFValue::Array(tokens)) = self.metadata.get("tokenizer.ggml.tokens") {
+                    Ok(tokens.len() as u32)
+                } else {
+                    Ok(32000)
+                }
+            })
             .unwrap_or(32000) as usize;
 
-        let hidden_dim = get_u32("llama.feed_forward_length").unwrap_or((dim * 4) as u32) as usize;
-        let n_kv_heads = get_u32("llama.attention.head_count_kv").ok().map(|v| v as usize);
-        let max_seq_len = get_u32("llama.context_length").unwrap_or(2048) as usize;
-        let norm_eps = get_f32_opt("llama.attention.layer_norm_rms_epsilon").unwrap_or(1e-5);
-        let rope_theta = get_f32_opt("llama.rope.freq_base").unwrap_or(10000.0);
+        let hidden_dim = get_u32(&format!("{}.feed_forward_length", arch))
+            .unwrap_or((dim * 4) as u32) as usize;
+        let n_kv_heads = get_u32(&format!("{}.attention.head_count_kv", arch))
+            .ok().map(|v| v as usize);
+        let max_seq_len = get_u32(&format!("{}.context_length", arch))
+            .unwrap_or(2048) as usize;
+        let norm_eps = get_f32_opt(&format!("{}.attention.layer_norm_rms_epsilon", arch))
+            .unwrap_or(1e-5);
+        let rope_theta = get_f32_opt(&format!("{}.rope.freq_base", arch))
+            .unwrap_or(10000.0);
+
+        let head_dim = get_u32_opt(&format!("{}.attention.key_length", arch))
+            .map(|v| v as usize);
+        let sliding_window = get_u32_opt(&format!("{}.attention.sliding_window", arch))
+            .map(|v| v as usize);
 
         let bos_token_id = get_u32("tokenizer.ggml.bos_token_id").ok();
         let eos_token_id = get_u32("tokenizer.ggml.eos_token_id").ok();
@@ -240,6 +270,7 @@ impl GGUFFile {
             .map(|s| s.to_string());
 
         Ok(GgufModelConfig {
+            architecture: arch,
             dim,
             hidden_dim,
             n_layers,
@@ -252,6 +283,8 @@ impl GGUFFile {
             bos_token_id,
             eos_token_id,
             chat_template,
+            head_dim,
+            sliding_window,
         })
     }
 
@@ -296,12 +329,17 @@ impl GGUFFile {
                     GGMLType::F16 => LoadedDType::F16,
                     GGMLType::Q8_0 => LoadedDType::Q8_0,
                     GGMLType::Q4_0 => LoadedDType::Q4_0,
-                    _ => {
-                        // Unsupported non-kquant types: dequant to F32
-                        let f32_data: Vec<f32> = vec![0.0; n_elements];
+                    GGMLType::Q4_1 | GGMLType::Q5_0 | GGMLType::Q5_1 | GGMLType::Q8_1 => {
+                        // Legacy quant types: dequantize to F32 at load time
+                        let f32_data = dequantize_legacy(raw_data, n_elements, info.ggml_type)?;
                         let f32_bytes = rustml_quant::f32_vec_to_bytes(f32_data);
-                        LoadedTensor { data: f32_bytes, shape: shape.clone(), dtype: LoadedDType::F32 };
+                        tensors.insert(info.name.clone(), LoadedTensor { data: f32_bytes, shape, dtype: LoadedDType::F32 });
                         continue;
+                    }
+                    _ => {
+                        return Err(GgufError::UnsupportedType(
+                            format!("Unsupported GGML type {:?} for tensor '{}'", info.ggml_type, info.name)
+                        ));
                     }
                 };
                 LoadedTensor { data: raw_data.to_vec(), shape, dtype }
@@ -318,6 +356,135 @@ impl GGUFFile {
         let weight_map = gguf_llama_weight_map(n_layers);
         Ok(weight_map.remap(tensors))
     }
+
+    /// Load tensors and remap using Gemma 3 GGUF naming conventions.
+    ///
+    /// Handles Gemma 3 specifics: QK norms, 4 sandwich norms, GeGLU MLP.
+    pub fn load_and_remap_gemma3<P: AsRef<Path>>(&self, path: P, n_layers: usize) -> GgufResult<HashMap<String, LoadedTensor>> {
+        let tensors = self.load_tensors(path)?;
+        let weight_map = gguf_gemma3_weight_map(n_layers);
+        Ok(weight_map.remap(tensors))
+    }
+}
+
+/// Dequantize legacy quantization types (Q4_1, Q5_0, Q5_1, Q8_1) to f32.
+fn dequantize_legacy(data: &[u8], n_elements: usize, ggml_type: GGMLType) -> GgufResult<Vec<f32>> {
+    match ggml_type {
+        GGMLType::Q4_1 => dequantize_q4_1(data, n_elements),
+        GGMLType::Q5_0 => dequantize_q5_0(data, n_elements),
+        GGMLType::Q5_1 => dequantize_q5_1(data, n_elements),
+        GGMLType::Q8_1 => dequantize_q8_1(data, n_elements),
+        _ => Err(GgufError::UnsupportedType(
+            format!("Legacy dequantization not implemented for {:?}", ggml_type)
+        )),
+    }
+}
+
+/// Q4_1: 32 elements/block, 20 bytes/block = [f16 d][f16 m][16 bytes 4-bit]
+/// v[i] = d * nibble[i] + m
+fn dequantize_q4_1(data: &[u8], n_elements: usize) -> GgufResult<Vec<f32>> {
+    let block_size = 32;
+    let block_bytes = 20;
+    let n_blocks = n_elements / block_size;
+    let mut output = vec![0.0f32; n_elements];
+
+    for b in 0..n_blocks {
+        let block = &data[b * block_bytes..(b + 1) * block_bytes];
+        let d = f16_from_bytes(block[0], block[1]);
+        let m = f16_from_bytes(block[2], block[3]);
+        let qs = &block[4..20];
+
+        let out = &mut output[b * block_size..(b + 1) * block_size];
+        for j in 0..16 {
+            let lo = (qs[j] & 0xF) as f32;
+            let hi = (qs[j] >> 4) as f32;
+            out[j] = d * lo + m;
+            out[j + 16] = d * hi + m;
+        }
+    }
+
+    Ok(output)
+}
+
+/// Q5_0: 32 elements/block, 22 bytes/block = [f16 d][4 bytes high-bits][16 bytes 4-bit low]
+fn dequantize_q5_0(data: &[u8], n_elements: usize) -> GgufResult<Vec<f32>> {
+    let block_size = 32;
+    let block_bytes = 22;
+    let n_blocks = n_elements / block_size;
+    let mut output = vec![0.0f32; n_elements];
+
+    for b in 0..n_blocks {
+        let block = &data[b * block_bytes..(b + 1) * block_bytes];
+        let d = f16_from_bytes(block[0], block[1]);
+        let qh = &block[2..6]; // 4 bytes = 32 high-bits
+        let qs = &block[6..22]; // 16 bytes = 32 x 4-bit low nibbles
+
+        let out = &mut output[b * block_size..(b + 1) * block_size];
+        let qh_u32 = u32::from_le_bytes([qh[0], qh[1], qh[2], qh[3]]);
+
+        for j in 0..16 {
+            let lo_nib = (qs[j] & 0xF) as i32;
+            let hi_nib = (qs[j] >> 4) as i32;
+            let hbit_lo = ((qh_u32 >> j) & 1) as i32;
+            let hbit_hi = ((qh_u32 >> (j + 16)) & 1) as i32;
+            out[j] = d * ((lo_nib | (hbit_lo << 4)) as f32 - 16.0);
+            out[j + 16] = d * ((hi_nib | (hbit_hi << 4)) as f32 - 16.0);
+        }
+    }
+
+    Ok(output)
+}
+
+/// Q5_1: 32 elements/block, 24 bytes/block = [f16 d][f16 m][4 bytes high-bits][16 bytes 4-bit low]
+fn dequantize_q5_1(data: &[u8], n_elements: usize) -> GgufResult<Vec<f32>> {
+    let block_size = 32;
+    let block_bytes = 24;
+    let n_blocks = n_elements / block_size;
+    let mut output = vec![0.0f32; n_elements];
+
+    for b in 0..n_blocks {
+        let block = &data[b * block_bytes..(b + 1) * block_bytes];
+        let d = f16_from_bytes(block[0], block[1]);
+        let m = f16_from_bytes(block[2], block[3]);
+        let qh = &block[4..8];
+        let qs = &block[8..24];
+
+        let out = &mut output[b * block_size..(b + 1) * block_size];
+        let qh_u32 = u32::from_le_bytes([qh[0], qh[1], qh[2], qh[3]]);
+
+        for j in 0..16 {
+            let lo_nib = (qs[j] & 0xF) as u32;
+            let hi_nib = (qs[j] >> 4) as u32;
+            let hbit_lo = (qh_u32 >> j) & 1;
+            let hbit_hi = (qh_u32 >> (j + 16)) & 1;
+            out[j] = d * (lo_nib | (hbit_lo << 4)) as f32 + m;
+            out[j + 16] = d * (hi_nib | (hbit_hi << 4)) as f32 + m;
+        }
+    }
+
+    Ok(output)
+}
+
+/// Q8_1: 32 elements/block, 40 bytes/block = [f32 d][f32 s][32 bytes int8]
+fn dequantize_q8_1(data: &[u8], n_elements: usize) -> GgufResult<Vec<f32>> {
+    let block_size = 32;
+    let block_bytes = 40;
+    let n_blocks = n_elements / block_size;
+    let mut output = vec![0.0f32; n_elements];
+
+    for b in 0..n_blocks {
+        let block = &data[b * block_bytes..(b + 1) * block_bytes];
+        let d = f32::from_le_bytes([block[0], block[1], block[2], block[3]]);
+        // block[4..8] is the sum (unused for dequantization)
+        let qs = &block[8..40];
+
+        let out = &mut output[b * block_size..(b + 1) * block_size];
+        for j in 0..32 {
+            out[j] = d * (qs[j] as i8 as f32);
+        }
+    }
+
+    Ok(output)
 }
 
 /// Dequantize k-quant block data to f32 values.

@@ -1,5 +1,6 @@
 pub mod generation;
 pub mod generator;
+pub mod gguf_bridge;
 pub mod gpt;
 pub mod model;
 pub mod sampling;

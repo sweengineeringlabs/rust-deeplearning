@@ -756,6 +756,16 @@ impl LlmModel {
                 attn_scale,
             )?;
 
+            // QK normalization (Gemma 3)
+            let q_norm_key = format!("layers.{}.attention.q_norm.weight", i);
+            let k_norm_key = format!("layers.{}.attention.k_norm.weight", i);
+            if let (Ok(qn_w), Ok(kn_w)) = (get_tensor(&q_norm_key), get_tensor(&k_norm_key)) {
+                attention.set_qk_norms(
+                    RMSNorm::from_weight_with_offset(qn_w, eps, offset),
+                    RMSNorm::from_weight_with_offset(kn_w, eps, offset),
+                );
+            }
+
             // Sliding window on local layers only
             if !is_global {
                 if let Some(w) = config.sliding_window {
@@ -778,7 +788,7 @@ impl LlmModel {
             )?;
             let feed_forward = FeedForward::from_weights_geglu(up_proj, gate_proj, down_proj);
 
-            // RMSNorm with offset
+            // 4 RMSNorms with offset (Gemma 3 sandwich norm)
             let attention_norm = RMSNorm::from_weight_with_offset(
                 get_tensor(&format!("layers.{}.attention_norm.weight", i))?,
                 eps,
@@ -789,12 +799,24 @@ impl LlmModel {
                 eps,
                 offset,
             );
+            let post_attention_norm = RMSNorm::from_weight_with_offset(
+                get_tensor(&format!("layers.{}.post_attention_norm.weight", i))?,
+                eps,
+                offset,
+            );
+            let post_ffn_norm = RMSNorm::from_weight_with_offset(
+                get_tensor(&format!("layers.{}.post_ffn_norm.weight", i))?,
+                eps,
+                offset,
+            );
 
-            layers.push(TransformerBlock::from_weights_rms(
+            layers.push(TransformerBlock::from_weights_rms_4norm(
                 attention,
                 feed_forward,
                 attention_norm,
+                post_attention_norm,
                 ffn_norm,
+                post_ffn_norm,
             ));
         }
 
@@ -803,7 +825,13 @@ impl LlmModel {
             eps,
             offset,
         ));
-        let output = Linear::from_weights(get_weight("output.weight")?, None)?;
+
+        // Gemma 3 uses tied embeddings: output weight = token_embedding weight
+        let output = if let Ok(w) = get_weight("output.weight") {
+            Linear::from_weights(w, None)?
+        } else {
+            Linear::from_weights(token_embedding.weight.clone(), None)?
+        };
 
         Ok(Self {
             token_embedding,
@@ -1485,11 +1513,18 @@ mod tests {
             weights.insert(format!("layers.{}.attention.k_proj.weight", i), Tensor::randn(vec![kv_dim, d]));
             weights.insert(format!("layers.{}.attention.v_proj.weight", i), Tensor::randn(vec![kv_dim, d]));
             weights.insert(format!("layers.{}.attention.out_proj.weight", i), Tensor::randn(vec![d, q_dim]));
+            // QK norms
+            weights.insert(format!("layers.{}.attention.q_norm.weight", i), Tensor::ones(vec![head_dim]));
+            weights.insert(format!("layers.{}.attention.k_norm.weight", i), Tensor::ones(vec![head_dim]));
+            // FFN
             weights.insert(format!("layers.{}.feed_forward.up_proj.weight", i), Tensor::randn(vec![hidden, d]));
             weights.insert(format!("layers.{}.feed_forward.gate_proj.weight", i), Tensor::randn(vec![hidden, d]));
             weights.insert(format!("layers.{}.feed_forward.down_proj.weight", i), Tensor::randn(vec![d, hidden]));
+            // 4 norms (sandwich norm)
             weights.insert(format!("layers.{}.attention_norm.weight", i), Tensor::ones(vec![d]));
+            weights.insert(format!("layers.{}.post_attention_norm.weight", i), Tensor::ones(vec![d]));
             weights.insert(format!("layers.{}.ffn_norm.weight", i), Tensor::ones(vec![d]));
+            weights.insert(format!("layers.{}.post_ffn_norm.weight", i), Tensor::ones(vec![d]));
         }
 
         let model = LlmModel::from_pretrained_gemma3(&config, weights).unwrap();
