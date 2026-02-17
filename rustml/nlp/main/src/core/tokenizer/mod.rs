@@ -86,17 +86,19 @@ impl Tokenizer for HFTokenizer {
     }
 }
 
-/// Simple lookup tokenizer built from GGUF vocabulary.
+/// SentencePiece BPE tokenizer built from GGUF vocabulary and merge scores.
 ///
-/// Provides basic encode (greedy longest-match) and decode (token lookup).
-/// For production use, prefer HFTokenizer with a proper tokenizer.json.
+/// Implements proper BPE encoding using the token scores stored in GGUF metadata.
+/// Handles the SentencePiece "▁" space marker convention.
 pub struct GgufTokenizer {
     id_to_token: Vec<String>,
     token_to_id: std::collections::HashMap<String, u32>,
+    scores: Vec<f32>,
+    add_space_prefix: bool,
 }
 
 impl GgufTokenizer {
-    /// Build from GGUF metadata tokens array.
+    /// Build from GGUF metadata: tokens, scores, and config.
     pub fn from_gguf(gguf: &rustml_gguf::GGUFFile) -> NlpResult<Self> {
         let tokens_val = gguf
             .metadata
@@ -126,76 +128,144 @@ impl GgufTokenizer {
             id_to_token.push(s);
         }
 
+        // Load BPE merge scores
+        let mut scores = vec![f32::NEG_INFINITY; id_to_token.len()];
+        if let Some(rustml_gguf::GGUFValue::Array(scores_arr)) =
+            gguf.metadata.get("tokenizer.ggml.scores")
+        {
+            for (i, val) in scores_arr.iter().enumerate() {
+                if i < scores.len() {
+                    scores[i] = match val {
+                        rustml_gguf::GGUFValue::F32(f) => *f,
+                        _ => f32::NEG_INFINITY,
+                    };
+                }
+            }
+        }
+
+        // Check add_space_prefix setting
+        let add_space_prefix = gguf
+            .metadata
+            .get("tokenizer.ggml.add_space_prefix")
+            .and_then(|v| match v {
+                rustml_gguf::GGUFValue::Bool(b) => Some(*b),
+                _ => None,
+            })
+            .unwrap_or(true);
+
         Ok(Self {
             id_to_token,
             token_to_id,
+            scores,
+            add_space_prefix,
         })
+    }
+
+    /// Split text into initial character/byte tokens for BPE.
+    fn initial_tokens(&self, text: &str) -> Vec<u32> {
+        let mut tokens = Vec::new();
+        for ch in text.chars() {
+            let ch_str = ch.to_string();
+            if let Some(&id) = self.token_to_id.get(&ch_str) {
+                tokens.push(id);
+            } else {
+                // Byte fallback: encode each UTF-8 byte as <0xHH>
+                for byte in ch_str.as_bytes() {
+                    let byte_token = format!("<0x{:02X}>", byte);
+                    if let Some(&id) = self.token_to_id.get(&byte_token) {
+                        tokens.push(id);
+                    } else {
+                        tokens.push(3); // <unk>
+                    }
+                }
+            }
+        }
+        tokens
+    }
+
+    /// Apply BPE merges using scores: repeatedly merge the pair with highest score.
+    fn bpe_merge(&self, tokens: &mut Vec<u32>) {
+        loop {
+            if tokens.len() < 2 {
+                break;
+            }
+
+            let mut best_score = f32::NEG_INFINITY;
+            let mut best_idx = usize::MAX;
+            let mut best_id = 0u32;
+
+            for i in 0..tokens.len() - 1 {
+                let merged_str = format!(
+                    "{}{}",
+                    &self.id_to_token[tokens[i] as usize],
+                    &self.id_to_token[tokens[i + 1] as usize]
+                );
+                if let Some(&merged_id) = self.token_to_id.get(&merged_str) {
+                    let score = self.scores[merged_id as usize];
+                    if score > best_score {
+                        best_score = score;
+                        best_idx = i;
+                        best_id = merged_id;
+                    }
+                }
+            }
+
+            if best_idx == usize::MAX {
+                break;
+            }
+
+            tokens[best_idx] = best_id;
+            tokens.remove(best_idx + 1);
+        }
     }
 }
 
 impl Tokenizer for GgufTokenizer {
     fn encode(&self, text: &str) -> NlpResult<Vec<u32>> {
-        // Greedy longest-match tokenization (not optimal, but functional)
-        let mut tokens = Vec::new();
-        let bytes = text.as_bytes();
-        let mut pos = 0;
-
-        while pos < bytes.len() {
-            let mut best_len = 0;
-            let mut best_id = None;
-
-            // Try matching from longest to shortest
-            let max_len = std::cmp::min(64, bytes.len() - pos);
-            for len in (1..=max_len).rev() {
-                if let Ok(substr) = std::str::from_utf8(&bytes[pos..pos + len]) {
-                    // SentencePiece uses ▁ (U+2581) for space
-                    let sp_token = if pos == 0 || bytes[pos - 1] == b' ' {
-                        format!("\u{2581}{}", substr.trim_start_matches(' '))
-                    } else {
-                        substr.to_string()
-                    };
-
-                    if let Some(&id) = self.token_to_id.get(&sp_token) {
-                        best_len = len;
-                        best_id = Some(id);
-                        break;
-                    }
-                    if let Some(&id) = self.token_to_id.get(substr) {
-                        best_len = len;
-                        best_id = Some(id);
-                        break;
-                    }
-                }
-            }
-
-            if let Some(id) = best_id {
-                tokens.push(id);
-                pos += best_len;
-            } else {
-                // Fallback: encode as byte token
-                let byte_token = format!("<0x{:02X}>", bytes[pos]);
-                if let Some(&id) = self.token_to_id.get(&byte_token) {
-                    tokens.push(id);
-                } else {
-                    tokens.push(3); // <unk>
-                }
-                pos += 1;
-            }
+        if text.is_empty() {
+            return Ok(Vec::new());
         }
+
+        // SentencePiece normalization: replace spaces with ▁ (U+2581)
+        let normalized = if self.add_space_prefix {
+            format!("\u{2581}{}", text.replace(' ', "\u{2581}"))
+        } else {
+            text.replace(' ', "\u{2581}")
+        };
+
+        // Split into initial character tokens
+        let mut tokens = self.initial_tokens(&normalized);
+
+        // Apply BPE merges
+        self.bpe_merge(&mut tokens);
 
         Ok(tokens)
     }
 
     fn decode(&self, tokens: &[u32]) -> NlpResult<String> {
-        let mut result = String::new();
+        let mut bytes = Vec::new();
         for &id in tokens {
-            if (id as usize) < self.id_to_token.len() {
-                let token = &self.id_to_token[id as usize];
-                // Replace SentencePiece space marker with actual space
-                result.push_str(&token.replace('\u{2581}', " "));
+            if (id as usize) >= self.id_to_token.len() {
+                continue;
             }
+            let token = &self.id_to_token[id as usize];
+
+            // Check for byte tokens: <0xHH>
+            if token.len() == 6
+                && token.starts_with("<0x")
+                && token.ends_with('>')
+            {
+                if let Ok(byte_val) = u8::from_str_radix(&token[3..5], 16) {
+                    bytes.push(byte_val);
+                    continue;
+                }
+            }
+
+            // Replace SentencePiece space marker with actual space
+            let text = token.replace('\u{2581}', " ");
+            bytes.extend_from_slice(text.as_bytes());
         }
-        Ok(result)
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
     fn vocab_size(&self) -> usize {

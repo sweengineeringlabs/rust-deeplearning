@@ -105,7 +105,7 @@ impl LlmModel {
                 .get(key)
                 .ok_or_else(|| NlpError::ModelError(format!("Missing weight: {}", key)))
                 .and_then(|t| match t.dtype() {
-                    DType::Q4_0 | DType::Q8_0 | DType::F32 => Ok(t.clone()),
+                    DType::Q4_0 | DType::Q4_1 | DType::Q8_0 | DType::F32 => Ok(t.clone()),
                     _ => Ok(t.to_f32()?),
                 })
         };
@@ -560,7 +560,7 @@ impl LlmModel {
                 .get(key)
                 .ok_or_else(|| NlpError::ModelError(format!("Missing weight: {}", key)))
                 .and_then(|t| match t.dtype() {
-                    DType::Q4_0 | DType::Q8_0 | DType::F32 => Ok(t.clone()),
+                    DType::Q4_0 | DType::Q4_1 | DType::Q8_0 | DType::F32 => Ok(t.clone()),
                     _ => Ok(t.to_f32()?),
                 })
         };
@@ -711,7 +711,7 @@ impl LlmModel {
                 .get(key)
                 .ok_or_else(|| NlpError::ModelError(format!("Missing weight: {}", key)))
                 .and_then(|t| match t.dtype() {
-                    DType::Q4_0 | DType::Q8_0 | DType::F32 => Ok(t.clone()),
+                    DType::Q4_0 | DType::Q4_1 | DType::Q8_0 | DType::F32 => Ok(t.clone()),
                     _ => Ok(t.to_f32()?),
                 })
         };
