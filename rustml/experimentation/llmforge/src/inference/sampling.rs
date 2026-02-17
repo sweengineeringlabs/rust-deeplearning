@@ -39,7 +39,7 @@ pub(crate) fn apply_top_k(logits: &mut [f32], k: usize) {
     let mut vals: Vec<f32> = logits.to_vec();
     // select_nth_unstable_by puts the k-th largest at position (len - k)
     let pivot = vals.len() - k;
-    vals.select_nth_unstable_by(pivot, |a, b| a.partial_cmp(b).unwrap());
+    vals.select_nth_unstable_by(pivot, |a: &f32, b: &f32| a.total_cmp(b));
     let threshold = vals[pivot];
 
     // Count how many values are >= threshold (might be more than k due to ties)
@@ -67,7 +67,7 @@ pub(crate) fn apply_top_p(logits: &mut [f32], p: f32) {
 
     // Sort indices by probability descending
     let mut indices: Vec<usize> = (0..probs.len()).collect();
-    indices.sort_unstable_by(|&a, &b| probs[b].partial_cmp(&probs[a]).unwrap());
+    indices.sort_unstable_by(|&a, &b| probs[b].total_cmp(&probs[a]));
 
     // Cumulative sum; find cutoff
     let mut cumsum = 0.0f32;

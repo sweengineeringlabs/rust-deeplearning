@@ -1,6 +1,6 @@
 use llmforge::inference::Generator;
 use llmforge::models::LlmModel;
-use llmforge::tokenization::NaiveTokenizer;
+use llmforge::tokenization::{NaiveTokenizer, Tokenizer};
 use llmforge::config::{ModelConfig, PositionEncoding};
 
 fn tiny_model_and_tokenizer() -> (LlmModel, NaiveTokenizer) {
@@ -17,6 +17,9 @@ fn tiny_model_and_tokenizer() -> (LlmModel, NaiveTokenizer) {
         position_encoding: PositionEncoding::Learned,
         causal: true,
         rope_theta: 10000.0,
+        bos_token_id: None,
+        eos_token_id: None,
+        chat_template: None,
     };
     let model = LlmModel::new(&config).unwrap();
     let tokenizer = NaiveTokenizer::new();
@@ -32,6 +35,46 @@ fn test_generation_basics() {
     let output = generator.generate(prompt, 5).expect("Generation failed");
     println!("Generated text: {:?}", output);
     assert!(output.len() > prompt.len());
+}
+
+#[test]
+fn test_generation_token_count() {
+    let (model, tokenizer) = tiny_model_and_tokenizer();
+    // Use temp=0 (greedy) for deterministic output
+    let generator = Generator::new(&model, &tokenizer, 0.0);
+
+    let prompt = "AB";
+    let max_tokens = 5;
+    let output = generator.generate(prompt, max_tokens).expect("Generation failed");
+
+    let prompt_tokens = tokenizer.encode(prompt).unwrap();
+    let output_tokens = tokenizer.encode(&output).unwrap();
+    let generated = output_tokens.len() - prompt_tokens.len();
+
+    assert_eq!(
+        generated, max_tokens,
+        "Expected exactly {} new tokens, got {} (prompt={}, output={})",
+        max_tokens, generated, prompt_tokens.len(), output_tokens.len()
+    );
+}
+
+#[test]
+fn test_stream_token_count() {
+    let (model, tokenizer) = tiny_model_and_tokenizer();
+    let generator = Generator::new(&model, &tokenizer, 0.0);
+
+    let max_tokens = 5;
+    let mut streamed_count = 0;
+    let _output = generator.generate_stream("AB", max_tokens, |_token| {
+        streamed_count += 1;
+        true
+    }).expect("Streaming generation failed");
+
+    assert_eq!(
+        streamed_count, max_tokens,
+        "Callback should fire exactly {} times, got {}",
+        max_tokens, streamed_count
+    );
 }
 
 #[test]

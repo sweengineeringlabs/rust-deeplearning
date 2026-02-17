@@ -23,7 +23,7 @@ fn compute_log_probs(logits: &[f32]) -> Vec<f32> {
 /// Return indices of the top-n values in descending order.
 fn top_n_indices(values: &[f32], n: usize) -> Vec<usize> {
     let mut indexed: Vec<(usize, f32)> = values.iter().copied().enumerate().collect();
-    indexed.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    indexed.sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
     indexed.iter().take(n).map(|&(i, _)| i).collect()
 }
 
@@ -64,7 +64,7 @@ impl<'a> Generator<'a> {
         }
 
         // Decode loop
-        for _ in 0..max_tokens {
+        for _ in 1..max_tokens {
             // Check if all beams are finished
             if beams.iter().all(|b| b.finished) {
                 break;
@@ -103,13 +103,13 @@ impl<'a> Generator<'a> {
             }
 
             // Prune to top beam_width by log_prob
-            candidates.sort_unstable_by(|a, b| b.log_prob.partial_cmp(&a.log_prob).unwrap());
+            candidates.sort_unstable_by(|a, b| b.log_prob.total_cmp(&a.log_prob));
             candidates.truncate(beam_width);
             beams = candidates;
         }
 
         // Return best beam
-        beams.sort_unstable_by(|a, b| b.log_prob.partial_cmp(&a.log_prob).unwrap());
+        beams.sort_unstable_by(|a, b| b.log_prob.total_cmp(&a.log_prob));
         let best = &beams[0];
         self.tokenizer.decode(&best.tokens)
     }
