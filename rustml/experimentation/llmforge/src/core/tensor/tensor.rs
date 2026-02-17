@@ -259,16 +259,17 @@ impl Tensor {
                     });
                 }
 
-                let mut out = Vec::with_capacity(n_elements);
+                let mut out = vec![0.0f32; n_elements];
                 for b in 0..n_blocks {
                     let block = &bytes[b * 18..(b + 1) * 18];
                     let scale = f16::from_le_bytes([block[0], block[1]]).to_f32();
+                    let base = b * 32;
                     for j in 0..16 {
                         let byte = block[2 + j];
                         let lo = (byte & 0x0F) as i32 - 8;
                         let hi = ((byte >> 4) & 0x0F) as i32 - 8;
-                        out.push(scale * lo as f32);
-                        out.push(scale * hi as f32);
+                        out[base + j] = scale * lo as f32;
+                        out[base + j + 16] = scale * hi as f32;
                     }
                 }
 

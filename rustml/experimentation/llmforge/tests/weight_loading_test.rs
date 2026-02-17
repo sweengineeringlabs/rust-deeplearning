@@ -114,6 +114,9 @@ fn from_pretrained_produces_correct_output_shape() {
         position_encoding: PositionEncoding::Learned,
         causal: true,
         rope_theta: 10000.0,
+        bos_token_id: None,
+        eos_token_id: None,
+        chat_template: None,
     };
 
     // Build internal-name weights for from_pretrained
@@ -158,6 +161,9 @@ fn from_pretrained_matches_new_output_shape() {
         position_encoding: PositionEncoding::Learned,
         causal: true,
         rope_theta: 10000.0,
+        bos_token_id: None,
+        eos_token_id: None,
+        chat_template: None,
     };
 
     // Build from_pretrained model

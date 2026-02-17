@@ -6,10 +6,9 @@ use llmforge::nn::{Linear, Embedding, LayerNorm, Layer};
 #[test]
 fn linear_forward_known_weights() {
     // W = [[1,0],[0,1],[1,1]] (3x2), input = [3,7] (1x2)
-    // Forward: input.matmul(W^T) where W^T is lazily transposed.
-    // Matmul reads raw data of the lazy transpose as row-major [in, out].
-    // W data [1,0,0,1,1,1] reinterpreted as [2,3]: [[1,0,0],[1,1,1]]
-    // output = [3,7] * [[1,0,0],[1,1,1]] = [3+7, 0+7, 0+7] = [10, 7, 7]
+    // Forward: output = input @ W^T
+    // W^T = [[1,0,1],[0,1,1]]
+    // output = [3,7] @ [[1,0,1],[0,1,1]] = [3*1+7*0, 3*0+7*1, 3*1+7*1] = [3, 7, 10]
     let weight = make_f32_tensor(&[1.0, 0.0, 0.0, 1.0, 1.0, 1.0], vec![3, 2]);
     let linear = Linear::from_weights(weight, None);
 
@@ -17,7 +16,7 @@ fn linear_forward_known_weights() {
     let output = linear.forward(&input).unwrap();
     assert_eq!(output.shape(), &[1, 3]);
     let data = output.as_slice_f32().unwrap();
-    assert_f32_near(data, &[10.0, 7.0, 7.0], 1e-4, "linear forward known");
+    assert_f32_near(data, &[3.0, 7.0, 10.0], 1e-4, "linear forward known");
 }
 
 #[test]

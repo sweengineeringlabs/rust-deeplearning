@@ -135,7 +135,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Position   : {:?}", config.position_encoding);
 
     // ── Step 4: Build generator ──────────────────────────────────────
+    if config.chat_template.is_some() {
+        println!("  Chat tmpl : yes (auto-detected from GGUF)");
+    }
+
     let generator = Generator::new(&model, tokenizer.as_ref(), temperature)
+        .with_chat_template(config.chat_template.clone())
         .with_top_k(DEFAULT_TOP_K)
         .with_top_p(DEFAULT_TOP_P);
 

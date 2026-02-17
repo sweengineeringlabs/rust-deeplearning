@@ -7,19 +7,20 @@
 //! - Top-p (nucleus) sampling
 
 use crate::api::error::NlpResult;
-use crate::api::types::GenerationConfig;
-use crate::core::gpt::GptModel;
+use crate::api::types::{GenerationConfig, LanguageModel};
 use rand::Rng;
 use rustml_core::Tensor;
 
-/// Text generator using a GPT model
+/// Text generator that works with any `LanguageModel` implementation.
+///
+/// Supports GptModel, LlmModel, or any custom model implementing the trait.
 pub struct TextGenerator<'a> {
-    model: &'a GptModel,
+    model: &'a dyn LanguageModel,
 }
 
 impl<'a> TextGenerator<'a> {
-    /// Create a new text generator
-    pub fn new(model: &'a GptModel) -> Self {
+    /// Create a new text generator from any LanguageModel.
+    pub fn new(model: &'a dyn LanguageModel) -> Self {
         Self { model }
     }
 
@@ -109,7 +110,6 @@ impl<'a> TextGenerator<'a> {
         rng: &mut R,
     ) -> NlpResult<Tensor> {
         let batch_size = logits.shape()[0];
-        let vocab_size = logits.shape()[1];
 
         let mut result = Vec::with_capacity(batch_size);
 
@@ -252,6 +252,7 @@ impl<'a> TextGenerator<'a> {
 mod tests {
     use super::*;
     use crate::api::types::GptConfig;
+    use crate::core::gpt::GptModel;
 
     fn create_test_model() -> GptModel {
         let config = GptConfig {

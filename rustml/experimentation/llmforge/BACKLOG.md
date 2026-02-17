@@ -170,6 +170,7 @@ Current state: 215 tests across 21 test files, all passing.
 - [x] **Tune faer parallelism** — `RuntimeConfig::apply()` sets `faer::set_global_parallelism` + rayon thread pool.
 - [x] **Memory pooling/arena allocator** — `TensorPool` with best-fit buffer reuse, capacity limits, and `Tensor::into_bytes()` for buffer extraction.
 - [x] **Cache-aware memory layout** — Tiled matmul (TILE_M=4, TILE_N=8) for cache locality. `Tensor::new_aligned()` for 64-byte aligned allocation.
+- [ ] **Native quantized matmul (Q4_0×Q8_0)** — Implemented but not yet default. `quantized_matmul_q4_native` quantizes F32 activations to Q8_0 on-the-fly, performs i8×i8→i32 integer dot products per block, scales once per block. AVX2 kernel uses `maddubs` trick (1.65x faster per block); SSE2/NEON/scalar fallbacks. However, per-row Q8_0 quantization overhead (~11µs/row) makes single-token decode 2–9% slower than the dequant-to-F32 path. Prefill (batch≥32) is ~12% faster. Awaiting end-to-end generation quality comparison before switching default.
 - [ ] **GPU backend (wgpu)** — WebGPU-based compute shaders for hardware acceleration. Feature flag: `gpu-wgpu`. (Investigated)
 - [ ] **GPU backend (cudarc)** — CUDA backend for NVIDIA GPUs. Feature flag: `gpu-cuda`. (Investigated)
 
@@ -192,3 +193,75 @@ Current state: 215 tests across 21 test files, all passing.
 - [x] **GPT-2 Conv1D weight transposition** — GPT-2 stores Conv1D weights as `[In, Out]` (not `[Out, In]`). `from_pretrained_gpt2` now transposes c_attn, out_proj, up_proj, and down_proj weights before use.
 - [x] **K-quant dequantization** — GGUF loader now supports Q2_K through Q8_K quantization types, dequantized to F32 during loading.
 - [x] **Q4_0/Q8_0 → F32 dequantization** — `Tensor::to_f32()` now supports Q4_0 (18 bytes/block, nibble unpacking) and Q8_0 (34 bytes/block, i8 scaling) for tensors that require F32 (embeddings, layer norms).
+
+---
+
+## Phase 7: Performance & Correctness Investigation (Status: Complete)
+
+> Baseline benchmark (2026-02-13, AMD Ryzen 5 7520U, 8 threads, 6.6GB RAM, WSL2):
+> GPT-2 124M F32 = 13.5 tok/s | TinyLlama 1.1B Q4_0 = 2.6 tok/s
+
+### Correctness — GGUF Loader
+- [x] **Parameter count mismatch** — **BUG FIXED**: `LlmModel::parameter_count()` skipped `self.layers` entirely — the transformer blocks containing ~90% of parameters were never counted. Added `parameter_count() -> (usize, usize)` methods to `Linear`, `LayerNorm`, `MultiHeadAttention`, `CrossAttention`, `FeedForward`, and `TransformerBlock`. TinyLlama now correctly reports ~1.1B parameters.
+
+### Correctness — Quantization Dequantization (CRITICAL)
+- [x] **Q4_0 nibble ordering** — **BUG FIXED**: Our Q4_0 dequantization interleaved lo/hi nibbles (lo→pos 0, hi→pos 1, lo→pos 2...) instead of llama.cpp's correct ordering (lo nibbles→positions 0-15, hi nibbles→positions 16-31). Fixed in `to_f32()` (tensor.rs) and all SIMD dot product functions (scalar, AVX2, SSE2, NEON in simd.rs). Verified via correlation test: llama.cpp order vs HF reference = 0.995, our old order vs HF = -0.048.
+- [x] **Q6_K element ordering** — **BUG FIXED**: Our Q6_K dequantization used a flat `l in 0..128` loop with incorrect qh indexing (`qh[l/2]`), producing 252/256 elements in wrong positions. Rewritten to match llama.cpp's two-pass structure: two halves of 128 elements, each producing 4 outputs per inner iteration at positions `[l, l+32, l+64, l+96]` with pointer advancement `ql+=64, qh+=32, sc+=8` between halves. This was the primary cause of TinyLlama's garbage output — the output.weight (Q6K) projection was completely scrambled.
+- [x] **Q4_K element ordering** — **BUG FIXED**: Interleaved lo/hi nibbles instead of llama.cpp's 64-element chunks (first 32 = lo nibbles, next 32 = hi nibbles). Rewritten to match `dequantize_row_q4_K`.
+- [x] **Q5_K element ordering** — **BUG FIXED**: Same interleaving issue as Q4_K plus incorrect qh bit mask rotation. Rewritten with `u1/u2` bit mask rotation matching llama.cpp.
+- [x] **Q3_K element ordering + scale unpacking** — **BUG FIXED**: Used flat `j/4` byte indexing instead of llama.cpp's two-pass structure with shift-based 2-bit extraction. Scale unpacking used simple nibble extraction instead of llama.cpp's `aux/kmask` method. Both fully rewritten.
+- [x] **Q2_K element ordering** — **BUG FIXED**: Same flat indexing issue. Rewritten with two 128-element halves and shift-based 2-bit extraction matching `dequantize_row_q2_K`.
+
+### Correctness — Tokenizer & CLI
+- [x] **BOS/EOS token wiring** — Added `bos_token_id` and `eos_token_id` to `ModelConfig`. GGUF loader reads from metadata. CLI wires into `Generator` builder. Llama models now correctly prepend BOS token.
+- [x] **SentencePiece streaming decode** — Single-token decode stripped leading space markers (▁) from SentencePiece tokens. Fixed with incremental buffer decode: maintain running token list, decode full sequence, diff against previous text.
+
+### Performance — Inference Pipeline
+- [x] **KV cache not used during generation** — **Already working**: `Generator::generate_stream()` uses `make_cache()` + `forward_with_cache()`. No fix needed.
+- [x] **Q4_0 SIMD dispatch** — **Already working**: Runtime `is_x86_feature_detected!("avx2")` dispatch in `dot_q4_block()`. Added verification logging in `RuntimeConfig::apply()` to confirm SIMD capability at startup.
+- [x] **Verify Rayon parallelism is active** — **Already working**: `quantized_matmul_q4()` uses `par_chunks_mut()` over output rows. Added verification logging in `RuntimeConfig::apply()` to confirm thread count at startup.
+
+### Chat Template Support
+- [x] **Chat template auto-detection** — GGUF loader reads `tokenizer.chat_template` from metadata and stores it in `ModelConfig::chat_template`. `Generator::with_chat_template()` applies the template before encoding. Supports `<|user|>`/`<|assistant|>` (TinyLlama), `[INST]` (Llama-2-Chat, Mistral), and ChatML (`<|im_start|>`) formats. Raw prompts are passed through unchanged when no template is set.
+
+### Logit Comparison Diagnostic
+- [ ] **Logit comparison vs llama.cpp** — `examples/logit_dump.rs` dumps top-20 logits (prefill + 3 decode steps) as JSON. `scripts/logit_reference.sh` produces matching output via llama-server's OpenAI-compatible API (curl + jq, no Python). Compare top-1 predictions to determine whether generation degradation is inherent to the model/quantization/greedy setup or a forward-pass bug.
+
+### Known Limitations
+- TinyLlama Q4_0 generation degrades into repetitive output after ~10-20 coherent tokens with greedy decoding. Chat template wrapping (`<|system|>...<|user|>...<|assistant|>`) does NOT improve quality — in some cases it makes output worse. Root cause under investigation via logit comparison against llama.cpp reference implementation.
+- A native integer matmul (`quantized_matmul_q4_native`) is implemented and available but not yet default — benchmarks show single-token decode is 2–9% slower due to per-row activation quantization overhead.
+
+---
+
+## Phase 8: Gemma 3 Architecture Support (Status: Planned)
+
+> Goal: Load and run Gemma 3 3B (and Gemma 2) GGUF models via the existing inference pipeline.
+> Reference: google/gemma-3-3b-it, available as GGUF from bartowski/gemma-3-3b-it-GGUF
+
+### GGUF Loader — Multi-Architecture Metadata
+- [ ] **Architecture-aware GGUF config extraction** — `to_model_config()` currently hardcodes `llama.*` metadata keys. Add architecture detection via `general.architecture` metadata field and dispatch to architecture-specific config extractors. Support `gemma2` prefix (Gemma 3 uses `gemma2.*` keys in GGUF) alongside existing `llama` prefix.
+- [ ] **Gemma metadata key mapping** — Map `gemma2.embedding_length`, `gemma2.block_count`, `gemma2.attention.head_count`, `gemma2.attention.head_count_kv`, `gemma2.feed_forward_length`, `gemma2.context_length`, `gemma2.attention.layer_norm_rms_epsilon`, `gemma2.vocab_size` to `ModelConfig` fields.
+
+### Model Config — Gemma-Specific Fields
+- [ ] **Embedding scale factor** — Gemma scales token embeddings by `sqrt(dim)` after lookup. Add `embedding_scale: Option<f32>` to `ModelConfig`. Set to `sqrt(dim)` for Gemma, `None` for Llama/GPT-2.
+- [ ] **RMSNorm weight offset** — Gemma adds +1.0 to RMSNorm weights before applying (i.e., `(1 + weight) * normalized`). Add `norm_weight_offset: Option<f32>` to `ModelConfig` or a `NormVariant` enum. Set to `1.0` for Gemma, `None`/`0.0` for Llama.
+- [ ] **Logit soft-capping** — Gemma 2/3 applies `tanh(logits / cap) * cap` to attention logits (cap=50.0) and final output logits (cap=30.0). Add `attn_logit_cap: Option<f32>` and `final_logit_cap: Option<f32>` to `ModelConfig`.
+- [ ] **Sliding window attention config** — Gemma 3 alternates between global attention and local sliding window attention across layers. Add `sliding_window_size: Option<usize>` and `sliding_window_pattern: Option<Vec<bool>>` (or a layer-stride rule) to `ModelConfig`.
+
+### Model Forward Pass — Gemma Features
+- [ ] **Embedding scaling in forward pass** — Apply `x_emb = x_emb * embedding_scale` after token embedding lookup when `embedding_scale` is set. Modify `LlmModel::forward()` and `forward_with_cache()`.
+- [ ] **RMSNorm +1 offset** — Modify `RMSNorm::forward()` (or add a `GemmaRMSNorm` variant) to add the configured offset to weights before multiplication.
+- [ ] **Attention logit soft-capping** — In `MultiHeadAttention::forward()`, after computing `Q @ K^T / sqrt(d)`, apply `tanh(scores / cap) * cap` when `attn_logit_cap` is configured.
+- [ ] **Final logit soft-capping** — In `LlmModel::forward()`, after the output projection, apply `tanh(logits / cap) * cap` when `final_logit_cap` is configured.
+- [ ] **Sliding window causal mask** — Modify `Tensor::causal_mask()` or add `Tensor::sliding_window_mask(seq_len, total_len, window_size)` that masks positions outside `[pos - window_size, pos]`. Apply per-layer based on the sliding window pattern.
+
+### Weight Mapping
+- [ ] **Gemma GGUF weight name mapping** — Gemma GGUF files from llama.cpp use the same `blk.{i}.attn_q.weight` naming convention as Llama. Verify existing `gguf_weight_map()` works for Gemma weights. Add any Gemma-specific weight names if needed (e.g., different norm layer names).
+
+### Testing & Validation
+- [ ] **Gemma config extraction test** — Unit test: construct mock GGUF metadata with `gemma2.*` keys, verify `to_model_config()` produces correct `ModelConfig`.
+- [ ] **RMSNorm +1 offset test** — Unit test: verify `GemmaRMSNorm` output differs from standard `RMSNorm` by exactly the offset contribution.
+- [ ] **Logit soft-capping test** — Unit test: verify `tanh(x/cap)*cap` applied correctly, preserves shape, caps extreme values.
+- [ ] **Sliding window mask test** — Unit test: verify mask blocks positions outside window, allows positions inside window.
+- [ ] **Embedding scaling test** — Unit test: verify output is `sqrt(dim)` times the unscaled embedding.
+- [ ] **End-to-end Gemma 3 3B inference** — Integration test: load `bartowski/gemma-3-3b-it-GGUF` Q4_0, run greedy generation on a simple prompt, verify non-degenerate output.

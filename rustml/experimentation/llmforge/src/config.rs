@@ -38,6 +38,12 @@ pub struct ModelConfig {
     pub causal: bool,
     #[serde(default = "default_rope_theta")]
     pub rope_theta: f32,
+    #[serde(default)]
+    pub bos_token_id: Option<u32>,
+    #[serde(default)]
+    pub eos_token_id: Option<u32>,
+    #[serde(default)]
+    pub chat_template: Option<String>,
 }
 
 fn default_position_encoding() -> PositionEncoding { PositionEncoding::Learned }
@@ -59,6 +65,9 @@ impl Default for ModelConfig {
             position_encoding: PositionEncoding::Learned,
             causal: true,
             rope_theta: 10000.0,
+            bos_token_id: None,
+            eos_token_id: None,
+            chat_template: None,
         }
     }
 }
@@ -110,6 +119,9 @@ impl ModelConfig {
             position_encoding: PositionEncoding::RoPE,
             causal: true,
             rope_theta: hf.rope_theta.unwrap_or(10000.0),
+            bos_token_id: Some(1),
+            eos_token_id: Some(2),
+            chat_template: None,
         };
         config.validate()?;
         Ok(config)
@@ -135,6 +147,9 @@ impl ModelConfig {
             position_encoding: PositionEncoding::Learned,
             causal: true,
             rope_theta: 10000.0,
+            bos_token_id: None,
+            eos_token_id: Some(50256), // GPT-2 <|endoftext|>
+            chat_template: None,
         };
         config.validate()?;
         Ok(config)
@@ -219,6 +234,33 @@ impl RuntimeConfig {
                 ))?;
         }
 
+        // Log SIMD capabilities
+        let simd = Self::detect_simd();
+        eprintln!("[runtime] SIMD: {}", simd);
+
+        // Log thread count
+        let threads = rayon::current_num_threads();
+        eprintln!("[runtime] Rayon threads: {}", threads);
+
         Ok(())
+    }
+
+    /// Detect available SIMD instruction sets.
+    fn detect_simd() -> &'static str {
+        #[cfg(target_arch = "x86_64")]
+        {
+            if is_x86_feature_detected!("avx2") {
+                return "AVX2";
+            }
+            if is_x86_feature_detected!("sse2") {
+                return "SSE2";
+            }
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            // NEON is always available on aarch64
+            return "NEON";
+        }
+        "scalar"
     }
 }

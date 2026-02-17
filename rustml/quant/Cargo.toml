@@ -1,0 +1,19 @@
+[package]
+name = "rustml-quant"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Quantization engine for RustML - Q4_0, Q8_0, SIMD-accelerated kernels"
+
+[lib]
+path = "main/src/lib.rs"
+
+[dependencies]
+thiserror.workspace = true
+bytemuck.workspace = true
+half.workspace = true
+rayon.workspace = true
+
+[dev-dependencies]
+approx.workspace = true

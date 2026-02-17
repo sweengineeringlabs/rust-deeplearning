@@ -5,6 +5,9 @@ pub trait Tokenizer {
     fn encode(&self, text: &str) -> Result<Vec<u32>>;
     fn decode(&self, tokens: &[u32]) -> Result<String>;
     fn vocab_size(&self) -> usize;
+    /// Look up a token string in the vocabulary, returning its ID if present.
+    /// Used to resolve special tokens (e.g. `<|system|>`, `</s>`) to their IDs.
+    fn token_to_id(&self, token: &str) -> Option<u32>;
 }
 
 // Naive Tokenizer that operates on Unicode code points for testing
@@ -45,6 +48,10 @@ impl Tokenizer for NaiveTokenizer {
     fn vocab_size(&self) -> usize {
         self.vocab_size
     }
+
+    fn token_to_id(&self, _token: &str) -> Option<u32> {
+        None
+    }
 }
 
 // Real HF Tokenizer wrapper
@@ -81,5 +88,9 @@ impl Tokenizer for HFTokenizer {
 
     fn vocab_size(&self) -> usize {
         self.inner.get_vocab_size(true)
+    }
+
+    fn token_to_id(&self, token: &str) -> Option<u32> {
+        self.inner.token_to_id(token)
     }
 }

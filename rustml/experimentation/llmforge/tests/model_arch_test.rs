@@ -416,6 +416,9 @@ fn model_freeze_embeddings() {
         position_encoding: PositionEncoding::Learned,
         causal: true,
         rope_theta: 10000.0,
+        bos_token_id: None,
+        eos_token_id: None,
+        chat_template: None,
     };
     let mut model = LlmModel::new(&config).unwrap();
     assert!(!model.token_embedding.frozen);
@@ -442,6 +445,9 @@ fn model_parameter_count() {
         position_encoding: PositionEncoding::Learned,
         causal: true,
         rope_theta: 10000.0,
+        bos_token_id: None,
+        eos_token_id: None,
+        chat_template: None,
     };
     let mut model = LlmModel::new(&config).unwrap();
     let (total, frozen) = model.parameter_count();
@@ -471,6 +477,9 @@ fn config_gqa_valid() {
         position_encoding: PositionEncoding::Learned,
         causal: true,
         rope_theta: 10000.0,
+        bos_token_id: None,
+        eos_token_id: None,
+        chat_template: None,
     };
     assert!(config.validate().is_ok());
 }
@@ -490,6 +499,9 @@ fn config_gqa_invalid_divisibility() {
         position_encoding: PositionEncoding::Learned,
         causal: true,
         rope_theta: 10000.0,
+        bos_token_id: None,
+        eos_token_id: None,
+        chat_template: None,
     };
     assert!(config.validate().is_err());
 }
@@ -509,6 +521,9 @@ fn config_gqa_zero_kv_heads_fails() {
         position_encoding: PositionEncoding::Learned,
         causal: true,
         rope_theta: 10000.0,
+        bos_token_id: None,
+        eos_token_id: None,
+        chat_template: None,
     };
     assert!(config.validate().is_err());
 }

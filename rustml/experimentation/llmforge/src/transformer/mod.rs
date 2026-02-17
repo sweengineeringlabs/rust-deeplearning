@@ -1,7 +1,7 @@
 use crate::config::PositionEncoding;
 use crate::core::tensor::Tensor;
 use crate::error::Result;
-use crate::nn::{Linear, Layer, LayerNorm};
+use crate::nn::{Linear, Layer, LayerNorm, RMSNorm};
 use crate::attention::{MultiHeadAttention, CrossAttention, KVCache};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -10,6 +10,28 @@ pub enum Activation {
     Silu,
     Relu,
     SwiGLU,
+}
+
+/// Normalization layer: either standard LayerNorm or RMSNorm.
+pub enum NormLayer {
+    LayerNorm(LayerNorm),
+    RMSNorm(RMSNorm),
+}
+
+impl NormLayer {
+    pub fn forward(&self, input: &Tensor) -> Result<Tensor> {
+        match self {
+            NormLayer::LayerNorm(ln) => ln.forward(input),
+            NormLayer::RMSNorm(rn) => rn.forward(input),
+        }
+    }
+
+    pub fn parameter_count(&self) -> (usize, usize) {
+        match self {
+            NormLayer::LayerNorm(ln) => ln.parameter_count(),
+            NormLayer::RMSNorm(rn) => rn.parameter_count(),
+        }
+    }
 }
 
 pub struct FeedForward {
@@ -75,6 +97,31 @@ impl FeedForward {
         Self { up_proj, down_proj, gate_proj: Some(gate_proj), hidden_dim, activation: Activation::SwiGLU }
     }
 
+    /// Returns (total_params, frozen_params).
+    pub fn parameter_count(&self) -> (usize, usize) {
+        let (mut total, mut frozen) = (0, 0);
+        for proj in [&self.up_proj, &self.down_proj] {
+            let (t, f) = proj.parameter_count();
+            total += t;
+            frozen += f;
+        }
+        if let Some(ref gate) = self.gate_proj {
+            let (t, f) = gate.parameter_count();
+            total += t;
+            frozen += f;
+        }
+        (total, frozen)
+    }
+
+    /// Toggle native Q4_0×Q8_0 integer matmul on all Linear layers.
+    pub fn set_native_q4_matmul(&mut self, enabled: bool) {
+        self.up_proj.use_native_q4 = enabled;
+        self.down_proj.use_native_q4 = enabled;
+        if let Some(ref mut gate) = self.gate_proj {
+            gate.use_native_q4 = enabled;
+        }
+    }
+
     pub fn forward(&self, input: &Tensor) -> Result<Tensor> {
         match self.activation {
             Activation::SwiGLU => {
@@ -103,10 +150,10 @@ impl FeedForward {
 pub struct TransformerBlock {
     attention: MultiHeadAttention,
     cross_attention: Option<CrossAttention>,
-    cross_attention_norm: Option<LayerNorm>,
+    cross_attention_norm: Option<NormLayer>,
     feed_forward: FeedForward,
-    attention_norm: LayerNorm,
-    ffn_norm: LayerNorm,
+    attention_norm: NormLayer,
+    ffn_norm: NormLayer,
 }
 
 impl TransformerBlock {
@@ -130,12 +177,12 @@ impl TransformerBlock {
             cross_attention: None,
             cross_attention_norm: None,
             feed_forward: FeedForward::new(d_model, hidden_dim, bias),
-            attention_norm: LayerNorm::new(vec![d_model], eps),
-            ffn_norm: LayerNorm::new(vec![d_model], eps),
+            attention_norm: NormLayer::LayerNorm(LayerNorm::new(vec![d_model], eps)),
+            ffn_norm: NormLayer::LayerNorm(LayerNorm::new(vec![d_model], eps)),
         })
     }
 
-    /// Construct from pre-loaded components.
+    /// Construct from pre-loaded components (LayerNorm variant).
     pub fn from_weights(
         attention: MultiHeadAttention,
         feed_forward: FeedForward,
@@ -147,8 +194,25 @@ impl TransformerBlock {
             cross_attention: None,
             cross_attention_norm: None,
             feed_forward,
-            attention_norm,
-            ffn_norm,
+            attention_norm: NormLayer::LayerNorm(attention_norm),
+            ffn_norm: NormLayer::LayerNorm(ffn_norm),
+        }
+    }
+
+    /// Construct from pre-loaded components (RMSNorm variant for Llama).
+    pub fn from_weights_rms(
+        attention: MultiHeadAttention,
+        feed_forward: FeedForward,
+        attention_norm: RMSNorm,
+        ffn_norm: RMSNorm,
+    ) -> Self {
+        Self {
+            attention,
+            cross_attention: None,
+            cross_attention_norm: None,
+            feed_forward,
+            attention_norm: NormLayer::RMSNorm(attention_norm),
+            ffn_norm: NormLayer::RMSNorm(ffn_norm),
         }
     }
 
@@ -164,16 +228,56 @@ impl TransformerBlock {
         Self {
             attention,
             cross_attention: Some(cross_attention),
-            cross_attention_norm: Some(cross_attention_norm),
+            cross_attention_norm: Some(NormLayer::LayerNorm(cross_attention_norm)),
             feed_forward,
-            attention_norm,
-            ffn_norm,
+            attention_norm: NormLayer::LayerNorm(attention_norm),
+            ffn_norm: NormLayer::LayerNorm(ffn_norm),
         }
+    }
+
+    /// Toggle native Q4_0×Q8_0 integer matmul on all Linear layers in this block.
+    pub fn set_native_q4_matmul(&mut self, enabled: bool) {
+        self.attention.set_native_q4_matmul(enabled);
+        self.feed_forward.set_native_q4_matmul(enabled);
     }
 
     /// Access MHA for cache sizing queries.
     pub fn attention(&self) -> &MultiHeadAttention {
         &self.attention
+    }
+
+    /// Returns (total_params, frozen_params).
+    pub fn parameter_count(&self) -> (usize, usize) {
+        let (mut total, mut frozen) = (0, 0);
+
+        let (t, f) = self.attention.parameter_count();
+        total += t;
+        frozen += f;
+
+        let (t, f) = self.feed_forward.parameter_count();
+        total += t;
+        frozen += f;
+
+        let (t, f) = self.attention_norm.parameter_count();
+        total += t;
+        frozen += f;
+
+        let (t, f) = self.ffn_norm.parameter_count();
+        total += t;
+        frozen += f;
+
+        if let Some(ref cross_attn) = self.cross_attention {
+            let (t, f) = cross_attn.parameter_count();
+            total += t;
+            frozen += f;
+        }
+        if let Some(ref cross_norm) = self.cross_attention_norm {
+            let (t, f) = cross_norm.parameter_count();
+            total += t;
+            frozen += f;
+        }
+
+        (total, frozen)
     }
 
     pub fn forward(&self, input: &Tensor) -> Result<Tensor> {
@@ -199,6 +303,7 @@ impl TransformerBlock {
         // Pre-norm architecture: self-attention
         let norm_1 = self.attention_norm.forward(input)?;
         let attn_out = self.attention.forward_with_cache(&norm_1, cache, layer_idx)?;
+
         let mut x = input.add(&attn_out)?;
 
         // Cross-attention (if present)
@@ -213,6 +318,7 @@ impl TransformerBlock {
         // FFN
         let norm_2 = self.ffn_norm.forward(&x)?;
         let ffn_out = self.feed_forward.forward(&norm_2)?;
+
         x.add(&ffn_out)
     }
 }

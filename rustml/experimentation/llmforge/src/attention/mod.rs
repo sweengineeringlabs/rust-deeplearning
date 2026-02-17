@@ -45,6 +45,9 @@ impl RoPEFreqs {
         let seq_len = shape[2];
         let head_dim = shape[3];
 
+        // Ensure contiguous layout — after reshape().transpose() the tensor
+        // has [B,H,S,D] shape but [B,S,H,D] storage order.
+        let x = if x.is_contiguous() { x.clone() } else { x.contiguous()? };
         let data = x.as_slice_f32()?;
         let mut out = Vec::with_capacity(data.len());
 
@@ -239,6 +242,25 @@ impl MultiHeadAttention {
     /// Number of KV heads (for cache sizing).
     pub fn num_kv_heads(&self) -> usize {
         self.num_kv_heads
+    }
+
+    /// Toggle native Q4_0×Q8_0 integer matmul on all Linear layers.
+    pub fn set_native_q4_matmul(&mut self, enabled: bool) {
+        self.q_proj.use_native_q4 = enabled;
+        self.k_proj.use_native_q4 = enabled;
+        self.v_proj.use_native_q4 = enabled;
+        self.out_proj.use_native_q4 = enabled;
+    }
+
+    /// Returns (total_params, frozen_params).
+    pub fn parameter_count(&self) -> (usize, usize) {
+        let (mut total, mut frozen) = (0, 0);
+        for proj in [&self.q_proj, &self.k_proj, &self.v_proj, &self.out_proj] {
+            let (t, f) = proj.parameter_count();
+            total += t;
+            frozen += f;
+        }
+        (total, frozen)
     }
 
     pub fn forward(&self, input: &Tensor) -> Result<Tensor> {

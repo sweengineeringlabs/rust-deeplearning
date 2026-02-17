@@ -1,0 +1,15 @@
+[package]
+name = "llmforge-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "llmforge"
+path = "src/main.rs"
+
+[dependencies]
+llmforge = { path = ".." }
+clap = { version = "4", features = ["derive"] }
+hf-hub = "0.4"
+anyhow = "1"
+serde_json = "1.0"

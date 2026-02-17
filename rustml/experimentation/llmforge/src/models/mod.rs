@@ -2,15 +2,15 @@ use std::collections::HashMap;
 use crate::config::PositionEncoding;
 use crate::core::tensor::{Tensor, DType};
 use crate::error::{LLMForgeError, Result};
-use crate::nn::{Embedding, Linear, Layer, LayerNorm, Freezable};
-use crate::transformer::{TransformerBlock, FeedForward, Activation};
+use crate::nn::{Embedding, Linear, Layer, LayerNorm, RMSNorm, Freezable};
+use crate::transformer::{TransformerBlock, NormLayer, FeedForward, Activation};
 use crate::attention::{MultiHeadAttention, KVCache};
 
 pub struct LlmModel {
     pub token_embedding: Embedding,
     pub pos_embedding: Option<Embedding>,
     pub layers: Vec<TransformerBlock>,
-    pub norm: LayerNorm,
+    pub norm: NormLayer,
     pub output: Linear,
     pub d_model: usize,
     pub vocab_size: usize,
@@ -62,7 +62,7 @@ impl LlmModel {
             token_embedding: Embedding::new(vocab_size, d_model),
             pos_embedding,
             layers,
-            norm: LayerNorm::new(vec![d_model], eps),
+            norm: NormLayer::LayerNorm(LayerNorm::new(vec![d_model], eps)),
             output: Linear::new(d_model, vocab_size, false),
             d_model,
             vocab_size,
@@ -168,21 +168,21 @@ impl LlmModel {
                 FeedForward::from_weights_with_activation(up_proj, down_proj, Activation::Silu)
             };
 
-            // LayerNorm always needs F32
-            let attention_norm = LayerNorm::from_weight_only(
+            // RMSNorm for Llama-family models (weight only, no bias, no mean subtraction)
+            let attention_norm = RMSNorm::from_weight(
                 get_tensor(&format!("layers.{}.attention_norm.weight", i))?,
                 eps,
             );
-            let ffn_norm = LayerNorm::from_weight_only(
+            let ffn_norm = RMSNorm::from_weight(
                 get_tensor(&format!("layers.{}.ffn_norm.weight", i))?,
                 eps,
             );
 
-            layers.push(TransformerBlock::from_weights(attention, feed_forward, attention_norm, ffn_norm));
+            layers.push(TransformerBlock::from_weights_rms(attention, feed_forward, attention_norm, ffn_norm));
         }
 
-        // Final norm (F32)
-        let norm = LayerNorm::from_weight_only(get_tensor("norm.weight")?, eps);
+        // Final RMSNorm (F32)
+        let norm = NormLayer::RMSNorm(RMSNorm::from_weight(get_tensor("norm.weight")?, eps));
 
         // Output projection (can be quantized)
         let output = Linear::from_weights(get_weight("output.weight")?, None);
@@ -318,12 +318,12 @@ impl LlmModel {
             layers.push(TransformerBlock::from_weights(attention, feed_forward, attention_norm, ffn_norm));
         }
 
-        // Final norm with bias
-        let norm = LayerNorm::from_weights(
+        // Final norm with bias (GPT-2 uses standard LayerNorm)
+        let norm = NormLayer::LayerNorm(LayerNorm::from_weights(
             get_tensor("norm.weight")?,
             get_tensor("norm.bias")?,
             eps,
-        );
+        ));
 
         // Tied embeddings: output weight = token_embedding weight
         let output_weight = token_embedding.weight.clone();
@@ -422,6 +422,14 @@ impl LlmModel {
         self.output.forward(&x)
     }
 
+    /// Toggle native Q4_0×Q8_0 integer matmul on all Linear layers in the model.
+    pub fn set_native_q4_matmul(&mut self, enabled: bool) {
+        for layer in &mut self.layers {
+            layer.set_native_q4_matmul(enabled);
+        }
+        self.output.use_native_q4 = enabled;
+    }
+
     /// Freeze token (and optional positional) embeddings.
     pub fn freeze_embeddings(&mut self) {
         self.token_embedding.freeze();
@@ -445,21 +453,22 @@ impl LlmModel {
             if pos_emb.frozen { frozen += count; }
         }
 
-        // Output projection
-        total += self.output.weight.element_count();
-        if self.output.frozen { frozen += self.output.weight.element_count(); }
-        if let Some(ref b) = self.output.bias {
-            total += b.element_count();
-            if self.output.frozen { frozen += b.element_count(); }
+        // Transformer layers
+        for layer in &self.layers {
+            let (t, f) = layer.parameter_count();
+            total += t;
+            frozen += f;
         }
 
+        // Output projection
+        let (t, f) = self.output.parameter_count();
+        total += t;
+        frozen += f;
+
         // Final norm
-        total += self.norm.weight.element_count();
-        total += self.norm.bias.element_count();
-        if self.norm.frozen {
-            frozen += self.norm.weight.element_count();
-            frozen += self.norm.bias.element_count();
-        }
+        let (t, f) = self.norm.parameter_count();
+        total += t;
+        frozen += f;
 
         (total, frozen)
     }

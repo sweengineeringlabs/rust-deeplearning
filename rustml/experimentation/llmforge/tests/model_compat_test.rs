@@ -101,6 +101,9 @@ fn llama2_forward_with_rope() {
         position_encoding: PositionEncoding::RoPE,
         causal: true,
         rope_theta: 10000.0,
+        bos_token_id: None,
+        eos_token_id: None,
+        chat_template: None,
     };
 
     let model = LlmModel::new(&config).unwrap();
@@ -126,6 +129,9 @@ fn pos_embedding_loading_from_weights() {
         position_encoding: PositionEncoding::Learned,
         causal: true,
         rope_theta: 10000.0,
+        bos_token_id: None,
+        eos_token_id: None,
+        chat_template: None,
     };
 
     let d = config.dim;
@@ -282,6 +288,9 @@ fn gpt2_from_pretrained_forward() {
         position_encoding: PositionEncoding::Learned,
         causal: true,
         rope_theta: 10000.0,
+        bos_token_id: None,
+        eos_token_id: None,
+        chat_template: None,
     };
 
     let mut weights = HashMap::new();
@@ -334,6 +343,9 @@ fn gpt2_tied_embeddings() {
         position_encoding: PositionEncoding::Learned,
         causal: true,
         rope_theta: 10000.0,
+        bos_token_id: None,
+        eos_token_id: None,
+        chat_template: None,
     };
 
     let mut weights = HashMap::new();

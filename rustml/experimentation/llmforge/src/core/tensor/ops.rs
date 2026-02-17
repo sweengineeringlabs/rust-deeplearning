@@ -59,11 +59,23 @@ impl Tensor {
 
         use faer::{MatRef, MatMut};
 
-        let a_t = MatRef::<f32>::from_column_major_slice(lhs_data, K, M);
-        let b_t = MatRef::<f32>::from_column_major_slice(rhs_data, N, K);
-        let mut c_t = MatMut::<f32>::from_column_major_slice(&mut out_data, N, M);
-
-        c_t.clone_from(b_t * a_t);
+        // Stride-aware faer matmul: C = A @ B in row-major.
+        // We compute C^T = B^T @ A^T using faer's column-major convention.
+        // A^T as faer [K,M]: row_stride = A.strides[1], col_stride = A.strides[0]
+        // B^T as faer [N,K]: row_stride = B.strides[1], col_stride = B.strides[0]
+        // This handles non-contiguous (transposed) tensors without copying.
+        unsafe {
+            let a_t = MatRef::<f32>::from_raw_parts(
+                lhs_data.as_ptr(), K, M,
+                self.strides[1] as isize, self.strides[0] as isize,
+            );
+            let b_t = MatRef::<f32>::from_raw_parts(
+                rhs_data.as_ptr(), N, K,
+                other.strides[1] as isize, other.strides[0] as isize,
+            );
+            let mut c_t = MatMut::<f32>::from_column_major_slice(&mut out_data, N, M);
+            c_t.clone_from(b_t * a_t);
+        }
 
         let out_bytes = f32_vec_to_bytes(out_data);
 
@@ -229,6 +241,48 @@ impl Tensor {
         Ok(Tensor::new(out_bytes, self.shape.clone(), self.dtype))
     }
 
+    /// RMSNorm: x * weight / rms(x), where rms(x) = sqrt(mean(x^2) + eps).
+    /// Used by Llama-family models instead of LayerNorm.
+    pub fn rms_norm(&self, weight: &Tensor, eps: f32) -> Result<Tensor> {
+        if self.shape.is_empty() {
+            return Err(LLMForgeError::ShapeMismatch { expected: vec![1], actual: vec![] });
+        }
+        let last_dim = self.shape[self.shape.len() - 1];
+
+        let input = self.as_slice_f32()?;
+        let gamma = weight.as_slice_f32()?;
+
+        if gamma.len() != last_dim {
+            return Err(LLMForgeError::ShapeMismatch {
+                expected: vec![last_dim],
+                actual: vec![gamma.len()],
+            });
+        }
+
+        let num_rows = input.len() / last_dim;
+        let mut out_data = Vec::with_capacity(input.len());
+
+        for i in 0..num_rows {
+            let start = i * last_dim;
+            let row = &input[start..start + last_dim];
+
+            // RMS = sqrt(mean(x^2) + eps)
+            let mut sum_sq = 0.0f32;
+            for &x in row {
+                sum_sq += x * x;
+            }
+            let rms = (sum_sq / last_dim as f32 + eps).sqrt();
+
+            // Normalize and scale (no bias, no mean subtraction)
+            for j in 0..last_dim {
+                out_data.push(row[j] / rms * gamma[j]);
+            }
+        }
+
+        let out_bytes = f32_vec_to_bytes(out_data);
+        Ok(Tensor::new(out_bytes, self.shape.clone(), self.dtype))
+    }
+
     // GELU activation
     pub fn gelu(&self) -> Result<Tensor> {
         let input_data = self.as_slice_f32()?;
@@ -385,7 +439,9 @@ impl Tensor {
         let seq_len = self.shape[2];
         let head_dim = self.shape[3];
 
-        let input_data = self.as_slice_f32()?;
+        // Ensure contiguous — input may be from transpose() with non-standard strides.
+        let x = if self.is_contiguous() { self.clone() } else { self.contiguous()? };
+        let input_data = x.as_slice_f32()?;
         let out_heads = n_kv_heads * n_rep;
         let mut out_data = Vec::with_capacity(batch * out_heads * seq_len * head_dim);
 

@@ -11,6 +11,7 @@ path = "main/src/lib.rs"
 
 [dependencies]
 rustml-core.workspace = true
+rustml-gguf.workspace = true
 thiserror.workspace = true
 reqwest = { workspace = true, features = ["stream"] }
 tokio.workspace = true
@@ -18,3 +19,7 @@ serde.workspace = true
 serde_json.workspace = true
 futures-util.workspace = true
 dirs.workspace = true
+hf-hub.workspace = true
+safetensors.workspace = true
+memmap2.workspace = true
+crc32fast.workspace = true

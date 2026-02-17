@@ -1,7 +1,7 @@
-//! HuggingFace Hub API client
+//! HuggingFace Hub API client with async and sync download paths.
 
 use crate::api::error::{HubError, HubResult};
-use crate::api::types::ModelBundle;
+use crate::api::types::{GgufBundle, ModelBundle};
 use std::path::PathBuf;
 
 /// HuggingFace Hub API client
@@ -55,7 +55,9 @@ impl HubApi {
         &self.cache_dir
     }
 
-    /// Download a model from HuggingFace Hub
+    // ======================== Async API (reqwest) ========================
+
+    /// Download a model from HuggingFace Hub (async)
     ///
     /// # Arguments
     /// * `model_id` - Model identifier (e.g., "openai-community/gpt2")
@@ -90,7 +92,7 @@ impl HubApi {
         })
     }
 
-    /// Download a specific file from a model repository
+    /// Download a specific file from a model repository (async)
     async fn download_file(
         &self,
         model_id: &str,
@@ -115,12 +117,7 @@ impl HubApi {
 
         if !response.status().is_success() {
             // Skip optional files
-            if filename == "model.safetensors" {
-                // Try pytorch_model.bin as fallback
-                return Ok(());
-            }
-            if filename == "tokenizer.json" {
-                // Tokenizer.json is optional
+            if filename == "model.safetensors" || filename == "tokenizer.json" {
                 return Ok(());
             }
             return Err(HubError::NetworkError(format!(
@@ -138,6 +135,61 @@ impl HubApi {
 
         Ok(())
     }
+
+    // ======================== Sync API (hf-hub) ========================
+
+    /// Download a model from HuggingFace Hub (synchronous, via hf-hub crate)
+    ///
+    /// Uses the `hf-hub` crate for synchronous downloads with automatic caching.
+    /// This is the preferred path when async is not needed (e.g., CLI tools).
+    pub fn download_model_sync(&self, model_id: &str) -> HubResult<ModelBundle> {
+        let api = hf_hub::api::sync::Api::new().map_err(|e| {
+            HubError::NetworkError(format!("Failed to create hf-hub API: {}", e))
+        })?;
+
+        let repo = api.model(model_id.to_string());
+
+        // Download config.json (required)
+        let config_path = repo.get("config.json").map_err(|e| {
+            HubError::NetworkError(format!("Failed to download config.json: {}", e))
+        })?;
+
+        let model_dir = config_path.parent().unwrap_or(&config_path).to_path_buf();
+
+        // Try to download weights and tokenizer files (optional)
+        let _weights = repo.get("model.safetensors").ok();
+        let _vocab = repo.get("vocab.json").ok();
+        let _merges = repo.get("merges.txt").ok();
+        let _tokenizer = repo.get("tokenizer.json").ok();
+
+        Ok(ModelBundle {
+            model_id: model_id.to_string(),
+            model_dir,
+        })
+    }
+
+    /// Download a GGUF model file (synchronous)
+    pub fn download_gguf_sync(
+        &self,
+        model_id: &str,
+        filename: &str,
+    ) -> HubResult<GgufBundle> {
+        let api = hf_hub::api::sync::Api::new().map_err(|e| {
+            HubError::NetworkError(format!("Failed to create hf-hub API: {}", e))
+        })?;
+
+        let repo = api.model(model_id.to_string());
+        let gguf_path = repo.get(filename).map_err(|e| {
+            HubError::NetworkError(format!("Failed to download {}: {}", filename, e))
+        })?;
+
+        Ok(GgufBundle {
+            gguf_path,
+            model_id: Some(model_id.to_string()),
+        })
+    }
+
+    // ======================== Cache management ========================
 
     /// Check if a model is cached locally
     pub fn is_cached(&self, model_id: &str) -> bool {

@@ -13,13 +13,19 @@ path = "main/src/lib.rs"
 rustml-core.workspace = true
 rustml-nn.workspace = true
 rustml-hub.workspace = true
+rustml-gguf.workspace = true
 thiserror.workspace = true
 rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 regex.workspace = true
 tokio.workspace = true
+tokenizers.workspace = true
 
 [[example]]
 name = "gpt2_generate"
 path = "examples/gpt2_generate.rs"
+
+[[example]]
+name = "unified_model_demo"
+path = "examples/unified_model_demo.rs"

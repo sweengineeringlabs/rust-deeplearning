@@ -1,114 +1,330 @@
-//! Attention mechanisms including Causal Self-Attention for GPT
+//! Attention mechanisms: Multi-Head Attention with GQA/RoPE/ALiBi,
+//! Causal Self-Attention for GPT, and KV cache support.
 
+use crate::api::error::{NnError, NnResult};
+use crate::api::types::PositionEncoding;
+use crate::core::kv_cache::KVCache;
 use crate::core::linear::Linear;
-use crate::api::error::NnResult;
+use crate::core::rope::{alibi_bias, compute_alibi_slopes, RoPEFreqs};
 use rustml_core::Tensor;
 
-/// Multi-head attention configuration
-#[derive(Debug, Clone)]
-pub struct MultiHeadAttentionConfig {
-    /// Model dimension (embedding size)
-    pub d_model: usize,
-    /// Number of attention heads
-    pub n_heads: usize,
-    /// Dropout rate (not implemented yet)
-    pub dropout: f32,
-    /// Whether to use bias in projections
-    pub bias: bool,
-}
-
-impl Default for MultiHeadAttentionConfig {
-    fn default() -> Self {
-        Self {
-            d_model: 768,
-            n_heads: 12,
-            dropout: 0.0,
-            bias: true,
-        }
-    }
-}
-
-/// Multi-head attention layer
-#[derive(Debug, Clone)]
+/// Multi-head attention with GQA, RoPE, ALiBi, and KV-cache support.
+///
+/// Supports:
+/// - Standard multi-head attention (num_kv_heads == num_heads)
+/// - Grouped Query Attention (num_kv_heads < num_heads)
+/// - Rotary Position Encoding (RoPE)
+/// - Attention with Linear Biases (ALiBi)
+/// - KV caching for efficient autoregressive decoding
 pub struct MultiHeadAttention {
-    /// Query projection
-    pub wq: Linear,
-    /// Key projection
-    pub wk: Linear,
-    /// Value projection
-    pub wv: Linear,
-    /// Output projection
-    pub wo: Linear,
-    /// Configuration
-    pub config: MultiHeadAttentionConfig,
+    num_heads: usize,
+    num_kv_heads: usize,
+    head_dim: usize,
+    d_model: usize,
+    causal: bool,
+    position_encoding: PositionEncoding,
+    rope_freqs: Option<RoPEFreqs>,
+    alibi_slopes: Option<Vec<f32>>,
+
+    pub q_proj: Linear,
+    pub k_proj: Linear,
+    pub v_proj: Linear,
+    pub out_proj: Linear,
 }
 
 impl MultiHeadAttention {
-    /// Create a new multi-head attention layer
-    pub fn new(config: MultiHeadAttentionConfig) -> Self {
-        let d_model = config.d_model;
-        let wq = Linear::new(d_model, d_model);
-        let wk = Linear::new(d_model, d_model);
-        let wv = Linear::new(d_model, d_model);
-        let wo = Linear::new(d_model, d_model);
+    /// Create a new multi-head attention layer.
+    ///
+    /// # Arguments
+    /// * `d_model` - Model dimension
+    /// * `num_heads` - Number of query heads
+    /// * `num_kv_heads` - Number of KV heads (None = same as num_heads)
+    /// * `bias` - Whether to use bias in projections
+    /// * `causal` - Whether to apply causal masking
+    /// * `position_encoding` - Position encoding strategy
+    /// * `max_seq_len` - Maximum sequence length (for RoPE table precomputation)
+    /// * `rope_theta` - RoPE theta parameter (typically 10000.0)
+    pub fn new(
+        d_model: usize,
+        num_heads: usize,
+        num_kv_heads: Option<usize>,
+        bias: bool,
+        causal: bool,
+        position_encoding: PositionEncoding,
+        max_seq_len: usize,
+        rope_theta: f32,
+    ) -> NnResult<Self> {
+        if d_model % num_heads != 0 {
+            return Err(NnError::InvalidConfig(format!(
+                "d_model ({}) must be divisible by num_heads ({})",
+                d_model, num_heads
+            )));
+        }
+        let head_dim = d_model / num_heads;
+        let n_kv = num_kv_heads.unwrap_or(num_heads);
 
-        Self { wq, wk, wv, wo, config }
+        if num_heads % n_kv != 0 {
+            return Err(NnError::InvalidConfig(format!(
+                "num_heads ({}) must be divisible by num_kv_heads ({})",
+                num_heads, n_kv
+            )));
+        }
+
+        let kv_dim = n_kv * head_dim;
+
+        let rope_freqs = if position_encoding == PositionEncoding::RoPE {
+            Some(RoPEFreqs::new(head_dim, max_seq_len, rope_theta))
+        } else {
+            None
+        };
+
+        let alibi_slopes = if position_encoding == PositionEncoding::ALiBi {
+            Some(compute_alibi_slopes(num_heads))
+        } else {
+            None
+        };
+
+        Ok(Self {
+            num_heads,
+            num_kv_heads: n_kv,
+            head_dim,
+            d_model,
+            causal,
+            position_encoding,
+            rope_freqs,
+            alibi_slopes,
+            q_proj: Linear::with_bias(d_model, d_model, bias),
+            k_proj: Linear::with_bias(d_model, kv_dim, bias),
+            v_proj: Linear::with_bias(d_model, kv_dim, bias),
+            out_proj: Linear::with_bias(d_model, d_model, bias),
+        })
     }
 
-    /// Forward pass for encoder-style attention (no causal mask)
-    pub fn forward(&self, x: &Tensor) -> NnResult<Tensor> {
-        self.forward_with_mask(x, None)
+    /// Construct from pre-loaded projection layers.
+    pub fn from_weights(
+        d_model: usize,
+        num_heads: usize,
+        num_kv_heads: Option<usize>,
+        q_proj: Linear,
+        k_proj: Linear,
+        v_proj: Linear,
+        out_proj: Linear,
+        causal: bool,
+        position_encoding: PositionEncoding,
+        max_seq_len: usize,
+        rope_theta: f32,
+    ) -> NnResult<Self> {
+        if d_model % num_heads != 0 {
+            return Err(NnError::InvalidConfig(format!(
+                "d_model ({}) must be divisible by num_heads ({})",
+                d_model, num_heads
+            )));
+        }
+        let head_dim = d_model / num_heads;
+        let n_kv = num_kv_heads.unwrap_or(num_heads);
+
+        let rope_freqs = if position_encoding == PositionEncoding::RoPE {
+            Some(RoPEFreqs::new(head_dim, max_seq_len, rope_theta))
+        } else {
+            None
+        };
+
+        let alibi_slopes = if position_encoding == PositionEncoding::ALiBi {
+            Some(compute_alibi_slopes(num_heads))
+        } else {
+            None
+        };
+
+        Ok(Self {
+            num_heads,
+            num_kv_heads: n_kv,
+            head_dim,
+            d_model,
+            causal,
+            position_encoding,
+            rope_freqs,
+            alibi_slopes,
+            q_proj,
+            k_proj,
+            v_proj,
+            out_proj,
+        })
     }
 
-    /// Forward with optional attention mask
-    pub fn forward_with_mask(&self, x: &Tensor, mask: Option<&Tensor>) -> NnResult<Tensor> {
-        let shape = x.shape();
-        let batch_size = shape[0];
-        let seq_len = shape[1];
-        let d_model = shape[2];
-        let n_heads = self.config.n_heads;
-        let head_dim = d_model / n_heads;
+    /// Number of KV heads (for cache sizing).
+    pub fn num_kv_heads(&self) -> usize {
+        self.num_kv_heads
+    }
 
-        // Project to Q, K, V
-        let q = self.wq.forward(x)?; // [B, T, D]
-        let k = self.wk.forward(x)?;
-        let v = self.wv.forward(x)?;
+    /// Head dimension.
+    pub fn head_dim(&self) -> usize {
+        self.head_dim
+    }
 
-        // Reshape to [B, H, T, D/H]
+    /// Returns (total_params, frozen_params).
+    pub fn parameter_count(&self) -> (usize, usize) {
+        let (mut total, mut frozen) = (0, 0);
+        for proj in [&self.q_proj, &self.k_proj, &self.v_proj, &self.out_proj] {
+            let (t, f) = proj.parameter_count();
+            total += t;
+            frozen += f;
+        }
+        (total, frozen)
+    }
+
+    /// Toggle native Q4 integer matmul on all projection layers.
+    pub fn set_native_q4_matmul(&mut self, enabled: bool) {
+        self.q_proj.set_native_q4_matmul(enabled);
+        self.k_proj.set_native_q4_matmul(enabled);
+        self.v_proj.set_native_q4_matmul(enabled);
+        self.out_proj.set_native_q4_matmul(enabled);
+    }
+
+    /// Forward pass without KV cache.
+    ///
+    /// Input: [B, S, d_model] -> Output: [B, S, d_model]
+    pub fn forward(&self, input: &Tensor) -> NnResult<Tensor> {
+        let batch_size = input.shape()[0];
+        let seq_len = input.shape()[1];
+
+        // Project inputs
+        let q = self.q_proj.forward(input)?;
+        let k = self.k_proj.forward(input)?;
+        let v = self.v_proj.forward(input)?;
+
+        // Reshape Q: [B, S, num_heads, D] -> [B, num_heads, S, D]
         let q = q
-            .reshape(vec![batch_size, seq_len, n_heads, head_dim])?
+            .reshape(&[batch_size, seq_len, self.num_heads, self.head_dim])?
             .transpose(1, 2)?;
+
+        // Reshape K/V: [B, S, num_kv_heads, D] -> [B, num_kv_heads, S, D]
         let k = k
-            .reshape(vec![batch_size, seq_len, n_heads, head_dim])?
+            .reshape(&[batch_size, seq_len, self.num_kv_heads, self.head_dim])?
             .transpose(1, 2)?;
         let v = v
-            .reshape(vec![batch_size, seq_len, n_heads, head_dim])?
+            .reshape(&[batch_size, seq_len, self.num_kv_heads, self.head_dim])?
             .transpose(1, 2)?;
 
-        // Compute attention scores: Q @ K^T / sqrt(d_k)
-        let scale = (head_dim as f32).sqrt();
-        let scores = q.matmul(&k.t()?)?.div_scalar(scale);
+        // Apply RoPE
+        let (q, k) = if let Some(ref rope) = self.rope_freqs {
+            (rope.apply(&q, 0)?, rope.apply(&k, 0)?)
+        } else {
+            (q, k)
+        };
 
-        // Apply mask if provided
-        let scores = if let Some(m) = mask {
-            scores.masked_fill(m, f32::NEG_INFINITY)?
+        // GQA: expand K/V to match Q heads
+        let n_rep = self.num_heads / self.num_kv_heads;
+        let k = k.repeat_kv(n_rep)?;
+        let v = v.repeat_kv(n_rep)?;
+
+        // Attention scores: Q @ K^T / sqrt(d_k)
+        let k_t = k.transpose(2, 3)?;
+        let scores = q.matmul(&k_t)?;
+        let scale = (self.head_dim as f32).sqrt();
+        let scores = scores.div_scalar(scale);
+
+        // Apply mask/bias
+        let scores = if let Some(ref slopes) = self.alibi_slopes {
+            let bias = alibi_bias(slopes, seq_len, seq_len, self.causal);
+            scores.add(&bias)?
+        } else if self.causal && seq_len > 1 {
+            let mask = Tensor::causal_mask(seq_len, seq_len);
+            scores.add(&mask)?
         } else {
             scores
         };
 
-        // Softmax
         let attn = scores.softmax(-1)?;
+        let context = attn.matmul(&v)?;
 
-        // attn @ V
-        let out = attn.matmul(&v)?; // [B, H, T, D/H]
-
-        // Reshape back to [B, T, D]
-        let out = out
+        let context = context
             .transpose(1, 2)?
-            .reshape(vec![batch_size, seq_len, d_model])?;
+            .reshape(&[batch_size, seq_len, self.d_model])?;
 
-        // Output projection
-        self.wo.forward(&out)
+        self.out_proj.forward(&context)
+    }
+
+    /// Forward pass with KV cache for autoregressive decoding.
+    pub fn forward_with_cache(
+        &self,
+        input: &Tensor,
+        cache: &mut KVCache,
+        layer_idx: usize,
+    ) -> NnResult<Tensor> {
+        if cache.head_dim() != self.head_dim {
+            return Err(NnError::InvalidConfig(format!(
+                "KVCache head_dim ({}) does not match attention head_dim ({})",
+                cache.head_dim(),
+                self.head_dim
+            )));
+        }
+
+        let batch_size = input.shape()[0];
+        let seq_len = input.shape()[1];
+        let start_pos = cache.current_len;
+
+        // Project
+        let q = self.q_proj.forward(input)?;
+        let k = self.k_proj.forward(input)?;
+        let v = self.v_proj.forward(input)?;
+
+        // Reshape Q: [B, S, num_heads, D] -> [B, num_heads, S, D]
+        let q = q
+            .reshape(&[batch_size, seq_len, self.num_heads, self.head_dim])?
+            .transpose(1, 2)?;
+
+        // Reshape K/V: [B, S, num_kv_heads, D] -> [B, num_kv_heads, S, D]
+        let k = k
+            .reshape(&[batch_size, seq_len, self.num_kv_heads, self.head_dim])?
+            .transpose(1, 2)?;
+        let v = v
+            .reshape(&[batch_size, seq_len, self.num_kv_heads, self.head_dim])?
+            .transpose(1, 2)?;
+
+        // Apply RoPE before cache update
+        let (q, k) = if let Some(ref rope) = self.rope_freqs {
+            (rope.apply(&q, start_pos)?, rope.apply(&k, start_pos)?)
+        } else {
+            (q, k)
+        };
+
+        // Update cache
+        cache.update(layer_idx, k.clone(), v.clone())?;
+
+        // Get full K/V history
+        let total_len = cache.current_len + seq_len;
+        let (k_full, v_full) = cache.get_view(layer_idx, total_len)?;
+
+        // GQA: expand K/V
+        let n_rep = self.num_heads / self.num_kv_heads;
+        let k_full = k_full.repeat_kv(n_rep)?;
+        let v_full = v_full.repeat_kv(n_rep)?;
+
+        // Attention scores
+        let k_t = k_full.transpose(2, 3)?;
+        let scores = q.matmul(&k_t)?;
+        let scale = (self.head_dim as f32).sqrt();
+        let scores = scores.div_scalar(scale);
+
+        // Apply mask/bias
+        let scores = if let Some(ref slopes) = self.alibi_slopes {
+            let bias = alibi_bias(slopes, seq_len, total_len, self.causal);
+            scores.add(&bias)?
+        } else if self.causal && seq_len > 1 {
+            let mask = Tensor::causal_mask(seq_len, total_len);
+            scores.add(&mask)?
+        } else {
+            scores
+        };
+
+        let attn = scores.softmax(-1)?;
+        let context = attn.matmul(&v_full)?;
+
+        let context = context
+            .transpose(1, 2)?
+            .reshape(&[batch_size, seq_len, self.d_model])?;
+
+        self.out_proj.forward(&context)
     }
 }
 
@@ -181,7 +397,7 @@ impl CausalSelfAttention {
     pub fn forward(&self, x: &Tensor) -> NnResult<Tensor> {
         let shape = x.shape();
         if shape.len() != 3 {
-            return Err(crate::api::error::NnError::ShapeMismatch(format!(
+            return Err(NnError::ShapeMismatch(format!(
                 "Expected 3D input [B, T, C], got {:?}",
                 shape
             )));
@@ -202,13 +418,13 @@ impl CausalSelfAttention {
 
         // 3. Reshape to multi-head: [B, T, C] -> [B, H, T, C/H]
         let q = q
-            .reshape(vec![batch_size, seq_len, self.n_head, head_dim])?
+            .reshape(&[batch_size, seq_len, self.n_head, head_dim])?
             .transpose(1, 2)?;
         let k = k
-            .reshape(vec![batch_size, seq_len, self.n_head, head_dim])?
+            .reshape(&[batch_size, seq_len, self.n_head, head_dim])?
             .transpose(1, 2)?;
         let v = v
-            .reshape(vec![batch_size, seq_len, self.n_head, head_dim])?
+            .reshape(&[batch_size, seq_len, self.n_head, head_dim])?
             .transpose(1, 2)?;
 
         // 4. Compute attention scores: Q @ K^T / sqrt(d_k)
@@ -229,7 +445,7 @@ impl CausalSelfAttention {
         // 8. Reshape back: [B, H, T, C/H] -> [B, T, C]
         let out = out
             .transpose(1, 2)?
-            .reshape(vec![batch_size, seq_len, n_embd])?;
+            .reshape(&[batch_size, seq_len, n_embd])?;
 
         // 9. Output projection
         self.c_proj.forward(&out)
@@ -287,15 +503,63 @@ mod tests {
     }
 
     #[test]
-    fn test_multi_head_attention() {
-        let config = MultiHeadAttentionConfig {
-            d_model: 64,
-            n_heads: 4,
-            ..Default::default()
-        };
-        let mha = MultiHeadAttention::new(config);
+    fn test_multi_head_attention_basic() {
+        let mha = MultiHeadAttention::new(
+            64, 4, None, true, false,
+            PositionEncoding::None, 128, 10000.0,
+        )
+        .unwrap();
         let x = Tensor::randn(vec![2, 8, 64]);
         let y = mha.forward(&x).unwrap();
         assert_eq!(y.shape(), &[2, 8, 64]);
+    }
+
+    #[test]
+    fn test_multi_head_attention_causal() {
+        let mha = MultiHeadAttention::new(
+            64, 4, None, false, true,
+            PositionEncoding::None, 128, 10000.0,
+        )
+        .unwrap();
+        let x = Tensor::randn(vec![1, 8, 64]);
+        let y = mha.forward(&x).unwrap();
+        assert_eq!(y.shape(), &[1, 8, 64]);
+    }
+
+    #[test]
+    fn test_multi_head_attention_rope() {
+        let mha = MultiHeadAttention::new(
+            64, 4, None, false, true,
+            PositionEncoding::RoPE, 128, 10000.0,
+        )
+        .unwrap();
+        let x = Tensor::randn(vec![1, 8, 64]);
+        let y = mha.forward(&x).unwrap();
+        assert_eq!(y.shape(), &[1, 8, 64]);
+    }
+
+    #[test]
+    fn test_multi_head_attention_gqa() {
+        // 8 Q heads, 2 KV heads -> GQA ratio = 4
+        let mha = MultiHeadAttention::new(
+            64, 8, Some(2), false, true,
+            PositionEncoding::RoPE, 128, 10000.0,
+        )
+        .unwrap();
+        let x = Tensor::randn(vec![1, 8, 64]);
+        let y = mha.forward(&x).unwrap();
+        assert_eq!(y.shape(), &[1, 8, 64]);
+    }
+
+    #[test]
+    fn test_multi_head_attention_alibi() {
+        let mha = MultiHeadAttention::new(
+            64, 4, None, false, true,
+            PositionEncoding::ALiBi, 128, 10000.0,
+        )
+        .unwrap();
+        let x = Tensor::randn(vec![1, 8, 64]);
+        let y = mha.forward(&x).unwrap();
+        assert_eq!(y.shape(), &[1, 8, 64]);
     }
 }

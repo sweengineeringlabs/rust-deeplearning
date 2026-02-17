@@ -18,6 +18,8 @@ pub struct Linear {
     pub weight: Tensor,
     pub bias: Option<Tensor>,
     pub frozen: bool,
+    /// When true, Q4_0 forward uses native integer dot products instead of dequant-to-F32.
+    pub use_native_q4: bool,
 }
 
 impl Linear {
@@ -46,12 +48,13 @@ impl Linear {
             weight,
             bias: bias_tensor,
             frozen: false,
+            use_native_q4: false,
         }
     }
 
     /// Construct a Linear layer from pre-loaded weight and optional bias tensors.
     pub fn from_weights(weight: Tensor, bias: Option<Tensor>) -> Self {
-        Self { weight, bias, frozen: false }
+        Self { weight, bias, frozen: false, use_native_q4: false }
     }
 
     /// Quantize this layer's weight to Q8_0 format in-place.
@@ -72,6 +75,18 @@ impl Linear {
     }
 }
 
+impl Linear {
+    /// Returns (total_params, frozen_params).
+    pub fn parameter_count(&self) -> (usize, usize) {
+        let mut total = self.weight.element_count();
+        if let Some(ref b) = self.bias {
+            total += b.element_count();
+        }
+        let frozen = if self.frozen { total } else { 0 };
+        (total, frozen)
+    }
+}
+
 impl Freezable for Linear {
     fn is_frozen(&self) -> bool { self.frozen }
     fn freeze(&mut self) { self.frozen = true; }
@@ -83,7 +98,9 @@ impl Layer for Linear {
         // Input: [..., In]
         // Weight: [Out, In]
         // Output: [..., Out]
-        let output = if self.weight.dtype == DType::Q4_0 {
+        let output = if self.weight.dtype == DType::Q4_0 && self.use_native_q4 {
+            crate::quantization::quantized_matmul_q4_native(input, &self.weight)?
+        } else if self.weight.dtype == DType::Q4_0 {
             crate::quantization::quantized_matmul_q4(input, &self.weight)?
         } else if self.is_quantized() {
             crate::quantization::quantized_matmul(input, &self.weight)?
@@ -218,6 +235,15 @@ impl LayerNorm {
     }
 }
 
+impl LayerNorm {
+    /// Returns (total_params, frozen_params).
+    pub fn parameter_count(&self) -> (usize, usize) {
+        let total = self.weight.element_count() + self.bias.element_count();
+        let frozen = if self.frozen { total } else { 0 };
+        (total, frozen)
+    }
+}
+
 impl Freezable for LayerNorm {
     fn is_frozen(&self) -> bool { self.frozen }
     fn freeze(&mut self) { self.frozen = true; }
@@ -227,5 +253,46 @@ impl Freezable for LayerNorm {
 impl Layer for LayerNorm {
     fn forward(&self, input: &Tensor) -> Result<Tensor> {
         input.layer_norm(&self.weight, &self.bias, self.eps)
+    }
+}
+
+/// RMSNorm: x * weight / rms(x). Used by Llama-family models.
+/// Unlike LayerNorm, does not subtract mean and has no bias parameter.
+pub struct RMSNorm {
+    pub weight: Tensor,
+    pub eps: f32,
+    pub frozen: bool,
+}
+
+impl RMSNorm {
+    pub fn new(dim: usize, eps: f32) -> Self {
+        let mut w_data = Vec::with_capacity(dim * 4);
+        for _ in 0..dim {
+            w_data.extend_from_slice(&1.0f32.to_ne_bytes());
+        }
+        let weight = Tensor::new(w_data, vec![dim], DType::F32);
+        Self { weight, eps, frozen: false }
+    }
+
+    pub fn from_weight(weight: Tensor, eps: f32) -> Self {
+        Self { weight, eps, frozen: false }
+    }
+
+    pub fn parameter_count(&self) -> (usize, usize) {
+        let total = self.weight.element_count();
+        let frozen = if self.frozen { total } else { 0 };
+        (total, frozen)
+    }
+}
+
+impl Freezable for RMSNorm {
+    fn is_frozen(&self) -> bool { self.frozen }
+    fn freeze(&mut self) { self.frozen = true; }
+    fn unfreeze(&mut self) { self.frozen = false; }
+}
+
+impl Layer for RMSNorm {
+    fn forward(&self, input: &Tensor) -> Result<Tensor> {
+        input.rms_norm(&self.weight, self.eps)
     }
 }

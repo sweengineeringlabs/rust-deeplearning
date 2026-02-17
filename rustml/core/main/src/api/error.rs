@@ -49,4 +49,19 @@ pub enum TensorError {
     /// Data conversion error
     #[error("Data conversion error: {0}")]
     ConversionError(String),
+
+    /// DType mismatch
+    #[error("DType mismatch: expected {expected:?}, got {got:?}")]
+    DTypeMismatch {
+        expected: crate::api::types::DType,
+        got: crate::api::types::DType,
+    },
+
+    /// Not implemented
+    #[error("Not implemented: {0}")]
+    NotImplemented(String),
+
+    /// IO error
+    #[error("IO error: {0}")]
+    Io(String),
 }

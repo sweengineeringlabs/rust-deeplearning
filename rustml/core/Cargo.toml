@@ -12,6 +12,13 @@ path = "main/src/lib.rs"
 [dependencies]
 thiserror.workspace = true
 rand.workspace = true
+rustml-quant.workspace = true
+half.workspace = true
+bytemuck.workspace = true
+rayon.workspace = true
+smallvec.workspace = true
+memmap2.workspace = true
+faer = "0.20"
 
 [dev-dependencies]
 approx.workspace = true

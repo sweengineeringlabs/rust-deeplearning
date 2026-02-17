@@ -304,6 +304,24 @@ impl GptModel {
     }
 }
 
+impl crate::api::types::LanguageModel for GptModel {
+    fn forward(&self, input_ids: &Tensor) -> NlpResult<Tensor> {
+        GptModel::forward(self, input_ids)
+    }
+
+    fn forward_with_cache(&self, input_ids: &Tensor, _cache: &mut rustml_nn::KVCache) -> NlpResult<Tensor> {
+        // GptModel doesn't support KV cache — fall back to full forward
+        GptModel::forward(self, input_ids)
+    }
+
+    fn vocab_size(&self) -> usize { self.config.vocab_size }
+    fn max_sequence_length(&self) -> usize { self.config.n_positions }
+    fn embedding_dim(&self) -> usize { self.config.n_embd }
+    fn num_layers(&self) -> usize { self.config.n_layer }
+    fn num_kv_heads(&self) -> usize { self.config.n_head }
+    fn head_dim(&self) -> usize { self.config.n_embd / self.config.n_head }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

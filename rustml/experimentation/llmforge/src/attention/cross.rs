@@ -56,6 +56,17 @@ impl CrossAttention {
         })
     }
 
+    /// Returns (total_params, frozen_params).
+    pub fn parameter_count(&self) -> (usize, usize) {
+        let (mut total, mut frozen) = (0, 0);
+        for proj in [&self.q_proj, &self.k_proj, &self.v_proj, &self.out_proj] {
+            let (t, f) = proj.parameter_count();
+            total += t;
+            frozen += f;
+        }
+        (total, frozen)
+    }
+
     /// Forward pass: decoder_input [B, S_dec, d_model], encoder_output [B, S_enc, encoder_dim]
     pub fn forward(&self, decoder_input: &Tensor, encoder_output: &Tensor) -> Result<Tensor> {
         let batch_size = decoder_input.shape()[0];

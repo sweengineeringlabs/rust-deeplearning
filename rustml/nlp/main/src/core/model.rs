@@ -1,0 +1,798 @@
+//! Unified LLM model supporting GPT-2, Llama, and future architectures.
+//!
+//! Uses the rustml-nn transformer infrastructure (MultiHeadAttention, TransformerBlock,
+//! FeedForward, KVCache, RoPE, etc.) to build a single model struct that can load
+//! weights from either SafeTensors (GPT-2) or GGUF (Llama) format.
+
+use crate::api::error::{NlpError, NlpResult};
+use crate::api::types::{LanguageModel, ModelConfig};
+use rustml_core::{DType, Tensor, f32_vec_to_bytes};
+use rustml_nn::{
+    Activation, Embedding, FeedForward, KVCache, LayerNorm, Linear, MultiHeadAttention,
+    NormLayer, PositionEncoding, RMSNorm, TransformerBlock,
+};
+use std::collections::HashMap;
+
+/// Unified language model supporting multiple architectures.
+pub struct LlmModel {
+    pub token_embedding: Embedding,
+    pub pos_embedding: Option<Embedding>,
+    pub layers: Vec<TransformerBlock>,
+    pub norm: NormLayer,
+    pub output: Linear,
+    pub config: ModelConfig,
+}
+
+impl LlmModel {
+    /// Create a randomly-initialized model from config.
+    pub fn new(config: &ModelConfig) -> NlpResult<Self> {
+        let d_model = config.dim;
+        let num_heads = config.n_heads;
+        let hidden_dim = config.hidden_dim;
+        let num_layers = config.n_layers;
+        let vocab_size = config.vocab_size;
+        let bias = config.use_bias.unwrap_or(false);
+        let eps = config.norm_eps;
+        let max_seq_len = config.max_seq_len;
+        let position_encoding = config.position_encoding;
+        let causal = config.causal;
+        let rope_theta = config.rope_theta;
+
+        let mut layers = Vec::with_capacity(num_layers);
+        for _ in 0..num_layers {
+            layers.push(TransformerBlock::new(
+                d_model,
+                num_heads,
+                config.n_kv_heads,
+                hidden_dim,
+                bias,
+                eps,
+                causal,
+                position_encoding,
+                max_seq_len,
+                rope_theta,
+            )?);
+        }
+
+        let pos_embedding = if position_encoding == PositionEncoding::Learned {
+            Some(Embedding::new(max_seq_len, d_model))
+        } else {
+            None
+        };
+
+        Ok(Self {
+            token_embedding: Embedding::new(vocab_size, d_model),
+            pos_embedding,
+            layers,
+            norm: NormLayer::LayerNorm(LayerNorm::with_eps(d_model, eps)),
+            output: Linear::new_no_bias(d_model, vocab_size),
+            config: config.clone(),
+        })
+    }
+
+    /// Construct from pre-loaded GGUF/Llama weights (already remapped to internal names).
+    ///
+    /// Expects weight names like:
+    /// - `token_embedding.weight`
+    /// - `layers.{i}.attention.{q,k,v,out}_proj.weight`
+    /// - `layers.{i}.feed_forward.{up,down,gate}_proj.weight`
+    /// - `layers.{i}.{attention,ffn}_norm.weight`
+    /// - `norm.weight`, `output.weight`
+    pub fn from_pretrained(
+        config: &ModelConfig,
+        weights: HashMap<String, Tensor>,
+    ) -> NlpResult<Self> {
+        let d_model = config.dim;
+        let num_heads = config.n_heads;
+        let num_layers = config.n_layers;
+        let max_seq_len = config.max_seq_len;
+        let eps = config.norm_eps;
+        let position_encoding = config.position_encoding;
+        let causal = config.causal;
+        let rope_theta = config.rope_theta;
+
+        // F32 conversion for embeddings/norms
+        let get_tensor = |key: &str| -> NlpResult<Tensor> {
+            weights
+                .get(key)
+                .ok_or_else(|| NlpError::ModelError(format!("Missing weight: {}", key)))
+                .and_then(|t| Ok(t.to_f32()?))
+        };
+
+        // Preserve quantized dtype for Linear weights
+        let get_weight = |key: &str| -> NlpResult<Tensor> {
+            weights
+                .get(key)
+                .ok_or_else(|| NlpError::ModelError(format!("Missing weight: {}", key)))
+                .and_then(|t| match t.dtype() {
+                    DType::Q4_0 | DType::Q8_0 | DType::F32 => Ok(t.clone()),
+                    _ => Ok(t.to_f32()?),
+                })
+        };
+
+        let token_embedding = Embedding::from_weights(get_tensor("token_embedding.weight")?)?;
+
+        let pos_embedding = if position_encoding == PositionEncoding::Learned {
+            if let Ok(pos_weight) = get_tensor("pos_embedding.weight") {
+                Some(Embedding::from_weights(pos_weight)?)
+            } else {
+                Some(Embedding::new(max_seq_len, d_model))
+            }
+        } else {
+            None
+        };
+
+        let mut layers = Vec::with_capacity(num_layers);
+        for i in 0..num_layers {
+            let q_proj = Linear::from_weights(
+                get_weight(&format!("layers.{}.attention.q_proj.weight", i))?,
+                None,
+            )?;
+            let k_proj = Linear::from_weights(
+                get_weight(&format!("layers.{}.attention.k_proj.weight", i))?,
+                None,
+            )?;
+            let v_proj = Linear::from_weights(
+                get_weight(&format!("layers.{}.attention.v_proj.weight", i))?,
+                None,
+            )?;
+            let out_proj = Linear::from_weights(
+                get_weight(&format!("layers.{}.attention.out_proj.weight", i))?,
+                None,
+            )?;
+            let attention = MultiHeadAttention::from_weights(
+                d_model,
+                num_heads,
+                config.n_kv_heads,
+                q_proj,
+                k_proj,
+                v_proj,
+                out_proj,
+                causal,
+                position_encoding,
+                max_seq_len,
+                rope_theta,
+            )?;
+
+            let up_proj = Linear::from_weights(
+                get_weight(&format!("layers.{}.feed_forward.up_proj.weight", i))?,
+                None,
+            )?;
+            let down_proj = Linear::from_weights(
+                get_weight(&format!("layers.{}.feed_forward.down_proj.weight", i))?,
+                None,
+            )?;
+
+            // Detect SwiGLU: if gate_proj is present
+            let gate_key = format!("layers.{}.feed_forward.gate_proj.weight", i);
+            let feed_forward = if let Ok(gate_weight) = get_weight(&gate_key) {
+                let gate_proj = Linear::from_weights(gate_weight, None)?;
+                FeedForward::from_weights_swiglu(up_proj, gate_proj, down_proj)
+            } else {
+                FeedForward::from_weights_with_activation(up_proj, down_proj, Activation::Silu)
+            };
+
+            let attention_norm = RMSNorm::from_weight(
+                get_tensor(&format!("layers.{}.attention_norm.weight", i))?,
+                eps,
+            );
+            let ffn_norm = RMSNorm::from_weight(
+                get_tensor(&format!("layers.{}.ffn_norm.weight", i))?,
+                eps,
+            );
+
+            layers.push(TransformerBlock::from_weights_rms(
+                attention,
+                feed_forward,
+                attention_norm,
+                ffn_norm,
+            ));
+        }
+
+        let norm = NormLayer::RMSNorm(RMSNorm::from_weight(get_tensor("norm.weight")?, eps));
+        let output = Linear::from_weights(get_weight("output.weight")?, None)?;
+
+        Ok(Self {
+            token_embedding,
+            pos_embedding,
+            layers,
+            norm,
+            output,
+            config: config.clone(),
+        })
+    }
+
+    /// Construct GPT-2 model from weights (already remapped to internal names).
+    ///
+    /// Handles GPT-2 specifics:
+    /// - Tied embeddings (output weight = token_embedding weight)
+    /// - Fused QKV split (c_attn → separate Q/K/V)
+    /// - Conv1D transpose (HF stores [in, out], we need [out, in])
+    /// - LayerNorm with bias
+    /// - GELU activation
+    pub fn from_pretrained_gpt2(
+        config: &ModelConfig,
+        weights: HashMap<String, Tensor>,
+    ) -> NlpResult<Self> {
+        let d_model = config.dim;
+        let num_heads = config.n_heads;
+        let num_layers = config.n_layers;
+        let max_seq_len = config.max_seq_len;
+        let eps = config.norm_eps;
+        let position_encoding = config.position_encoding;
+        let causal = config.causal;
+        let rope_theta = config.rope_theta;
+
+        let get_tensor = |key: &str| -> NlpResult<Tensor> {
+            weights
+                .get(key)
+                .ok_or_else(|| NlpError::ModelError(format!("Missing weight: {}", key)))
+                .and_then(|t| Ok(t.to_f32()?))
+        };
+
+        let get_tensor_opt = |key: &str| -> Option<Tensor> {
+            weights.get(key).and_then(|t| t.to_f32().ok())
+        };
+
+        let token_embedding = Embedding::from_weights(get_tensor("token_embedding.weight")?)?;
+
+        let pos_embedding = if position_encoding == PositionEncoding::Learned {
+            if let Ok(pos_weight) = get_tensor("pos_embedding.weight") {
+                Some(Embedding::from_weights(pos_weight)?)
+            } else {
+                Some(Embedding::new(max_seq_len, d_model))
+            }
+        } else {
+            None
+        };
+
+        let mut layers = Vec::with_capacity(num_layers);
+        for i in 0..num_layers {
+            // GPT-2 Conv1D: [In, Out] → transpose to [Out, In]
+            let c_attn_weight = get_tensor(&format!("layers.{}.attention.c_attn.weight", i))?
+                .transpose(0, 1)?
+                .contiguous()?;
+            let c_attn_bias =
+                get_tensor_opt(&format!("layers.{}.attention.c_attn.bias", i));
+
+            // Split fused QKV
+            let (q_w, k_w, v_w) = split_qkv(&c_attn_weight, d_model)?;
+            let (q_b, k_b, v_b) = if let Some(bias) = c_attn_bias {
+                let (qb, kb, vb) = split_qkv_bias(&bias, d_model)?;
+                (Some(qb), Some(kb), Some(vb))
+            } else {
+                (None, None, None)
+            };
+
+            let q_proj = Linear::from_weights(q_w, q_b)?;
+            let k_proj = Linear::from_weights(k_w, k_b)?;
+            let v_proj = Linear::from_weights(v_w, v_b)?;
+
+            let out_proj_weight =
+                get_tensor(&format!("layers.{}.attention.out_proj.weight", i))?
+                    .transpose(0, 1)?
+                    .contiguous()?;
+            let out_proj = Linear::from_weights(
+                out_proj_weight,
+                get_tensor_opt(&format!("layers.{}.attention.out_proj.bias", i)),
+            )?;
+
+            let attention = MultiHeadAttention::from_weights(
+                d_model,
+                num_heads,
+                config.n_kv_heads,
+                q_proj,
+                k_proj,
+                v_proj,
+                out_proj,
+                causal,
+                position_encoding,
+                max_seq_len,
+                rope_theta,
+            )?;
+
+            // FFN (GELU, no gate_proj) — also transpose Conv1D weights
+            let up_proj_weight =
+                get_tensor(&format!("layers.{}.feed_forward.up_proj.weight", i))?
+                    .transpose(0, 1)?
+                    .contiguous()?;
+            let up_proj = Linear::from_weights(
+                up_proj_weight,
+                get_tensor_opt(&format!("layers.{}.feed_forward.up_proj.bias", i)),
+            )?;
+            let down_proj_weight =
+                get_tensor(&format!("layers.{}.feed_forward.down_proj.weight", i))?
+                    .transpose(0, 1)?
+                    .contiguous()?;
+            let down_proj = Linear::from_weights(
+                down_proj_weight,
+                get_tensor_opt(&format!("layers.{}.feed_forward.down_proj.bias", i)),
+            )?;
+            let feed_forward =
+                FeedForward::from_weights_with_activation(up_proj, down_proj, Activation::Gelu);
+
+            // LayerNorm with bias
+            let attention_norm = LayerNorm::from_weights(
+                get_tensor(&format!("layers.{}.attention_norm.weight", i))?,
+                get_tensor(&format!("layers.{}.attention_norm.bias", i))?,
+                eps,
+            )?;
+            let ffn_norm = LayerNorm::from_weights(
+                get_tensor(&format!("layers.{}.ffn_norm.weight", i))?,
+                get_tensor(&format!("layers.{}.ffn_norm.bias", i))?,
+                eps,
+            )?;
+
+            layers.push(TransformerBlock::from_weights(
+                attention,
+                feed_forward,
+                attention_norm,
+                ffn_norm,
+            ));
+        }
+
+        // Final LayerNorm with bias
+        let norm = NormLayer::LayerNorm(LayerNorm::from_weights(
+            get_tensor("norm.weight")?,
+            get_tensor("norm.bias")?,
+            eps,
+        )?);
+
+        // Tied embeddings: output weight = token_embedding weight
+        let output = Linear::from_weights(token_embedding.weight.clone(), None)?;
+
+        Ok(Self {
+            token_embedding,
+            pos_embedding,
+            layers,
+            norm,
+            output,
+            config: config.clone(),
+        })
+    }
+
+    /// Forward pass without KV cache.
+    pub fn forward_pass(&self, input_ids: &Tensor) -> NlpResult<Tensor> {
+        let x_emb = self.token_embedding.forward(input_ids)?;
+
+        let batch_size = input_ids.shape()[0];
+        let seq_len = input_ids.shape()[input_ids.ndim() - 1];
+
+        if seq_len > self.config.max_seq_len {
+            return Err(NlpError::ModelError(format!(
+                "Sequence length {} exceeds maximum {}",
+                seq_len, self.config.max_seq_len
+            )));
+        }
+
+        // Add positional embeddings (Learned only)
+        let mut x = if let Some(ref pos_emb) = self.pos_embedding {
+            let mut pos_data = Vec::with_capacity(batch_size * seq_len);
+            for _ in 0..batch_size {
+                for i in 0..seq_len {
+                    pos_data.push(i as f32);
+                }
+            }
+            let pos_bytes = f32_vec_to_bytes(pos_data);
+            let pos_ids = Tensor::new(pos_bytes, vec![batch_size, seq_len], DType::F32);
+            let p_emb = pos_emb.forward(&pos_ids)?;
+            x_emb.add(&p_emb)?
+        } else {
+            x_emb
+        };
+
+        for layer in &self.layers {
+            x = layer.forward(&x)?;
+        }
+
+        let x = self.norm.forward(&x)?;
+        Ok(self.output.forward(&x)?)
+    }
+
+    /// Forward pass with KV cache for autoregressive decoding.
+    pub fn forward_with_cache_pass(
+        &self,
+        input_ids: &Tensor,
+        cache: &mut KVCache,
+    ) -> NlpResult<Tensor> {
+        let x_emb = self.token_embedding.forward(input_ids)?;
+
+        let batch_size = input_ids.shape()[0];
+        let seq_len = input_ids.shape()[input_ids.ndim() - 1];
+        let start_pos = cache.current_len;
+
+        if start_pos + seq_len > self.config.max_seq_len {
+            return Err(NlpError::ModelError(format!(
+                "Sequence length {} exceeds maximum {} (start_pos={})",
+                start_pos + seq_len,
+                self.config.max_seq_len,
+                start_pos
+            )));
+        }
+
+        // Add positional embeddings with offset (Learned only)
+        let mut x = if let Some(ref pos_emb) = self.pos_embedding {
+            let mut pos_data = Vec::with_capacity(batch_size * seq_len);
+            for _ in 0..batch_size {
+                for i in 0..seq_len {
+                    pos_data.push((start_pos + i) as f32);
+                }
+            }
+            let pos_bytes = f32_vec_to_bytes(pos_data);
+            let pos_ids = Tensor::new(pos_bytes, vec![batch_size, seq_len], DType::F32);
+            let p_emb = pos_emb.forward(&pos_ids)?;
+            x_emb.add(&p_emb)?
+        } else {
+            x_emb
+        };
+
+        for (i, layer) in self.layers.iter().enumerate() {
+            x = layer.forward_with_cache(&x, None, cache, i)?;
+        }
+
+        let x = self.norm.forward(&x)?;
+        Ok(self.output.forward(&x)?)
+    }
+
+    /// Returns (total_params, frozen_params).
+    pub fn parameter_count(&self) -> (usize, usize) {
+        let mut total = 0usize;
+        let mut frozen = 0usize;
+
+        total += self.token_embedding.weight.numel();
+
+        if let Some(ref pos_emb) = self.pos_embedding {
+            total += pos_emb.weight.numel();
+        }
+
+        for layer in &self.layers {
+            let (t, f) = layer.parameter_count();
+            total += t;
+            frozen += f;
+        }
+
+        let (t, f) = self.output.parameter_count();
+        total += t;
+        frozen += f;
+
+        let (t, f) = self.norm.parameter_count();
+        total += t;
+        frozen += f;
+
+        (total, frozen)
+    }
+}
+
+impl LanguageModel for LlmModel {
+    fn forward(&self, input_ids: &Tensor) -> NlpResult<Tensor> {
+        self.forward_pass(input_ids)
+    }
+
+    fn forward_with_cache(&self, input_ids: &Tensor, cache: &mut KVCache) -> NlpResult<Tensor> {
+        self.forward_with_cache_pass(input_ids, cache)
+    }
+
+    fn vocab_size(&self) -> usize {
+        self.config.vocab_size
+    }
+
+    fn max_sequence_length(&self) -> usize {
+        self.config.max_seq_len
+    }
+
+    fn embedding_dim(&self) -> usize {
+        self.config.dim
+    }
+
+    fn num_layers(&self) -> usize {
+        self.config.n_layers
+    }
+
+    fn num_kv_heads(&self) -> usize {
+        self.config.n_kv_heads.unwrap_or(self.config.n_heads)
+    }
+
+    fn head_dim(&self) -> usize {
+        self.config.dim / self.config.n_heads
+    }
+}
+
+// ======================== Helper functions ========================
+
+/// Split a fused QKV weight [3*d_model, d_model] into three [d_model, d_model] tensors.
+fn split_qkv(qkv: &Tensor, d_model: usize) -> NlpResult<(Tensor, Tensor, Tensor)> {
+    let q = qkv.slice(0, 0, d_model)?;
+    let k = qkv.slice(0, d_model, 2 * d_model)?;
+    let v = qkv.slice(0, 2 * d_model, 3 * d_model)?;
+    Ok((q, k, v))
+}
+
+/// Split a fused QKV bias [3*d_model] into three [d_model] tensors.
+fn split_qkv_bias(qkv_bias: &Tensor, d_model: usize) -> NlpResult<(Tensor, Tensor, Tensor)> {
+    let data: Vec<f32> = qkv_bias.iter().collect();
+    if data.len() != 3 * d_model {
+        return Err(NlpError::ModelError(format!(
+            "QKV bias has {} elements, expected {}",
+            data.len(),
+            3 * d_model
+        )));
+    }
+
+    let q_data = f32_vec_to_bytes(data[..d_model].to_vec());
+    let k_data = f32_vec_to_bytes(data[d_model..2 * d_model].to_vec());
+    let v_data = f32_vec_to_bytes(data[2 * d_model..].to_vec());
+
+    Ok((
+        Tensor::new(q_data, vec![d_model], DType::F32),
+        Tensor::new(k_data, vec![d_model], DType::F32),
+        Tensor::new(v_data, vec![d_model], DType::F32),
+    ))
+}
+
+/// Map HuggingFace GPT-2 weight names to LlmModel internal names.
+///
+/// | HF Name                                    | Internal Name                                 |
+/// |---------------------------------------------|-----------------------------------------------|
+/// | transformer.wte.weight                      | token_embedding.weight                        |
+/// | transformer.wpe.weight                      | pos_embedding.weight                          |
+/// | transformer.h.{i}.ln_1.weight               | layers.{i}.attention_norm.weight               |
+/// | transformer.h.{i}.attn.c_attn.weight        | layers.{i}.attention.c_attn.weight              |
+/// | transformer.h.{i}.attn.c_proj.weight        | layers.{i}.attention.out_proj.weight            |
+/// | transformer.h.{i}.ln_2.weight               | layers.{i}.ffn_norm.weight                     |
+/// | transformer.h.{i}.mlp.c_fc.weight           | layers.{i}.feed_forward.up_proj.weight          |
+/// | transformer.h.{i}.mlp.c_proj.weight         | layers.{i}.feed_forward.down_proj.weight        |
+/// | transformer.ln_f.weight                     | norm.weight                                   |
+pub fn map_gpt2_weights(
+    weights: HashMap<String, Tensor>,
+) -> HashMap<String, Tensor> {
+    let mut mapped = HashMap::new();
+
+    for (name, tensor) in weights {
+        let stripped = name
+            .strip_prefix("transformer.")
+            .unwrap_or(&name);
+
+        let new_name = if stripped == "wte.weight" {
+            "token_embedding.weight".to_string()
+        } else if stripped == "wpe.weight" {
+            "pos_embedding.weight".to_string()
+        } else if stripped == "ln_f.weight" {
+            "norm.weight".to_string()
+        } else if stripped == "ln_f.bias" {
+            "norm.bias".to_string()
+        } else if let Some(rest) = stripped.strip_prefix("h.") {
+            // h.{i}.ln_1.* -> layers.{i}.attention_norm.*
+            // h.{i}.ln_2.* -> layers.{i}.ffn_norm.*
+            // h.{i}.attn.c_attn.* -> layers.{i}.attention.c_attn.*
+            // h.{i}.attn.c_proj.* -> layers.{i}.attention.out_proj.*
+            // h.{i}.mlp.c_fc.* -> layers.{i}.feed_forward.up_proj.*
+            // h.{i}.mlp.c_proj.* -> layers.{i}.feed_forward.down_proj.*
+            let parts: Vec<&str> = rest.splitn(2, '.').collect();
+            if parts.len() != 2 {
+                mapped.insert(name, tensor);
+                continue;
+            }
+            let layer_num = parts[0];
+            let suffix = parts[1];
+
+            let mapped_suffix = if let Some(s) = suffix.strip_prefix("ln_1.") {
+                format!("attention_norm.{}", s)
+            } else if let Some(s) = suffix.strip_prefix("ln_2.") {
+                format!("ffn_norm.{}", s)
+            } else if let Some(s) = suffix.strip_prefix("attn.c_attn.") {
+                format!("attention.c_attn.{}", s)
+            } else if let Some(s) = suffix.strip_prefix("attn.c_proj.") {
+                format!("attention.out_proj.{}", s)
+            } else if let Some(s) = suffix.strip_prefix("mlp.c_fc.") {
+                format!("feed_forward.up_proj.{}", s)
+            } else if let Some(s) = suffix.strip_prefix("mlp.c_proj.") {
+                format!("feed_forward.down_proj.{}", s)
+            } else {
+                suffix.to_string()
+            };
+
+            format!("layers.{}.{}", layer_num, mapped_suffix)
+        } else {
+            stripped.to_string()
+        };
+
+        mapped.insert(new_name, tensor);
+    }
+
+    mapped
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tiny_config() -> ModelConfig {
+        ModelConfig {
+            dim: 64,
+            hidden_dim: 256,
+            n_layers: 2,
+            n_heads: 4,
+            n_kv_heads: None,
+            vocab_size: 100,
+            norm_eps: 1e-5,
+            max_seq_len: 32,
+            use_bias: Some(false),
+            position_encoding: PositionEncoding::Learned,
+            causal: true,
+            rope_theta: 10000.0,
+            bos_token_id: None,
+            eos_token_id: None,
+        }
+    }
+
+    fn tiny_rope_config() -> ModelConfig {
+        ModelConfig {
+            position_encoding: PositionEncoding::RoPE,
+            use_bias: Some(false),
+            ..tiny_config()
+        }
+    }
+
+    #[test]
+    fn test_llm_model_creation() {
+        let config = tiny_config();
+        let model = LlmModel::new(&config).unwrap();
+        assert_eq!(model.layers.len(), 2);
+        assert_eq!(model.vocab_size(), 100);
+        assert_eq!(model.max_sequence_length(), 32);
+    }
+
+    #[test]
+    fn test_llm_model_forward() {
+        let config = tiny_config();
+        let model = LlmModel::new(&config).unwrap();
+
+        let input = Tensor::from_vec(
+            (0..8).map(|i| (i % 100) as f32).collect(),
+            vec![1, 8],
+        )
+        .unwrap();
+
+        let logits = model.forward(&input).unwrap();
+        assert_eq!(logits.shape(), &[1, 8, 100]);
+    }
+
+    #[test]
+    fn test_llm_model_rope_forward() {
+        let config = tiny_rope_config();
+        let model = LlmModel::new(&config).unwrap();
+
+        let input = Tensor::from_vec(
+            (0..8).map(|i| (i % 100) as f32).collect(),
+            vec![1, 8],
+        )
+        .unwrap();
+
+        let logits = model.forward(&input).unwrap();
+        assert_eq!(logits.shape(), &[1, 8, 100]);
+    }
+
+    #[test]
+    fn test_llm_model_with_cache() {
+        let config = tiny_config();
+        let model = LlmModel::new(&config).unwrap();
+
+        let mut cache = KVCache::new(
+            config.n_layers,
+            config.max_seq_len,
+            model.head_dim(),
+            model.num_kv_heads(),
+        );
+
+        // Prefill with 4 tokens
+        let input = Tensor::from_vec(
+            (0..4).map(|i| (i % 100) as f32).collect(),
+            vec![1, 4],
+        )
+        .unwrap();
+        let logits = model.forward_with_cache(&input, &mut cache).unwrap();
+        assert_eq!(logits.shape(), &[1, 4, 100]);
+        cache.advance(4);
+
+        // Decode 1 token
+        let input = Tensor::from_vec(vec![5.0], vec![1, 1]).unwrap();
+        let logits = model.forward_with_cache(&input, &mut cache).unwrap();
+        assert_eq!(logits.shape(), &[1, 1, 100]);
+    }
+
+    #[test]
+    fn test_llm_model_parameter_count() {
+        let config = tiny_config();
+        let model = LlmModel::new(&config).unwrap();
+        let (total, frozen) = model.parameter_count();
+        assert!(total > 0);
+        assert_eq!(frozen, 0);
+    }
+
+    #[test]
+    fn test_model_config_validation() {
+        let mut config = tiny_config();
+        config.dim = 0;
+        assert!(config.validate().is_err());
+
+        let mut config = tiny_config();
+        config.n_heads = 0;
+        assert!(config.validate().is_err());
+
+        let mut config = tiny_config();
+        config.dim = 65; // not divisible by n_heads=4
+        assert!(config.validate().is_err());
+
+        let mut config = tiny_config();
+        config.n_kv_heads = Some(3); // n_heads=4 not divisible by 3
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_model_config_default() {
+        let config = ModelConfig::default();
+        assert_eq!(config.dim, 4096);
+        assert_eq!(config.n_layers, 32);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_split_qkv_fn() {
+        let qkv = Tensor::randn(vec![192, 64]); // 3*64, 64
+        let (q, k, v) = split_qkv(&qkv, 64).unwrap();
+        assert_eq!(q.shape(), &[64, 64]);
+        assert_eq!(k.shape(), &[64, 64]);
+        assert_eq!(v.shape(), &[64, 64]);
+    }
+
+    #[test]
+    fn test_split_qkv_bias_fn() {
+        let bias = Tensor::from_vec((0..192).map(|i| i as f32).collect(), vec![192]).unwrap();
+        let (q, k, v) = split_qkv_bias(&bias, 64).unwrap();
+        assert_eq!(q.shape(), &[64]);
+        assert_eq!(k.shape(), &[64]);
+        assert_eq!(v.shape(), &[64]);
+        // Check values
+        assert_eq!(q.get(&[0]).unwrap(), 0.0);
+        assert_eq!(k.get(&[0]).unwrap(), 64.0);
+        assert_eq!(v.get(&[0]).unwrap(), 128.0);
+    }
+
+    #[test]
+    fn test_map_gpt2_weights_fn() {
+        let mut weights = HashMap::new();
+        weights.insert(
+            "transformer.wte.weight".to_string(),
+            Tensor::randn(vec![100, 64]),
+        );
+        weights.insert(
+            "transformer.wpe.weight".to_string(),
+            Tensor::randn(vec![32, 64]),
+        );
+        weights.insert(
+            "transformer.h.0.ln_1.weight".to_string(),
+            Tensor::randn(vec![64]),
+        );
+        weights.insert(
+            "transformer.h.0.attn.c_attn.weight".to_string(),
+            Tensor::randn(vec![64, 192]),
+        );
+        weights.insert(
+            "transformer.h.0.mlp.c_fc.weight".to_string(),
+            Tensor::randn(vec![64, 256]),
+        );
+        weights.insert(
+            "transformer.ln_f.weight".to_string(),
+            Tensor::randn(vec![64]),
+        );
+
+        let mapped = map_gpt2_weights(weights);
+
+        assert!(mapped.contains_key("token_embedding.weight"));
+        assert!(mapped.contains_key("pos_embedding.weight"));
+        assert!(mapped.contains_key("layers.0.attention_norm.weight"));
+        assert!(mapped.contains_key("layers.0.attention.c_attn.weight"));
+        assert!(mapped.contains_key("layers.0.feed_forward.up_proj.weight"));
+        assert!(mapped.contains_key("norm.weight"));
+    }
+}

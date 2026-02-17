@@ -422,6 +422,13 @@ impl GGUFFile {
         let norm_eps = get_f32_opt("llama.attention.layer_norm_rms_epsilon").unwrap_or(1e-5);
         let rope_theta = get_f32_opt("llama.rope.freq_base").unwrap_or(10000.0);
 
+        let bos_token_id = get_u32("tokenizer.ggml.bos_token_id").ok();
+        let eos_token_id = get_u32("tokenizer.ggml.eos_token_id").ok();
+
+        let chat_template = self.metadata.get("tokenizer.chat_template")
+            .and_then(|v| v.as_string())
+            .map(|s| s.to_string());
+
         let config = ModelConfig {
             dim,
             hidden_dim,
@@ -435,6 +442,9 @@ impl GGUFFile {
             position_encoding: PositionEncoding::RoPE,
             causal: true,
             rope_theta,
+            bos_token_id,
+            eos_token_id,
+            chat_template,
         };
         config.validate()?;
         Ok(config)
@@ -506,11 +516,15 @@ fn f16_from_bytes(lo: u8, hi: u8) -> f32 {
 }
 
 /// Dequantize Q6_K blocks (matches llama.cpp dequantize_row_q6_K).
-/// Layout per block (256 elements):
+/// Layout per block (256 elements, 210 bytes):
 ///   ql[128]: lower 4 bits of 6-bit quants
 ///   qh[64]:  upper 2 bits of 6-bit quants
 ///   scales[16]: int8 sub-block scales
 ///   d[2]: f16 super-block scale
+///
+/// llama.cpp processes each 256-element block in two 128-element halves.
+/// Within each half, l iterates 0..32 producing 4 outputs at [l, l+32, l+64, l+96].
+/// Between halves, ql advances by 64, qh by 32, scales by 8.
 fn dequantize_q6k(data: &[u8], n_elements: usize) -> Result<Vec<f32>> {
     let block_size = 256;
     let block_bytes = 210;
@@ -526,42 +540,40 @@ fn dequantize_q6k(data: &[u8], n_elements: usize) -> Result<Vec<f32>> {
 
         let out = &mut output[b * block_size..(b + 1) * block_size];
 
-        // First 128 elements: qh bits 0-1 and 2-3
-        for j in 0..32usize {
-            let q1 = (ql[j] & 0xF)      | (((qh[j] >> 0) & 3) << 4);
-            let q2 = (ql[j + 32] & 0xF) | (((qh[j] >> 2) & 3) << 4);
-            let q3 = (ql[j] >> 4)        | (((qh[j + 32] >> 0) & 3) << 4);
-            let q4 = (ql[j + 32] >> 4)   | (((qh[j + 32] >> 2) & 3) << 4);
+        // Two passes of 128 elements each, matching llama.cpp pointer advancement
+        for half in 0..2usize {
+            let ql_off = half * 64;
+            let qh_off = half * 32;
+            let sc_off = half * 8;
+            let y_off = half * 128;
 
-            out[j]      = d * (scales[0] as i8 as f32) * (q1 as i8 as f32 - 32.0);
-            out[j + 32] = d * (scales[2] as i8 as f32) * (q2 as i8 as f32 - 32.0);
-            out[j + 64] = d * (scales[4] as i8 as f32) * (q3 as i8 as f32 - 32.0);
-            out[j + 96] = d * (scales[6] as i8 as f32) * (q4 as i8 as f32 - 32.0);
-        }
+            for l in 0..32usize {
+                let is = l / 16;
+                let q1 = ((ql[ql_off + l] & 0xF) | (((qh[qh_off + l] >> 0) & 3) << 4)) as i8 as f32 - 32.0;
+                let q2 = ((ql[ql_off + l + 32] & 0xF) | (((qh[qh_off + l] >> 2) & 3) << 4)) as i8 as f32 - 32.0;
+                let q3 = ((ql[ql_off + l] >> 4) | (((qh[qh_off + l] >> 4) & 3) << 4)) as i8 as f32 - 32.0;
+                let q4 = ((ql[ql_off + l + 32] >> 4) | (((qh[qh_off + l] >> 6) & 3) << 4)) as i8 as f32 - 32.0;
 
-        // Second 128 elements: qh bits 4-5 and 6-7
-        for j in 0..32usize {
-            let q1 = (ql[j + 64] & 0xF)  | (((qh[j] >> 4) & 3) << 4);
-            let q2 = (ql[j + 96] & 0xF)  | (((qh[j + 32] >> 4) & 3) << 4);
-            let q3 = (ql[j + 64] >> 4)    | (((qh[j] >> 6) & 3) << 4);
-            let q4 = (ql[j + 96] >> 4)    | (((qh[j + 32] >> 6) & 3) << 4);
-
-            out[j + 128] = d * (scales[1] as i8 as f32) * (q1 as i8 as f32 - 32.0);
-            out[j + 160] = d * (scales[3] as i8 as f32) * (q2 as i8 as f32 - 32.0);
-            out[j + 192] = d * (scales[5] as i8 as f32) * (q3 as i8 as f32 - 32.0);
-            out[j + 224] = d * (scales[7] as i8 as f32) * (q4 as i8 as f32 - 32.0);
+                out[y_off + l]      = d * (scales[sc_off + is] as i8 as f32) * q1;
+                out[y_off + l + 32] = d * (scales[sc_off + is + 2] as i8 as f32) * q2;
+                out[y_off + l + 64] = d * (scales[sc_off + is + 4] as i8 as f32) * q3;
+                out[y_off + l + 96] = d * (scales[sc_off + is + 6] as i8 as f32) * q4;
+            }
         }
     }
 
     Ok(output)
 }
 
-/// Dequantize Q4_K blocks.
-/// Layout per block (256 elements):
+/// Dequantize Q4_K blocks (matches llama.cpp dequantize_row_q4_K).
+/// Layout per block (256 elements, 144 bytes):
 ///   d[2]: f16 super-block scale
 ///   dmin[2]: f16 super-block min
 ///   scales[12]: packed 6-bit scale/min pairs for 8 sub-blocks
 ///   qs[128]: 4-bit quants, 2 per byte
+///
+/// llama.cpp processes 64 elements per chunk: first 32 = lo nibbles, next 32 = hi nibbles.
+/// qs pointer advances by 32 per chunk. 4 chunks total = 256 elements.
 fn dequantize_q4k(data: &[u8], n_elements: usize) -> Result<Vec<f32>> {
     let block_size = 256;
     let block_bytes = 144;
@@ -576,6 +588,7 @@ fn dequantize_q4k(data: &[u8], n_elements: usize) -> Result<Vec<f32>> {
         let qs = &block[16..144];
 
         // Unpack 6-bit scales and mins from 12 bytes into 8 pairs
+        // (matches get_scale_min_k4 in llama.cpp)
         let mut sc = [0u8; 8];
         let mut mn = [0u8; 8];
         for i in 0..4 {
@@ -587,22 +600,35 @@ fn dequantize_q4k(data: &[u8], n_elements: usize) -> Result<Vec<f32>> {
 
         let out = &mut output[b * block_size..(b + 1) * block_size];
 
-        for j in 0..128 {
-            let sub_block = j / 16; // which of the 8 sub-blocks (first half: low nibble)
-            let q_lo = qs[j] & 0xF;
-            let q_hi = qs[j] >> 4;
-            out[j * 2]     = d * sc[sub_block] as f32 * q_lo as f32 - dmin * mn[sub_block] as f32;
-            out[j * 2 + 1] = d * sc[sub_block + (if j >= 64 { 0 } else { 4 })] as f32 * q_hi as f32
-                             - dmin * mn[sub_block + (if j >= 64 { 0 } else { 4 })] as f32;
+        // 4 chunks of 64 elements each; each chunk uses 32 qs bytes
+        let mut is = 0usize;
+        for chunk in 0..4usize {
+            let q_off = chunk * 32;
+            let y_off = chunk * 64;
+            let d1 = d * sc[is] as f32;
+            let m1 = dmin * mn[is] as f32;
+            let d2 = d * sc[is + 1] as f32;
+            let m2 = dmin * mn[is + 1] as f32;
+
+            for l in 0..32 {
+                out[y_off + l] = d1 * (qs[q_off + l] & 0xF) as f32 - m1;
+            }
+            for l in 0..32 {
+                out[y_off + 32 + l] = d2 * (qs[q_off + l] >> 4) as f32 - m2;
+            }
+            is += 2;
         }
     }
 
     Ok(output)
 }
 
-/// Dequantize Q5_K blocks.
-/// Layout per block (256 elements):
+/// Dequantize Q5_K blocks (matches llama.cpp dequantize_row_q5_K).
+/// Layout per block (256 elements, 176 bytes):
 ///   d[2], dmin[2], scales[12], qh[32], qs[128]
+///
+/// llama.cpp processes 64 elements per chunk: first 32 = lo nibbles + qh bit,
+/// next 32 = hi nibbles + qh bit. ql advances by 32, qh bits rotate. 4 chunks = 256.
 fn dequantize_q5k(data: &[u8], n_elements: usize) -> Result<Vec<f32>> {
     let block_size = 256;
     let block_bytes = 176;
@@ -628,21 +654,30 @@ fn dequantize_q5k(data: &[u8], n_elements: usize) -> Result<Vec<f32>> {
 
         let out = &mut output[b * block_size..(b + 1) * block_size];
 
-        for j in 0..128 {
-            let sub = j / 16;
-            let bit_idx = j;
-            let qh_byte = qh[bit_idx / 8];
-            let qh_bit_lo = (qh_byte >> (bit_idx % 8)) & 1;
-            let q_lo = (qs[j] & 0xF) | (qh_bit_lo << 4);
+        // u1 and u2 are bit masks for qh, rotating left by 2 each chunk
+        let mut u1: u8 = 1;
+        let mut u2: u8 = 2;
+        let mut is = 0usize;
 
-            let bit_idx2 = j + 128;
-            let qh_byte2 = qh[bit_idx2 / 8];
-            let qh_bit_hi = (qh_byte2 >> (bit_idx2 % 8)) & 1;
-            let q_hi = (qs[j] >> 4) | (qh_bit_hi << 4);
+        for chunk in 0..4usize {
+            let ql_off = chunk * 32;
+            let y_off = chunk * 64;
+            let d1 = d * sc[is] as f32;
+            let m1 = dmin * mn[is] as f32;
+            let d2 = d * sc[is + 1] as f32;
+            let m2 = dmin * mn[is + 1] as f32;
 
-            let sub_hi = if j >= 64 { sub } else { sub + 4 };
-            out[j * 2]     = d * sc[sub] as f32 * q_lo as f32 - dmin * mn[sub] as f32;
-            out[j * 2 + 1] = d * sc[sub_hi] as f32 * q_hi as f32 - dmin * mn[sub_hi] as f32;
+            for l in 0..32 {
+                let hbit = if qh[l] & u1 != 0 { 16u8 } else { 0 };
+                out[y_off + l] = d1 * ((qs[ql_off + l] & 0xF) + hbit) as f32 - m1;
+            }
+            for l in 0..32 {
+                let hbit = if qh[l] & u2 != 0 { 16u8 } else { 0 };
+                out[y_off + 32 + l] = d2 * ((qs[ql_off + l] >> 4) + hbit) as f32 - m2;
+            }
+            is += 2;
+            u1 <<= 2;
+            u2 <<= 2;
         }
     }
 
@@ -674,9 +709,12 @@ fn dequantize_q8k(data: &[u8], n_elements: usize) -> Result<Vec<f32>> {
     Ok(output)
 }
 
-/// Dequantize Q3_K blocks.
-/// Layout per block (256 elements):
-///   hmask[32], qs[128], scales[12], d[2]
+/// Dequantize Q3_K blocks (matches llama.cpp dequantize_row_q3_K).
+/// Layout per block (256 elements, 110 bytes):
+///   hmask[32], qs[64], scales[12], d[2]
+///
+/// llama.cpp processes two 128-element halves. Within each half, 4 shift values (0,2,4,6)
+/// iterate over the same 32 qs bytes, producing 4×32=128 elements.
 fn dequantize_q3k(data: &[u8], n_elements: usize) -> Result<Vec<f32>> {
     let block_size = 256;
     let block_bytes = 110;
@@ -685,39 +723,74 @@ fn dequantize_q3k(data: &[u8], n_elements: usize) -> Result<Vec<f32>> {
 
     for b in 0..n_blocks {
         let block = &data[b * block_bytes..(b + 1) * block_bytes];
-        let hmask = &block[0..32];
+        let hm = &block[0..32];
         let qs = &block[32..96];
         let scales_raw = &block[96..108];
-        let d = f16_from_bytes(block[108], block[109]);
+        let d_all = f16_from_bytes(block[108], block[109]);
 
-        // Unpack scales from 12 bytes → 16 scales (each 6 bits, mapped to signed)
-        let mut scales = [0i8; 16];
-        for i in 0..8 {
-            scales[i] = ((scales_raw[i] & 0xF) as i8) - 8;
-        }
-        for i in 0..8 {
-            scales[i + 8] = ((scales_raw[i] >> 4) as i8) - 8;
-        }
+        // Unpack scales using llama.cpp's aux/kmask method
+        let kmask1: u32 = 0x03030303;
+        let kmask2: u32 = 0x0f0f0f0f;
+
+        let mut aux = [0u32; 4];
+        aux[0] = u32::from_le_bytes([scales_raw[0], scales_raw[1], scales_raw[2], scales_raw[3]]);
+        aux[1] = u32::from_le_bytes([scales_raw[4], scales_raw[5], scales_raw[6], scales_raw[7]]);
+        aux[2] = u32::from_le_bytes([scales_raw[8], scales_raw[9], scales_raw[10], scales_raw[11]]);
+
+        let tmp = aux[2];
+        aux[2] = ((aux[0] >> 4) & kmask2) | (((tmp >> 4) & kmask1) << 4);
+        aux[3] = ((aux[1] >> 4) & kmask2) | (((tmp >> 6) & kmask1) << 4);
+        aux[0] = (aux[0] & kmask2) | (((tmp >> 0) & kmask1) << 4);
+        aux[1] = (aux[1] & kmask2) | (((tmp >> 2) & kmask1) << 4);
+
+        // Reinterpret aux as 16 i8 scales (matches llama.cpp's `const int8_t *scales = (const int8_t*)aux`)
+        let scales_bytes: [u8; 16] = unsafe {
+            std::mem::transmute::<[u32; 4], [u8; 16]>(aux.map(|v| v.to_le()))
+        };
 
         let out = &mut output[b * block_size..(b + 1) * block_size];
 
-        for j in 0..256 {
-            let qs_idx = j / 4;
-            let qs_shift = (j % 4) * 2;
-            let q2 = (qs[qs_idx] >> qs_shift) & 3;
-            let hbit = (hmask[j / 8] >> (j % 8)) & 1;
-            let q = q2 | (hbit << 2); // 3-bit quant
-            let sub = j / 16;
-            out[j] = d * scales[sub] as f32 * (q as f32 - 4.0);
+        let mut y_pos = 0usize;
+        let mut m: u8 = 1;
+        let mut is = 0usize;
+
+        for half in 0..2usize {
+            let q_off = half * 32;
+            let mut shift = 0u8;
+
+            for _j in 0..4 {
+                let dl = d_all * (scales_bytes[is] as i8 as f32 - 32.0);
+                for l in 0..16usize {
+                    let q2 = (qs[q_off + l] >> shift) & 3;
+                    let hbit = if hm[l] & m != 0 { 0i8 } else { -4 };
+                    out[y_pos] = dl * (q2 as i8 + hbit) as f32;
+                    y_pos += 1;
+                }
+
+                let dl = d_all * (scales_bytes[is + 1] as i8 as f32 - 32.0);
+                for l in 0..16usize {
+                    let q2 = (qs[q_off + l + 16] >> shift) & 3;
+                    let hbit = if hm[l + 16] & m != 0 { 0i8 } else { -4 };
+                    out[y_pos] = dl * (q2 as i8 + hbit) as f32;
+                    y_pos += 1;
+                }
+
+                is += 2;
+                shift += 2;
+                m <<= 1;
+            }
         }
     }
 
     Ok(output)
 }
 
-/// Dequantize Q2_K blocks.
-/// Layout per block (256 elements):
+/// Dequantize Q2_K blocks (matches llama.cpp dequantize_row_q2_K).
+/// Layout per block (256 elements, 84 bytes):
 ///   scales[16], qs[64], d[2], dmin[2]
+///
+/// llama.cpp processes two 128-element halves. Within each half, 4 shift values
+/// iterate over the same 32 qs bytes, producing 4×32=128 elements.
 fn dequantize_q2k(data: &[u8], n_elements: usize) -> Result<Vec<f32>> {
     let block_size = 256;
     let block_bytes = 84;
@@ -733,14 +806,34 @@ fn dequantize_q2k(data: &[u8], n_elements: usize) -> Result<Vec<f32>> {
 
         let out = &mut output[b * block_size..(b + 1) * block_size];
 
-        for j in 0..256 {
-            let qs_idx = j / 4;
-            let qs_shift = (j % 4) * 2;
-            let q = (qs[qs_idx] >> qs_shift) & 3;
-            let sub = j / 16;
-            let sc = (scales[sub] & 0xF) as f32;
-            let mn = (scales[sub] >> 4) as f32;
-            out[j] = d * sc * q as f32 - dmin * mn;
+        let mut y_pos = 0usize;
+        let mut is = 0usize;
+
+        for half in 0..2usize {
+            let q_off = half * 32;
+            let mut shift = 0u8;
+
+            for _j in 0..4 {
+                let sc_byte = scales[is];
+                is += 1;
+                let dl = d * (sc_byte & 0xF) as f32;
+                let ml = dmin * (sc_byte >> 4) as f32;
+                for l in 0..16usize {
+                    out[y_pos] = dl * ((qs[q_off + l] >> shift) & 3) as f32 - ml;
+                    y_pos += 1;
+                }
+
+                let sc_byte = scales[is];
+                is += 1;
+                let dl = d * (sc_byte & 0xF) as f32;
+                let ml = dmin * (sc_byte >> 4) as f32;
+                for l in 0..16usize {
+                    out[y_pos] = dl * ((qs[q_off + l + 16] >> shift) & 3) as f32 - ml;
+                    y_pos += 1;
+                }
+
+                shift += 2;
+            }
         }
     }
 

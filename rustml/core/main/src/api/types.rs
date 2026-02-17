@@ -5,7 +5,14 @@
 pub enum Device {
     #[default]
     Cpu,
-    // Future: Cuda(usize), Metal, etc.
+}
+
+impl std::fmt::Display for Device {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Device::Cpu => write!(f, "cpu"),
+        }
+    }
 }
 
 /// Data type for tensor elements
@@ -13,7 +20,25 @@ pub enum Device {
 pub enum DType {
     #[default]
     F32,
-    F64,
-    I32,
-    I64,
+    F16,
+    BF16,
+    I8,
+    U8,
+    /// Block-quantized 8-bit: 32 elements/block, 34 bytes/block
+    Q8_0,
+    /// Block-quantized 4-bit: 32 elements/block, 18 bytes/block
+    Q4_0,
+}
+
+impl DType {
+    /// Per-element byte size. Returns 0 for block-quantized types.
+    pub fn size(&self) -> usize {
+        match self {
+            DType::F32 => 4,
+            DType::F16 | DType::BF16 => 2,
+            DType::I8 | DType::U8 => 1,
+            DType::Q8_0 => 0,
+            DType::Q4_0 => 0,
+        }
+    }
 }

@@ -45,6 +45,9 @@ fn test_end_to_end_flow() {
         position_encoding: PositionEncoding::Learned,
         causal: true,
         rope_theta: 10000.0,
+        bos_token_id: None,
+        eos_token_id: None,
+        chat_template: None,
     };
     
     let model = LlmModel::new(&config).unwrap();

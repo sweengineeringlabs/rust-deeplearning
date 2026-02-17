@@ -11,7 +11,10 @@ path = "main/src/lib.rs"
 
 [dependencies]
 rustml-core.workspace = true
+rustml-quant.workspace = true
 thiserror.workspace = true
+half.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 approx.workspace = true

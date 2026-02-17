@@ -19,6 +19,9 @@ fn tiny_config() -> ModelConfig {
         position_encoding: PositionEncoding::Learned,
         causal: true,
         rope_theta: 10000.0,
+        bos_token_id: None,
+        eos_token_id: None,
+        chat_template: None,
     }
 }
 
@@ -68,6 +71,9 @@ fn long_context_fills_cache_then_errors() {
         position_encoding: PositionEncoding::Learned,
         causal: true,
         rope_theta: 10000.0,
+        bos_token_id: None,
+        eos_token_id: None,
+        chat_template: None,
     };
     let model = LlmModel::new(&config).unwrap();
 
@@ -101,6 +107,9 @@ fn long_context_within_limit_succeeds() {
         position_encoding: PositionEncoding::Learned,
         causal: true,
         rope_theta: 10000.0,
+        bos_token_id: None,
+        eos_token_id: None,
+        chat_template: None,
     };
     let model = LlmModel::new(&config).unwrap();
 
@@ -136,6 +145,9 @@ fn error_propagation_invalid_config() {
         position_encoding: PositionEncoding::Learned,
         causal: true,
         rope_theta: 10000.0,
+        bos_token_id: None,
+        eos_token_id: None,
+        chat_template: None,
     };
     let result = config.validate();
     assert!(result.is_err(), "dim=0 should fail validation");

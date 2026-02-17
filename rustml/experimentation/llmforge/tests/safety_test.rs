@@ -58,6 +58,9 @@ fn config_validate_dim_zero_fails() {
         position_encoding: PositionEncoding::Learned,
         causal: true,
         rope_theta: 10000.0,
+        bos_token_id: None,
+        eos_token_id: None,
+        chat_template: None,
     };
     assert!(config.validate().is_err());
 }
@@ -77,6 +80,9 @@ fn config_validate_n_heads_zero_fails() {
         position_encoding: PositionEncoding::Learned,
         causal: true,
         rope_theta: 10000.0,
+        bos_token_id: None,
+        eos_token_id: None,
+        chat_template: None,
     };
     assert!(config.validate().is_err());
 }
@@ -96,6 +102,9 @@ fn config_validate_dim_not_divisible_by_heads_fails() {
         position_encoding: PositionEncoding::Learned,
         causal: true,
         rope_theta: 10000.0,
+        bos_token_id: None,
+        eos_token_id: None,
+        chat_template: None,
     };
     assert!(config.validate().is_err());
 }
@@ -115,6 +124,9 @@ fn config_validate_valid_config_passes() {
         position_encoding: PositionEncoding::Learned,
         causal: true,
         rope_theta: 10000.0,
+        bos_token_id: None,
+        eos_token_id: None,
+        chat_template: None,
     };
     assert!(config.validate().is_ok());
 }
@@ -194,6 +206,9 @@ fn generator_eos_field_exists() {
         position_encoding: PositionEncoding::Learned,
         causal: true,
         rope_theta: 10000.0,
+        bos_token_id: None,
+        eos_token_id: None,
+        chat_template: None,
     };
     let model = LlmModel::new(&config).unwrap();
     let tokenizer = NaiveTokenizer::new();
@@ -223,6 +238,9 @@ fn temperature_zero_is_deterministic() {
         position_encoding: PositionEncoding::Learned,
         causal: true,
         rope_theta: 10000.0,
+        bos_token_id: None,
+        eos_token_id: None,
+        chat_template: None,
     };
     let model = LlmModel::new(&config).unwrap();
     let tokenizer = NaiveTokenizer::new();

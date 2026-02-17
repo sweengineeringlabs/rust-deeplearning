@@ -217,6 +217,158 @@ pub fn quantized_matmul(input: &Tensor, weights: &Tensor) -> Result<Tensor> {
     Ok(Tensor::new(out_bytes, out_shape, DType::F32))
 }
 
+/// Fast per-row F32 → Q8_0 quantization for the activation hot path.
+///
+/// Quantizes `input` (length must be a multiple of 32) into Q8_0 blocks written
+/// into pre-allocated `output` buffer (34 bytes per block: 2-byte f16 scale + 32 i8 values).
+/// Also writes the f32 scale (f16-roundtripped for llama.cpp numerical matching) into `scales`.
+///
+/// No allocation — caller provides buffers.
+pub fn quantize_row_q8_0(input: &[f32], output: &mut [u8], scales: &mut [f32]) {
+    let n_elements = input.len();
+    debug_assert!(n_elements % Q8_0_BLOCK_SIZE == 0);
+    let n_blocks = n_elements / Q8_0_BLOCK_SIZE;
+    debug_assert!(output.len() >= n_blocks * Q8_0_BLOCK_BYTES);
+    debug_assert!(scales.len() >= n_blocks);
+
+    for block_idx in 0..n_blocks {
+        let src_offset = block_idx * Q8_0_BLOCK_SIZE;
+        let dst_offset = block_idx * Q8_0_BLOCK_BYTES;
+        let block = &input[src_offset..src_offset + Q8_0_BLOCK_SIZE];
+
+        // Find absmax
+        let amax = block.iter().fold(0.0f32, |acc, &v| acc.max(v.abs()));
+
+        // Compute scale and roundtrip through f16 for llama.cpp numerical matching
+        let scale = if amax == 0.0 { 0.0 } else { amax / 127.0 };
+        let scale_f16 = f16::from_f32(scale);
+        let scale_rt = scale_f16.to_f32();
+        let inv_scale = if scale_rt == 0.0 { 0.0 } else { 1.0 / scale_rt };
+
+        // Write f16 scale (little-endian)
+        let scale_bytes = scale_f16.to_le_bytes();
+        output[dst_offset] = scale_bytes[0];
+        output[dst_offset + 1] = scale_bytes[1];
+
+        // Quantize values to i8
+        for i in 0..Q8_0_BLOCK_SIZE {
+            let quantized = (block[i] * inv_scale).round().clamp(-128.0, 127.0) as i8;
+            output[dst_offset + 2 + i] = quantized as u8;
+        }
+
+        // Store f32 scale (f16-roundtripped) for fast access in matmul
+        scales[block_idx] = scale_rt;
+    }
+}
+
+/// Compute F32 input × Q4_0 weights → F32 output using native integer dot products.
+///
+/// Same signature and semantics as `quantized_matmul_q4`, but uses llama.cpp-compatible
+/// accumulation: quantizes F32 activations to Q8_0 on-the-fly, performs i8×i8→i32 integer
+/// dot products within each 32-element block, and scales once per block. This eliminates
+/// per-element F32 rounding that accumulates over transformer layers.
+pub fn quantized_matmul_q4_native(input: &Tensor, weights: &Tensor) -> Result<Tensor> {
+    if input.dtype != DType::F32 {
+        return Err(LLMForgeError::DTypeMismatch);
+    }
+    if weights.dtype != DType::Q4_0 {
+        return Err(LLMForgeError::DTypeMismatch);
+    }
+
+    let w_shape = weights.shape();
+    if w_shape.len() != 2 {
+        return Err(LLMForgeError::ShapeMismatch {
+            expected: vec![2],
+            actual: vec![w_shape.len()],
+        });
+    }
+
+    let out_features = w_shape[0];
+    let in_features = w_shape[1];
+    let input_shape = input.shape();
+    let ndim = input_shape.len();
+
+    if input_shape[ndim - 1] != in_features {
+        return Err(LLMForgeError::ShapeMismatch {
+            expected: vec![in_features],
+            actual: vec![input_shape[ndim - 1]],
+        });
+    }
+
+    if in_features % Q4_0_BLOCK_SIZE != 0 {
+        return Err(LLMForgeError::ShapeMismatch {
+            expected: vec![in_features / Q4_0_BLOCK_SIZE * Q4_0_BLOCK_SIZE],
+            actual: vec![in_features],
+        });
+    }
+
+    let m: usize = input_shape[..ndim - 1].iter().product();
+    let input_data = input.as_slice_f32()?;
+    let weight_bytes = weights.as_raw_bytes()?;
+
+    let blocks_per_row = in_features / Q4_0_BLOCK_SIZE;
+    let row_bytes = blocks_per_row * Q4_0_BLOCK_BYTES;
+
+    let mut output = vec![0.0f32; m * out_features];
+
+    output
+        .par_chunks_mut(out_features)
+        .enumerate()
+        .for_each(|(row_idx, out_row)| {
+            let input_row = &input_data[row_idx * in_features..(row_idx + 1) * in_features];
+
+            // Thread-local Q8_0 buffers (no heap allocation per iteration)
+            let mut q8_buf = vec![0u8; blocks_per_row * Q8_0_BLOCK_BYTES];
+            let mut q8_scales = vec![0.0f32; blocks_per_row];
+
+            // Quantize input row to Q8_0
+            quantize_row_q8_0(input_row, &mut q8_buf, &mut q8_scales);
+
+            // Process weight rows in tiles of TILE_N for better cache locality
+            let mut col_idx = 0;
+            while col_idx < out_features {
+                let tile_end = (col_idx + TILE_N).min(out_features);
+                for c in col_idx..tile_end {
+                    let w_row_offset = c * row_bytes;
+                    let mut dot = 0.0f32;
+
+                    for block_idx in 0..blocks_per_row {
+                        let block_offset = w_row_offset + block_idx * Q4_0_BLOCK_BYTES;
+                        let w_scale_f16 = f16::from_le_bytes([
+                            weight_bytes[block_offset],
+                            weight_bytes[block_offset + 1],
+                        ]);
+                        let w_scale = w_scale_f16.to_f32();
+                        let packed_q4 = &weight_bytes[block_offset + 2..block_offset + 2 + 16];
+
+                        let q8_block_offset = block_idx * Q8_0_BLOCK_BYTES;
+                        // SAFETY: q8_buf[+2..+34] contains i8 values stored as u8
+                        let q8_i8: &[i8] = unsafe {
+                            std::slice::from_raw_parts(
+                                q8_buf[q8_block_offset + 2..q8_block_offset + 2 + Q8_0_BLOCK_SIZE]
+                                    .as_ptr() as *const i8,
+                                Q8_0_BLOCK_SIZE,
+                            )
+                        };
+
+                        let int_dot = simd::dot_q4q8_block(packed_q4, q8_i8);
+                        dot += (int_dot as f32) * q8_scales[block_idx] * w_scale;
+                    }
+
+                    out_row[c] = dot;
+                }
+                col_idx = tile_end;
+            }
+        });
+
+    let mut out_shape = input_shape[..ndim - 1].to_vec();
+    out_shape.push(out_features);
+
+    let out_bytes = crate::core::tensor::f32_vec_to_bytes(output);
+
+    Ok(Tensor::new(out_bytes, out_shape, DType::F32))
+}
+
 /// Quantize an F32 tensor to Q4_0 format.
 ///
 /// Each block of 32 elements is stored as:
