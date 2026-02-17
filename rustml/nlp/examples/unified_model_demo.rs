@@ -32,6 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         rope_theta: 10000.0,
         bos_token_id: None,
         eos_token_id: None,
+        chat_template: None,
     };
 
     let gpt2_model = LlmModel::new(&gpt2_config)?;
@@ -64,6 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         rope_theta: 10000.0,
         bos_token_id: Some(1),
         eos_token_id: Some(2),
+        chat_template: None,
     };
 
     let llama_model = LlmModel::new(&llama_config)?;

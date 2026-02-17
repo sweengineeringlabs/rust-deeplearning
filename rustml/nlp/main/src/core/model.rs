@@ -622,6 +622,7 @@ mod tests {
             rope_theta: 10000.0,
             bos_token_id: None,
             eos_token_id: None,
+            chat_template: None,
         }
     }
 

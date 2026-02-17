@@ -217,6 +217,9 @@ pub struct ModelConfig {
     /// End-of-sequence token ID
     #[serde(default)]
     pub eos_token_id: Option<u32>,
+    /// Chat template string (e.g. from GGUF metadata or HF config)
+    #[serde(default)]
+    pub chat_template: Option<String>,
 }
 
 fn default_position_encoding() -> PositionEncoding { PositionEncoding::Learned }
@@ -240,6 +243,7 @@ impl Default for ModelConfig {
             rope_theta: 10000.0,
             bos_token_id: None,
             eos_token_id: None,
+            chat_template: None,
         }
     }
 }
@@ -293,6 +297,7 @@ impl ModelConfig {
             rope_theta: hf.rope_theta.unwrap_or(10000.0),
             bos_token_id: Some(1),
             eos_token_id: Some(2),
+            chat_template: None,
         };
         config.validate()?;
         Ok(config)
@@ -320,6 +325,7 @@ impl ModelConfig {
             rope_theta: 10000.0,
             bos_token_id: None,
             eos_token_id: Some(50256),
+            chat_template: None,
         };
         config.validate()?;
         Ok(config)
@@ -348,6 +354,7 @@ impl ModelConfig {
                     rope_theta: hf.rope_theta.unwrap_or(10000.0),
                     bos_token_id: Some(1),
                     eos_token_id: Some(2),
+                    chat_template: None,
                 };
                 c.validate()?;
                 Ok(c)
@@ -371,11 +378,22 @@ impl ModelConfig {
                     rope_theta: 10000.0,
                     bos_token_id: None,
                     eos_token_id: Some(50256),
+                    chat_template: None,
                 };
                 c.validate()?;
                 Ok(c)
             }
         }
+    }
+
+    /// Load a ModelConfig from a JSON config file (generic, serde-based).
+    pub fn load<P: AsRef<std::path::Path>>(path: P) -> NlpResult<Self> {
+        let file = std::fs::File::open(&path)?;
+        let reader = std::io::BufReader::new(file);
+        let config: ModelConfig = serde_json::from_reader(reader)
+            .map_err(|e| NlpError::ModelError(format!("Invalid config: {}", e)))?;
+        config.validate()?;
+        Ok(config)
     }
 
     /// Validate configuration constraints.
@@ -396,6 +414,9 @@ impl ModelConfig {
         }
         if self.n_layers == 0 {
             return Err(NlpError::ModelError("n_layers must be > 0".into()));
+        }
+        if self.max_seq_len == 0 {
+            return Err(NlpError::ModelError("max_seq_len must be > 0".into()));
         }
         if let Some(n_kv) = self.n_kv_heads {
             if n_kv == 0 {
