@@ -86,15 +86,21 @@ impl Tokenizer for HFTokenizer {
     }
 }
 
+/// GGUF token type flags (from `tokenizer.ggml.token_type`).
+const TOKEN_TYPE_USER_DEFINED: i32 = 4;
+
 /// SentencePiece BPE tokenizer built from GGUF vocabulary and merge scores.
 ///
 /// Implements proper BPE encoding using the token scores stored in GGUF metadata.
-/// Handles the SentencePiece "▁" space marker convention.
+/// Handles the SentencePiece "▁" space marker convention and USER_DEFINED tokens
+/// (matched greedily on the original text before BPE).
 pub struct GgufTokenizer {
     id_to_token: Vec<String>,
     token_to_id: std::collections::HashMap<String, u32>,
     scores: Vec<f32>,
     add_space_prefix: bool,
+    /// USER_DEFINED tokens sorted by length descending for greedy matching.
+    user_defined: Vec<(String, u32)>,
 }
 
 impl GgufTokenizer {
@@ -143,6 +149,30 @@ impl GgufTokenizer {
             }
         }
 
+        // Load token types and collect USER_DEFINED tokens
+        let mut user_defined = Vec::new();
+        if let Some(rustml_gguf::GGUFValue::Array(types_arr)) =
+            gguf.metadata.get("tokenizer.ggml.token_type")
+        {
+            for (i, val) in types_arr.iter().enumerate() {
+                let ttype = match val {
+                    rustml_gguf::GGUFValue::I32(v) => *v,
+                    rustml_gguf::GGUFValue::U32(v) => *v as i32,
+                    _ => 0,
+                };
+                if ttype == TOKEN_TYPE_USER_DEFINED && i < id_to_token.len() {
+                    let tok = &id_to_token[i];
+                    // Only collect non-empty tokens with len >= 2 (single chars
+                    // are already handled by initial_tokens)
+                    if tok.len() >= 2 {
+                        user_defined.push((tok.clone(), i as u32));
+                    }
+                }
+            }
+        }
+        // Sort by length descending for greedy longest-match
+        user_defined.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+
         // Check add_space_prefix setting
         let add_space_prefix = gguf
             .metadata
@@ -158,7 +188,85 @@ impl GgufTokenizer {
             token_to_id,
             scores,
             add_space_prefix,
+            user_defined,
         })
+    }
+
+    /// Match USER_DEFINED tokens on raw text before normalization.
+    /// Returns a list of segments: either a matched token ID or a text slice
+    /// that needs further BPE processing.
+    fn split_user_defined<'a>(&self, text: &'a str) -> Vec<UserDefinedSegment<'a>> {
+        if self.user_defined.is_empty() {
+            return vec![UserDefinedSegment::Text(text)];
+        }
+
+        let mut segments = Vec::new();
+        let mut pos = 0;
+        let bytes = text.as_bytes();
+
+        while pos < bytes.len() {
+            let mut matched = false;
+            for (tok_str, tok_id) in &self.user_defined {
+                let tok_bytes = tok_str.as_bytes();
+                if pos + tok_bytes.len() <= bytes.len()
+                    && &bytes[pos..pos + tok_bytes.len()] == tok_bytes
+                {
+                    // Flush pending text
+                    if let Some(UserDefinedSegment::Text(prev)) = segments.last() {
+                        if prev.is_empty() {
+                            segments.pop();
+                        }
+                    }
+                    segments.push(UserDefinedSegment::Token(*tok_id));
+                    pos += tok_bytes.len();
+                    matched = true;
+                    break;
+                }
+            }
+            if !matched {
+                // Extend the current text segment or start a new one
+                match segments.last_mut() {
+                    Some(UserDefinedSegment::Text(_)) => {
+                        // We need to rebuild the text segment since we can't extend a &str
+                        // Instead, track the start position
+                    }
+                    _ => {}
+                }
+                // Find the end of this text run (until next USER_DEFINED match or end)
+                let start = pos;
+                pos += 1;
+                // Advance to next char boundary
+                while pos < bytes.len() && !text.is_char_boundary(pos) {
+                    pos += 1;
+                }
+                // Try to extend with more unmatched characters
+                'outer: while pos < bytes.len() {
+                    for (tok_str, _) in &self.user_defined {
+                        let tok_bytes = tok_str.as_bytes();
+                        if pos + tok_bytes.len() <= bytes.len()
+                            && &bytes[pos..pos + tok_bytes.len()] == tok_bytes
+                        {
+                            break 'outer;
+                        }
+                    }
+                    pos += 1;
+                    while pos < bytes.len() && !text.is_char_boundary(pos) {
+                        pos += 1;
+                    }
+                }
+                segments.push(UserDefinedSegment::Text(&text[start..pos]));
+            }
+        }
+        segments
+    }
+
+    /// Normalize a text segment: replace spaces with ▁ (U+2581).
+    fn normalize_segment(&self, text: &str, is_first: bool) -> String {
+        if is_first && self.add_space_prefix {
+            format!("\u{2581}{}", text.replace(' ', "\u{2581}"))
+        } else {
+            text.replace(' ', "\u{2581}")
+        }
     }
 
     /// Split text into initial character/byte tokens for BPE.
@@ -220,26 +328,50 @@ impl GgufTokenizer {
     }
 }
 
+/// Segment produced by USER_DEFINED token matching.
+enum UserDefinedSegment<'a> {
+    /// A matched USER_DEFINED token ID.
+    Token(u32),
+    /// A text segment that needs normalization + BPE.
+    Text(&'a str),
+}
+
 impl Tokenizer for GgufTokenizer {
     fn encode(&self, text: &str) -> NlpResult<Vec<u32>> {
         if text.is_empty() {
             return Ok(Vec::new());
         }
 
-        // SentencePiece normalization: replace spaces with ▁ (U+2581)
-        let normalized = if self.add_space_prefix {
-            format!("\u{2581}{}", text.replace(' ', "\u{2581}"))
-        } else {
-            text.replace(' ', "\u{2581}")
-        };
+        // Step 1: Match USER_DEFINED tokens on the original text (greedy longest-match).
+        // These tokens (e.g. multi-space "   ", newline runs, HTML tags) are matched
+        // before SentencePiece normalization because GGUF stores them with literal
+        // spaces while normalization converts spaces to ▁.
+        let segments = self.split_user_defined(text);
 
-        // Split into initial character tokens
-        let mut tokens = self.initial_tokens(&normalized);
+        // Step 2: For each segment, either emit the matched token ID or
+        // normalize + BPE the text segment.
+        let mut result = Vec::new();
+        let mut is_first = true;
+        for seg in &segments {
+            match seg {
+                UserDefinedSegment::Token(id) => {
+                    result.push(*id);
+                    is_first = false;
+                }
+                UserDefinedSegment::Text(s) => {
+                    if s.is_empty() {
+                        continue;
+                    }
+                    let normalized = self.normalize_segment(s, is_first);
+                    let mut tokens = self.initial_tokens(&normalized);
+                    self.bpe_merge(&mut tokens);
+                    result.extend_from_slice(&tokens);
+                    is_first = false;
+                }
+            }
+        }
 
-        // Apply BPE merges
-        self.bpe_merge(&mut tokens);
-
-        Ok(tokens)
+        Ok(result)
     }
 
     fn decode(&self, tokens: &[u32]) -> NlpResult<String> {

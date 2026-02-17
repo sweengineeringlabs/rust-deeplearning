@@ -41,3 +41,7 @@ path = "examples/gguf_inspect.rs"
 [[example]]
 name = "gemma3_gguf"
 path = "examples/gemma3_gguf.rs"
+
+[[example]]
+name = "tokenizer_verifier"
+path = "examples/tokenizer_verifier.rs"
