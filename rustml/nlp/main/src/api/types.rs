@@ -244,6 +244,21 @@ pub struct ModelConfig {
     /// Number of experts used per token (Mixtral)
     #[serde(default)]
     pub num_experts_per_tok: Option<usize>,
+    /// Explicit head dimension (Gemma 3: decoupled from dim/n_heads)
+    #[serde(default)]
+    pub head_dim: Option<usize>,
+    /// Sliding window pattern: every Nth layer is global attention (Gemma 3)
+    #[serde(default)]
+    pub sliding_window_pattern: Option<usize>,
+    /// Custom attention scaling divisor (Gemma 3: sqrt(query_pre_attn_scalar))
+    #[serde(default)]
+    pub query_pre_attn_scalar: Option<f32>,
+    /// Local layer RoPE theta (Gemma 3: 10000.0 for local layers)
+    #[serde(default)]
+    pub rope_local_base_freq: Option<f32>,
+    /// RoPE linear scaling factor (Gemma 3: 8.0 for long context)
+    #[serde(default)]
+    pub rope_scaling_factor: Option<f32>,
 }
 
 fn default_position_encoding() -> PositionEncoding { PositionEncoding::Learned }
@@ -276,6 +291,11 @@ impl Default for ModelConfig {
             parallel_residual: None,
             num_local_experts: None,
             num_experts_per_tok: None,
+            head_dim: None,
+            sliding_window_pattern: None,
+            query_pre_attn_scalar: None,
+            rope_local_base_freq: None,
+            rope_scaling_factor: None,
         }
     }
 }
@@ -368,6 +388,40 @@ struct HFMixtralConfig {
     num_experts_per_tok: Option<usize>,
 }
 
+/// HuggingFace Gemma 3 config.json format (internal).
+#[derive(serde::Deserialize)]
+struct HFGemma3Config {
+    hidden_size: usize,
+    intermediate_size: usize,
+    num_hidden_layers: usize,
+    num_attention_heads: usize,
+    num_key_value_heads: Option<usize>,
+    vocab_size: usize,
+    rms_norm_eps: f32,
+    max_position_embeddings: usize,
+    #[serde(default)]
+    head_dim: Option<usize>,
+    #[serde(default)]
+    query_pre_attn_scalar: Option<f32>,
+    #[serde(default)]
+    sliding_window: Option<usize>,
+    #[serde(default)]
+    sliding_window_pattern: Option<usize>,
+    #[serde(default)]
+    rope_theta: Option<f32>,
+    #[serde(default)]
+    rope_local_base_freq: Option<f32>,
+    #[serde(default)]
+    rope_scaling: Option<HFRopeScaling>,
+}
+
+/// HuggingFace rope_scaling sub-object (internal).
+#[derive(serde::Deserialize)]
+struct HFRopeScaling {
+    #[serde(default)]
+    factor: Option<f32>,
+}
+
 /// HuggingFace GPT-2 config.json format (internal).
 #[derive(serde::Deserialize)]
 struct HFGpt2Config {
@@ -412,6 +466,11 @@ impl ModelConfig {
             parallel_residual: None,
             num_local_experts: None,
             num_experts_per_tok: None,
+            head_dim: None,
+            sliding_window_pattern: None,
+            query_pre_attn_scalar: None,
+            rope_local_base_freq: None,
+            rope_scaling_factor: None,
         };
         config.validate()?;
         Ok(config)
@@ -448,6 +507,11 @@ impl ModelConfig {
             parallel_residual: None,
             num_local_experts: None,
             num_experts_per_tok: None,
+            head_dim: None,
+            sliding_window_pattern: None,
+            query_pre_attn_scalar: None,
+            rope_local_base_freq: None,
+            rope_scaling_factor: None,
         };
         config.validate()?;
         Ok(config)
@@ -485,6 +549,11 @@ impl ModelConfig {
                     parallel_residual: None,
                     num_local_experts: None,
                     num_experts_per_tok: None,
+                    head_dim: None,
+                    sliding_window_pattern: None,
+                    query_pre_attn_scalar: None,
+                    rope_local_base_freq: None,
+                    rope_scaling_factor: None,
                 };
                 c.validate()?;
                 Ok(c)
@@ -516,6 +585,11 @@ impl ModelConfig {
                     parallel_residual: None,
                     num_local_experts: None,
                     num_experts_per_tok: None,
+                    head_dim: None,
+                    sliding_window_pattern: None,
+                    query_pre_attn_scalar: None,
+                    rope_local_base_freq: None,
+                    rope_scaling_factor: None,
                 };
                 c.validate()?;
                 Ok(c)
@@ -547,6 +621,48 @@ impl ModelConfig {
                     parallel_residual: None,
                     num_local_experts: None,
                     num_experts_per_tok: None,
+                    head_dim: None,
+                    sliding_window_pattern: None,
+                    query_pre_attn_scalar: None,
+                    rope_local_base_freq: None,
+                    rope_scaling_factor: None,
+                };
+                c.validate()?;
+                Ok(c)
+            }
+            "gemma3" | "gemma3_text" => {
+                let hf: HFGemma3Config = serde_json::from_value(config.clone())
+                    .map_err(|e| NlpError::ModelError(format!("Invalid Gemma-3 config: {}", e)))?;
+                let scaling_factor = hf.rope_scaling.as_ref().and_then(|s| s.factor);
+                let c = Self {
+                    dim: hf.hidden_size,
+                    hidden_dim: hf.intermediate_size,
+                    n_layers: hf.num_hidden_layers,
+                    n_heads: hf.num_attention_heads,
+                    n_kv_heads: hf.num_key_value_heads,
+                    vocab_size: hf.vocab_size,
+                    norm_eps: hf.rms_norm_eps,
+                    max_seq_len: hf.max_position_embeddings,
+                    use_bias: Some(false),
+                    position_encoding: PositionEncoding::RoPE,
+                    causal: true,
+                    rope_theta: hf.rope_theta.unwrap_or(1000000.0),
+                    bos_token_id: Some(2),
+                    eos_token_id: Some(1),
+                    chat_template: None,
+                    sliding_window: hf.sliding_window,
+                    attn_logit_cap: None,
+                    embedding_scale: Some((hf.hidden_size as f32).sqrt()),
+                    rms_norm_offset: Some(1.0),
+                    attention_bias: None,
+                    parallel_residual: None,
+                    num_local_experts: None,
+                    num_experts_per_tok: None,
+                    head_dim: hf.head_dim,
+                    sliding_window_pattern: hf.sliding_window_pattern,
+                    query_pre_attn_scalar: hf.query_pre_attn_scalar,
+                    rope_local_base_freq: hf.rope_local_base_freq,
+                    rope_scaling_factor: scaling_factor,
                 };
                 c.validate()?;
                 Ok(c)
@@ -579,6 +695,11 @@ impl ModelConfig {
                     parallel_residual: Some(hf.parallel_attn.unwrap_or(true)),
                     num_local_experts: None,
                     num_experts_per_tok: None,
+                    head_dim: None,
+                    sliding_window_pattern: None,
+                    query_pre_attn_scalar: None,
+                    rope_local_base_freq: None,
+                    rope_scaling_factor: None,
                 };
                 c.validate()?;
                 Ok(c)
@@ -610,6 +731,11 @@ impl ModelConfig {
                     parallel_residual: None,
                     num_local_experts: hf.num_local_experts,
                     num_experts_per_tok: hf.num_experts_per_tok,
+                    head_dim: None,
+                    sliding_window_pattern: None,
+                    query_pre_attn_scalar: None,
+                    rope_local_base_freq: None,
+                    rope_scaling_factor: None,
                 };
                 c.validate()?;
                 Ok(c)
@@ -642,6 +768,11 @@ impl ModelConfig {
                     parallel_residual: None,
                     num_local_experts: None,
                     num_experts_per_tok: None,
+                    head_dim: None,
+                    sliding_window_pattern: None,
+                    query_pre_attn_scalar: None,
+                    rope_local_base_freq: None,
+                    rope_scaling_factor: None,
                 };
                 c.validate()?;
                 Ok(c)
@@ -792,6 +923,74 @@ mod tests {
         assert!((c.embedding_scale.unwrap() - (2304.0_f32).sqrt()).abs() < 1e-3);
         assert_eq!(c.rms_norm_offset, Some(1.0));
         assert_eq!(c.sliding_window, Some(4096));
+    }
+
+    #[test]
+    fn test_gemma3_4b_config_from_json() {
+        let json = serde_json::json!({
+            "model_type": "gemma3_text",
+            "hidden_size": 2560,
+            "intermediate_size": 10240,
+            "num_hidden_layers": 34,
+            "num_attention_heads": 8,
+            "num_key_value_heads": 4,
+            "head_dim": 256,
+            "query_pre_attn_scalar": 256,
+            "sliding_window": 1024,
+            "sliding_window_pattern": 6,
+            "rope_theta": 1000000.0,
+            "rope_local_base_freq": 10000.0,
+            "rope_scaling": {"factor": 8.0, "rope_type": "linear"},
+            "hidden_activation": "gelu_pytorch_tanh",
+            "rms_norm_eps": 1e-6,
+            "vocab_size": 262208,
+            "max_position_embeddings": 32768
+        });
+        let c = ModelConfig::from_json_value(&json).unwrap();
+        assert_eq!(c.dim, 2560);
+        assert_eq!(c.hidden_dim, 10240);
+        assert_eq!(c.n_layers, 34);
+        assert_eq!(c.n_heads, 8);
+        assert_eq!(c.n_kv_heads, Some(4));
+        assert_eq!(c.head_dim, Some(256));
+        assert_eq!(c.query_pre_attn_scalar, Some(256.0));
+        assert_eq!(c.sliding_window, Some(1024));
+        assert_eq!(c.sliding_window_pattern, Some(6));
+        assert!((c.rope_theta - 1000000.0).abs() < 1.0);
+        assert_eq!(c.rope_local_base_freq, Some(10000.0));
+        assert_eq!(c.rope_scaling_factor, Some(8.0));
+        assert!((c.embedding_scale.unwrap() - (2560.0_f32).sqrt()).abs() < 1e-3);
+        assert_eq!(c.rms_norm_offset, Some(1.0));
+        assert_eq!(c.attn_logit_cap, None); // No logit capping in Gemma 3
+        assert_eq!(c.vocab_size, 262208);
+    }
+
+    #[test]
+    fn test_gemma3_1b_config_from_json() {
+        let json = serde_json::json!({
+            "model_type": "gemma3",
+            "hidden_size": 1152,
+            "intermediate_size": 6912,
+            "num_hidden_layers": 26,
+            "num_attention_heads": 4,
+            "num_key_value_heads": 1,
+            "head_dim": 256,
+            "query_pre_attn_scalar": 256,
+            "sliding_window": 512,
+            "sliding_window_pattern": 6,
+            "rope_theta": 1000000.0,
+            "rope_local_base_freq": 10000.0,
+            "rms_norm_eps": 1e-6,
+            "vocab_size": 262208,
+            "max_position_embeddings": 32768
+        });
+        let c = ModelConfig::from_json_value(&json).unwrap();
+        assert_eq!(c.dim, 1152);
+        assert_eq!(c.n_heads, 4);
+        assert_eq!(c.n_kv_heads, Some(1));
+        assert_eq!(c.head_dim, Some(256));
+        assert_eq!(c.sliding_window_pattern, Some(6));
+        assert_eq!(c.rope_scaling_factor, None); // No scaling in 1B
     }
 
     #[test]

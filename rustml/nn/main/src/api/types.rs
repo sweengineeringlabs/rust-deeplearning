@@ -23,4 +23,5 @@ pub enum Activation {
     Silu,
     Relu,
     SwiGLU,
+    GeGLU,
 }

@@ -689,6 +689,36 @@ impl Tensor {
         )
     }
 
+    /// Create a sliding-window causal mask: [1, 1, seq_len, total_len].
+    ///
+    /// Position `i` (query) attends to position `j` (key) when:
+    ///   - `j <= query_pos` (causal: no future tokens)
+    ///   - `j >= query_pos - window_size + 1` (window: only recent tokens)
+    ///
+    /// where `query_pos = i + offset` and `offset = total_len - seq_len`.
+    /// When `window_size >= total_len`, this equals `causal_mask()`.
+    pub fn sliding_window_mask(seq_len: usize, total_len: usize, window_size: usize) -> Tensor {
+        let mut data = Vec::with_capacity(seq_len * total_len);
+        let offset = total_len - seq_len;
+        for i in 0..seq_len {
+            let query_pos = i + offset;
+            for j in 0..total_len {
+                let causal = j <= query_pos;
+                let in_window = (query_pos as isize - j as isize) < window_size as isize;
+                if causal && in_window {
+                    data.push(0.0f32);
+                } else {
+                    data.push(f32::NEG_INFINITY);
+                }
+            }
+        }
+        Tensor::new(
+            f32_vec_to_bytes(data),
+            smallvec![1usize, 1, seq_len, total_len],
+            DType::F32,
+        )
+    }
+
     /// Repeat KV heads for GQA: [B, n_kv_heads, S, D] -> [B, n_kv_heads*n_rep, S, D].
     pub fn repeat_kv(&self, n_rep: usize) -> TensorResult<Tensor> {
         if n_rep == 1 {
@@ -964,5 +994,63 @@ mod tests {
         // After layer norm, each row should have mean ≈ 0
         let mean0: f32 = (0..3).map(|i| ln.get(&[0, i]).unwrap()).sum::<f32>() / 3.0;
         assert!(mean0.abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_sliding_window_mask_shape() {
+        let mask = Tensor::sliding_window_mask(4, 4, 2);
+        assert_eq!(mask.shape(), &[1, 1, 4, 4]);
+    }
+
+    #[test]
+    fn test_sliding_window_mask_values() {
+        // seq_len=4, total_len=4, window=2
+        // Row 0 (query_pos=0): attends to j=0 only (causal, window=[0,0])
+        // Row 1 (query_pos=1): attends to j=0,1 (causal, window=[0,1])
+        // Row 2 (query_pos=2): attends to j=1,2 (causal, window=[1,2])
+        // Row 3 (query_pos=3): attends to j=2,3 (causal, window=[2,3])
+        let mask = Tensor::sliding_window_mask(4, 4, 2);
+        // Row 0: [0, -inf, -inf, -inf]
+        assert_eq!(mask.get(&[0, 0, 0, 0]).unwrap(), 0.0);
+        assert_eq!(mask.get(&[0, 0, 0, 1]).unwrap(), f32::NEG_INFINITY);
+        // Row 1: [0, 0, -inf, -inf]
+        assert_eq!(mask.get(&[0, 0, 1, 0]).unwrap(), 0.0);
+        assert_eq!(mask.get(&[0, 0, 1, 1]).unwrap(), 0.0);
+        assert_eq!(mask.get(&[0, 0, 1, 2]).unwrap(), f32::NEG_INFINITY);
+        // Row 2: [-inf, 0, 0, -inf]  (window excludes j=0)
+        assert_eq!(mask.get(&[0, 0, 2, 0]).unwrap(), f32::NEG_INFINITY);
+        assert_eq!(mask.get(&[0, 0, 2, 1]).unwrap(), 0.0);
+        assert_eq!(mask.get(&[0, 0, 2, 2]).unwrap(), 0.0);
+        assert_eq!(mask.get(&[0, 0, 2, 3]).unwrap(), f32::NEG_INFINITY);
+        // Row 3: [-inf, -inf, 0, 0]
+        assert_eq!(mask.get(&[0, 0, 3, 1]).unwrap(), f32::NEG_INFINITY);
+        assert_eq!(mask.get(&[0, 0, 3, 2]).unwrap(), 0.0);
+        assert_eq!(mask.get(&[0, 0, 3, 3]).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn test_sliding_window_large_window_equals_causal() {
+        let seq_len = 5;
+        let causal = Tensor::causal_mask(seq_len, seq_len);
+        let sliding = Tensor::sliding_window_mask(seq_len, seq_len, seq_len);
+        let causal_data = causal.as_slice_f32().unwrap();
+        let sliding_data = sliding.as_slice_f32().unwrap();
+        for i in 0..causal_data.len() {
+            assert_eq!(causal_data[i], sliding_data[i],
+                "mismatch at index {}", i);
+        }
+    }
+
+    #[test]
+    fn test_sliding_window_decode_step_with_offset() {
+        // Simulates a decode step: seq_len=1, total_len=5, window=3
+        // query_pos = 0 + (5-1) = 4, so attends to j in [2,4]
+        let mask = Tensor::sliding_window_mask(1, 5, 3);
+        assert_eq!(mask.shape(), &[1, 1, 1, 5]);
+        assert_eq!(mask.get(&[0, 0, 0, 0]).unwrap(), f32::NEG_INFINITY);
+        assert_eq!(mask.get(&[0, 0, 0, 1]).unwrap(), f32::NEG_INFINITY);
+        assert_eq!(mask.get(&[0, 0, 0, 2]).unwrap(), 0.0);
+        assert_eq!(mask.get(&[0, 0, 0, 3]).unwrap(), 0.0);
+        assert_eq!(mask.get(&[0, 0, 0, 4]).unwrap(), 0.0);
     }
 }

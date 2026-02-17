@@ -9,7 +9,7 @@ use crate::api::types::{LanguageModel, ModelConfig};
 use rustml_core::{DType, Tensor, f32_vec_to_bytes};
 use rustml_nn::{
     Activation, Embedding, FeedForward, KVCache, LayerNorm, Linear, MoeLayer,
-    MultiHeadAttention, NormLayer, PositionEncoding, RMSNorm, TransformerBlock,
+    MultiHeadAttention, NormLayer, PositionEncoding, RMSNorm, RoPEFreqs, TransformerBlock,
 };
 use std::collections::HashMap;
 
@@ -667,6 +667,154 @@ impl LlmModel {
         })
     }
 
+    /// Construct Gemma 3 model from weights (already remapped to internal names).
+    ///
+    /// Handles Gemma 3 specifics:
+    /// - Decoupled head_dim (independent of dim/n_heads)
+    /// - Per-layer RoPE: local layers use rope_local_base_freq, global layers use rope_theta
+    /// - Sliding window pattern: every Nth layer is global attention, rest are local
+    /// - Custom attention scaling via query_pre_attn_scalar
+    /// - GeGLU activation (gelu(gate) * up)
+    /// - RMSNorm with offset=1.0, embedding scale=sqrt(dim)
+    /// - Linear RoPE frequency scaling for long context
+    pub fn from_pretrained_gemma3(
+        config: &ModelConfig,
+        weights: HashMap<String, Tensor>,
+    ) -> NlpResult<Self> {
+        let d_model = config.dim;
+        let num_heads = config.n_heads;
+        let num_layers = config.n_layers;
+        let max_seq_len = config.max_seq_len;
+        let eps = config.norm_eps;
+        let causal = config.causal;
+
+        let head_dim = config.head_dim.unwrap_or(d_model / num_heads);
+        let attn_scale = config.query_pre_attn_scalar.map(|s| s.sqrt());
+        let pattern = config.sliding_window_pattern.unwrap_or(6);
+        let global_theta = config.rope_theta;
+        let local_theta = config.rope_local_base_freq.unwrap_or(10000.0);
+        let scaling = config.rope_scaling_factor.unwrap_or(1.0);
+
+        // Pre-build two RoPEFreqs: one for local layers, one for global layers
+        let local_rope = RoPEFreqs::with_scaling(head_dim, max_seq_len, local_theta, scaling);
+        let global_rope = RoPEFreqs::with_scaling(head_dim, max_seq_len, global_theta, scaling);
+
+        let get_tensor = |key: &str| -> NlpResult<Tensor> {
+            weights
+                .get(key)
+                .ok_or_else(|| NlpError::ModelError(format!("Missing weight: {}", key)))
+                .and_then(|t| Ok(t.to_f32()?))
+        };
+
+        let get_weight = |key: &str| -> NlpResult<Tensor> {
+            weights
+                .get(key)
+                .ok_or_else(|| NlpError::ModelError(format!("Missing weight: {}", key)))
+                .and_then(|t| match t.dtype() {
+                    DType::Q4_0 | DType::Q8_0 | DType::F32 => Ok(t.clone()),
+                    _ => Ok(t.to_f32()?),
+                })
+        };
+
+        let token_embedding = Embedding::from_weights(get_tensor("token_embedding.weight")?)?;
+
+        let offset = config.rms_norm_offset.unwrap_or(1.0);
+
+        let mut layers = Vec::with_capacity(num_layers);
+        for i in 0..num_layers {
+            let is_global = (i + 1) % pattern == 0;
+            let rope = if is_global { global_rope.clone() } else { local_rope.clone() };
+
+            let q_proj = Linear::from_weights(
+                get_weight(&format!("layers.{}.attention.q_proj.weight", i))?,
+                None,
+            )?;
+            let k_proj = Linear::from_weights(
+                get_weight(&format!("layers.{}.attention.k_proj.weight", i))?,
+                None,
+            )?;
+            let v_proj = Linear::from_weights(
+                get_weight(&format!("layers.{}.attention.v_proj.weight", i))?,
+                None,
+            )?;
+            let out_proj = Linear::from_weights(
+                get_weight(&format!("layers.{}.attention.out_proj.weight", i))?,
+                None,
+            )?;
+
+            let mut attention = MultiHeadAttention::from_weights_with_head_dim(
+                d_model,
+                num_heads,
+                config.n_kv_heads,
+                head_dim,
+                q_proj,
+                k_proj,
+                v_proj,
+                out_proj,
+                causal,
+                Some(rope),
+                attn_scale,
+            )?;
+
+            // Sliding window on local layers only
+            if !is_global {
+                if let Some(w) = config.sliding_window {
+                    attention.set_window_size(w);
+                }
+            }
+
+            // GeGLU FFN
+            let up_proj = Linear::from_weights(
+                get_weight(&format!("layers.{}.feed_forward.up_proj.weight", i))?,
+                None,
+            )?;
+            let gate_proj = Linear::from_weights(
+                get_weight(&format!("layers.{}.feed_forward.gate_proj.weight", i))?,
+                None,
+            )?;
+            let down_proj = Linear::from_weights(
+                get_weight(&format!("layers.{}.feed_forward.down_proj.weight", i))?,
+                None,
+            )?;
+            let feed_forward = FeedForward::from_weights_geglu(up_proj, gate_proj, down_proj);
+
+            // RMSNorm with offset
+            let attention_norm = RMSNorm::from_weight_with_offset(
+                get_tensor(&format!("layers.{}.attention_norm.weight", i))?,
+                eps,
+                offset,
+            );
+            let ffn_norm = RMSNorm::from_weight_with_offset(
+                get_tensor(&format!("layers.{}.ffn_norm.weight", i))?,
+                eps,
+                offset,
+            );
+
+            layers.push(TransformerBlock::from_weights_rms(
+                attention,
+                feed_forward,
+                attention_norm,
+                ffn_norm,
+            ));
+        }
+
+        let norm = NormLayer::RMSNorm(RMSNorm::from_weight_with_offset(
+            get_tensor("norm.weight")?,
+            eps,
+            offset,
+        ));
+        let output = Linear::from_weights(get_weight("output.weight")?, None)?;
+
+        Ok(Self {
+            token_embedding,
+            pos_embedding: None,
+            layers,
+            norm,
+            output,
+            config: config.clone(),
+        })
+    }
+
     /// Forward pass without KV cache.
     pub fn forward_pass(&self, input_ids: &Tensor) -> NlpResult<Tensor> {
         let x_emb = self.token_embedding.forward(input_ids)?;
@@ -819,7 +967,7 @@ impl LanguageModel for LlmModel {
     }
 
     fn head_dim(&self) -> usize {
-        self.config.dim / self.config.n_heads
+        self.config.head_dim.unwrap_or(self.config.dim / self.config.n_heads)
     }
 }
 
@@ -957,6 +1105,11 @@ mod tests {
             parallel_residual: None,
             num_local_experts: None,
             num_experts_per_tok: None,
+            head_dim: None,
+            sliding_window_pattern: None,
+            query_pre_attn_scalar: None,
+            rope_local_base_freq: None,
+            rope_scaling_factor: None,
         }
     }
 
@@ -1275,5 +1428,79 @@ mod tests {
         // Just verify config is valid; actual bias loading tested via from_pretrained
         assert!(config.validate().is_ok());
         assert_eq!(config.attention_bias, Some(true));
+    }
+
+    #[test]
+    fn test_gemma3_tiny_forward() {
+        // Build a tiny Gemma 3 model with decoupled head_dim and sliding window pattern
+        let d = 64;
+        let num_heads = 4;
+        let num_kv = 2;
+        let head_dim = 32; // decoupled: 64/4=16 != 32
+        let hidden = 256;
+        let n_layers = 6; // enough to test sliding_window_pattern=3
+        let vocab = 100;
+
+        let config = ModelConfig {
+            dim: d,
+            hidden_dim: hidden,
+            n_layers,
+            n_heads: num_heads,
+            n_kv_heads: Some(num_kv),
+            vocab_size: vocab,
+            norm_eps: 1e-6,
+            max_seq_len: 64,
+            use_bias: Some(false),
+            position_encoding: PositionEncoding::RoPE,
+            causal: true,
+            rope_theta: 1000000.0,
+            bos_token_id: Some(2),
+            eos_token_id: Some(1),
+            chat_template: None,
+            sliding_window: Some(16),
+            attn_logit_cap: None,
+            embedding_scale: Some((d as f32).sqrt()),
+            rms_norm_offset: Some(1.0),
+            attention_bias: None,
+            parallel_residual: None,
+            num_local_experts: None,
+            num_experts_per_tok: None,
+            head_dim: Some(head_dim),
+            sliding_window_pattern: Some(3),
+            query_pre_attn_scalar: Some(32.0),
+            rope_local_base_freq: Some(10000.0),
+            rope_scaling_factor: Some(8.0),
+        };
+
+        let q_dim = num_heads * head_dim;
+        let kv_dim = num_kv * head_dim;
+
+        let mut weights: HashMap<String, Tensor> = HashMap::new();
+        weights.insert("token_embedding.weight".into(), Tensor::randn(vec![vocab, d]));
+        weights.insert("norm.weight".into(), Tensor::ones(vec![d]));
+        weights.insert("output.weight".into(), Tensor::randn(vec![vocab, d]));
+
+        for i in 0..n_layers {
+            weights.insert(format!("layers.{}.attention.q_proj.weight", i), Tensor::randn(vec![q_dim, d]));
+            weights.insert(format!("layers.{}.attention.k_proj.weight", i), Tensor::randn(vec![kv_dim, d]));
+            weights.insert(format!("layers.{}.attention.v_proj.weight", i), Tensor::randn(vec![kv_dim, d]));
+            weights.insert(format!("layers.{}.attention.out_proj.weight", i), Tensor::randn(vec![d, q_dim]));
+            weights.insert(format!("layers.{}.feed_forward.up_proj.weight", i), Tensor::randn(vec![hidden, d]));
+            weights.insert(format!("layers.{}.feed_forward.gate_proj.weight", i), Tensor::randn(vec![hidden, d]));
+            weights.insert(format!("layers.{}.feed_forward.down_proj.weight", i), Tensor::randn(vec![d, hidden]));
+            weights.insert(format!("layers.{}.attention_norm.weight", i), Tensor::ones(vec![d]));
+            weights.insert(format!("layers.{}.ffn_norm.weight", i), Tensor::ones(vec![d]));
+        }
+
+        let model = LlmModel::from_pretrained_gemma3(&config, weights).unwrap();
+
+        // Verify model structure
+        assert_eq!(model.layers.len(), n_layers);
+        assert_eq!(model.config.head_dim, Some(head_dim));
+
+        // Forward pass
+        let input = Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![1, 4]).unwrap();
+        let logits = model.forward(&input).unwrap();
+        assert_eq!(logits.shape(), &[1, 4, vocab]);
     }
 }

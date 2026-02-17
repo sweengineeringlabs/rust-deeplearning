@@ -41,6 +41,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         parallel_residual: None,
         num_local_experts: None,
         num_experts_per_tok: None,
+        head_dim: None,
+        sliding_window_pattern: None,
+        query_pre_attn_scalar: None,
+        rope_local_base_freq: None,
+        rope_scaling_factor: None,
     };
 
     let gpt2_model = LlmModel::new(&gpt2_config)?;
@@ -82,6 +87,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         parallel_residual: None,
         num_local_experts: None,
         num_experts_per_tok: None,
+        head_dim: None,
+        sliding_window_pattern: None,
+        query_pre_attn_scalar: None,
+        rope_local_base_freq: None,
+        rope_scaling_factor: None,
     };
 
     let llama_model = LlmModel::new(&llama_config)?;

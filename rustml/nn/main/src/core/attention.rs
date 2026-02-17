@@ -25,6 +25,9 @@ pub struct MultiHeadAttention {
     position_encoding: PositionEncoding,
     rope_freqs: Option<RoPEFreqs>,
     alibi_slopes: Option<Vec<f32>>,
+    attn_logit_cap: Option<f32>,
+    window_size: Option<usize>,
+    attn_scale: Option<f32>,
 
     pub q_proj: Linear,
     pub k_proj: Linear,
@@ -93,6 +96,9 @@ impl MultiHeadAttention {
             position_encoding,
             rope_freqs,
             alibi_slopes,
+            attn_logit_cap: None,
+            window_size: None,
+            attn_scale: None,
             q_proj: Linear::with_bias(d_model, d_model, bias),
             k_proj: Linear::with_bias(d_model, kv_dim, bias),
             v_proj: Linear::with_bias(d_model, kv_dim, bias),
@@ -144,6 +150,54 @@ impl MultiHeadAttention {
             position_encoding,
             rope_freqs,
             alibi_slopes,
+            attn_logit_cap: None,
+            window_size: None,
+            attn_scale: None,
+            q_proj,
+            k_proj,
+            v_proj,
+            out_proj,
+        })
+    }
+
+    /// Construct from pre-loaded projection layers with explicit head_dim and optional attn_scale.
+    ///
+    /// Used by architectures like Gemma 3 where `head_dim` is independent of `d_model / num_heads`
+    /// and attention scaling uses a custom divisor instead of `sqrt(head_dim)`.
+    pub fn from_weights_with_head_dim(
+        d_model: usize,
+        num_heads: usize,
+        num_kv_heads: Option<usize>,
+        head_dim: usize,
+        q_proj: Linear,
+        k_proj: Linear,
+        v_proj: Linear,
+        out_proj: Linear,
+        causal: bool,
+        rope_freqs: Option<RoPEFreqs>,
+        attn_scale: Option<f32>,
+    ) -> NnResult<Self> {
+        let n_kv = num_kv_heads.unwrap_or(num_heads);
+
+        if num_heads % n_kv != 0 {
+            return Err(NnError::InvalidConfig(format!(
+                "num_heads ({}) must be divisible by num_kv_heads ({})",
+                num_heads, n_kv
+            )));
+        }
+
+        Ok(Self {
+            num_heads,
+            num_kv_heads: n_kv,
+            head_dim,
+            d_model,
+            causal,
+            position_encoding: if rope_freqs.is_some() { PositionEncoding::RoPE } else { PositionEncoding::None },
+            rope_freqs,
+            alibi_slopes: None,
+            attn_logit_cap: None,
+            window_size: None,
+            attn_scale,
             q_proj,
             k_proj,
             v_proj,
@@ -178,6 +232,16 @@ impl MultiHeadAttention {
         self.k_proj.set_native_q4_matmul(enabled);
         self.v_proj.set_native_q4_matmul(enabled);
         self.out_proj.set_native_q4_matmul(enabled);
+    }
+
+    /// Set attention logit soft-capping (Gemma2): `cap * tanh(scores / cap)`.
+    pub fn set_attn_logit_cap(&mut self, cap: f32) {
+        self.attn_logit_cap = Some(cap);
+    }
+
+    /// Set sliding window size for local attention (Mistral/Gemma2).
+    pub fn set_window_size(&mut self, window_size: usize) {
+        self.window_size = Some(window_size);
     }
 
     /// Forward pass without KV cache.
@@ -217,19 +281,31 @@ impl MultiHeadAttention {
         let k = k.repeat_kv(n_rep)?;
         let v = v.repeat_kv(n_rep)?;
 
-        // Attention scores: Q @ K^T / sqrt(d_k)
+        // Attention scores: Q @ K^T / scale
         let k_t = k.transpose(2, 3)?;
         let scores = q.matmul(&k_t)?;
-        let scale = (self.head_dim as f32).sqrt();
+        let scale = self.attn_scale.unwrap_or_else(|| (self.head_dim as f32).sqrt());
         let scores = scores.div_scalar(scale);
+
+        // Logit soft-capping
+        let scores = if let Some(cap) = self.attn_logit_cap {
+            scores.div_scalar(cap).tanh().mul_scalar(cap)
+        } else {
+            scores
+        };
 
         // Apply mask/bias
         let scores = if let Some(ref slopes) = self.alibi_slopes {
             let bias = alibi_bias(slopes, seq_len, seq_len, self.causal);
             scores.add(&bias)?
         } else if self.causal && seq_len > 1 {
-            let mask = Tensor::causal_mask(seq_len, seq_len);
-            scores.add(&mask)?
+            if let Some(ws) = self.window_size {
+                let mask = Tensor::sliding_window_mask(seq_len, seq_len, ws);
+                scores.add(&mask)?
+            } else {
+                let mask = Tensor::causal_mask(seq_len, seq_len);
+                scores.add(&mask)?
+            }
         } else {
             scores
         };
@@ -239,7 +315,7 @@ impl MultiHeadAttention {
 
         let context = context
             .transpose(1, 2)?
-            .reshape(&[batch_size, seq_len, self.d_model])?;
+            .reshape(&[batch_size, seq_len, self.num_heads * self.head_dim])?;
 
         self.out_proj.forward(&context)
     }
@@ -303,16 +379,28 @@ impl MultiHeadAttention {
         // Attention scores
         let k_t = k_full.transpose(2, 3)?;
         let scores = q.matmul(&k_t)?;
-        let scale = (self.head_dim as f32).sqrt();
+        let scale = self.attn_scale.unwrap_or_else(|| (self.head_dim as f32).sqrt());
         let scores = scores.div_scalar(scale);
+
+        // Logit soft-capping
+        let scores = if let Some(cap) = self.attn_logit_cap {
+            scores.div_scalar(cap).tanh().mul_scalar(cap)
+        } else {
+            scores
+        };
 
         // Apply mask/bias
         let scores = if let Some(ref slopes) = self.alibi_slopes {
             let bias = alibi_bias(slopes, seq_len, total_len, self.causal);
             scores.add(&bias)?
         } else if self.causal && seq_len > 1 {
-            let mask = Tensor::causal_mask(seq_len, total_len);
-            scores.add(&mask)?
+            if let Some(ws) = self.window_size {
+                let mask = Tensor::sliding_window_mask(seq_len, total_len, ws);
+                scores.add(&mask)?
+            } else {
+                let mask = Tensor::causal_mask(seq_len, total_len);
+                scores.add(&mask)?
+            }
         } else {
             scores
         };
@@ -322,7 +410,7 @@ impl MultiHeadAttention {
 
         let context = context
             .transpose(1, 2)?
-            .reshape(&[batch_size, seq_len, self.d_model])?;
+            .reshape(&[batch_size, seq_len, self.num_heads * self.head_dim])?;
 
         self.out_proj.forward(&context)
     }
@@ -561,5 +649,102 @@ mod tests {
         let x = Tensor::randn(vec![1, 8, 64]);
         let y = mha.forward(&x).unwrap();
         assert_eq!(y.shape(), &[1, 8, 64]);
+    }
+
+    #[test]
+    fn test_multi_head_attention_logit_cap() {
+        let mut mha = MultiHeadAttention::new(
+            64, 4, None, false, true,
+            PositionEncoding::None, 128, 10000.0,
+        )
+        .unwrap();
+        mha.set_attn_logit_cap(50.0);
+        let x = Tensor::randn(vec![1, 8, 64]);
+        let y = mha.forward(&x).unwrap();
+        assert_eq!(y.shape(), &[1, 8, 64]);
+    }
+
+    #[test]
+    fn test_multi_head_attention_sliding_window() {
+        let mut mha = MultiHeadAttention::new(
+            64, 4, None, false, true,
+            PositionEncoding::RoPE, 128, 10000.0,
+        )
+        .unwrap();
+        mha.set_window_size(4);
+        let x = Tensor::randn(vec![1, 8, 64]);
+        let y = mha.forward(&x).unwrap();
+        assert_eq!(y.shape(), &[1, 8, 64]);
+    }
+
+    #[test]
+    fn test_multi_head_attention_explicit_head_dim() {
+        // Gemma 3 style: d_model=128, num_heads=4, head_dim=64 (decoupled)
+        // q_proj: [128, 4*64=256], k_proj: [128, 2*64=128], etc.
+        let d_model = 128;
+        let num_heads = 4;
+        let num_kv_heads = 2;
+        let head_dim = 64;
+        let q_dim = num_heads * head_dim;
+        let kv_dim = num_kv_heads * head_dim;
+
+        let q_proj = Linear::new_no_bias(d_model, q_dim);
+        let k_proj = Linear::new_no_bias(d_model, kv_dim);
+        let v_proj = Linear::new_no_bias(d_model, kv_dim);
+        let out_proj = Linear::new_no_bias(q_dim, d_model);
+
+        let rope = RoPEFreqs::new(head_dim, 128, 10000.0);
+        let mha = MultiHeadAttention::from_weights_with_head_dim(
+            d_model, num_heads, Some(num_kv_heads), head_dim,
+            q_proj, k_proj, v_proj, out_proj,
+            true, Some(rope), None,
+        ).unwrap();
+
+        let x = Tensor::randn(vec![1, 8, d_model]);
+        let y = mha.forward(&x).unwrap();
+        assert_eq!(y.shape(), &[1, 8, d_model]);
+    }
+
+    #[test]
+    fn test_multi_head_attention_custom_attn_scale() {
+        // Test custom attn_scale (Gemma 3: query_pre_attn_scalar=256 → sqrt(256)=16)
+        let d_model = 64;
+        let num_heads = 4;
+        let head_dim = d_model / num_heads;
+
+        let q_proj = Linear::new_no_bias(d_model, d_model);
+        let k_proj = Linear::new_no_bias(d_model, d_model);
+        let v_proj = Linear::new_no_bias(d_model, d_model);
+        let out_proj = Linear::new_no_bias(d_model, d_model);
+
+        let mha = MultiHeadAttention::from_weights_with_head_dim(
+            d_model, num_heads, None, head_dim,
+            q_proj, k_proj, v_proj, out_proj,
+            true, None, Some(16.0), // custom scale
+        ).unwrap();
+
+        let x = Tensor::randn(vec![1, 4, d_model]);
+        let y = mha.forward(&x).unwrap();
+        assert_eq!(y.shape(), &[1, 4, d_model]);
+    }
+
+    #[test]
+    fn test_multi_head_attention_sliding_window_with_cache() {
+        use crate::core::kv_cache::KVCache;
+        let mut mha = MultiHeadAttention::new(
+            64, 4, None, false, true,
+            PositionEncoding::RoPE, 128, 10000.0,
+        )
+        .unwrap();
+        mha.set_window_size(4);
+        let mut cache = KVCache::new(1, 128, 16, 4);
+        // Prefill with 6 tokens
+        let x = Tensor::randn(vec![1, 6, 64]);
+        let y = mha.forward_with_cache(&x, &mut cache, 0).unwrap();
+        assert_eq!(y.shape(), &[1, 6, 64]);
+        // Decode step: 1 token
+        let x2 = Tensor::randn(vec![1, 1, 64]);
+        let y2 = mha.forward_with_cache(&x2, &mut cache, 0).unwrap();
+        assert_eq!(y2.shape(), &[1, 1, 64]);
     }
 }

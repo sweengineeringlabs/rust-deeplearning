@@ -4,6 +4,7 @@ use crate::api::error::NnResult;
 use rustml_core::{DType, Tensor, f32_vec_to_bytes};
 
 /// Precomputed cos/sin tables for Rotary Position Encoding.
+#[derive(Clone)]
 pub struct RoPEFreqs {
     cos_table: Vec<f32>, // [max_seq_len, head_dim/2]
     sin_table: Vec<f32>, // [max_seq_len, head_dim/2]
@@ -20,6 +21,28 @@ impl RoPEFreqs {
         for pos in 0..max_seq_len {
             for i in 0..half_dim {
                 let freq = 1.0 / theta.powf(2.0 * i as f32 / head_dim as f32);
+                let angle = pos as f32 * freq;
+                cos_table.push(angle.cos());
+                sin_table.push(angle.sin());
+            }
+        }
+
+        Self { cos_table, sin_table, half_dim }
+    }
+
+    /// Build cos/sin tables with linear frequency scaling (Gemma 3 long-context).
+    ///
+    /// Each base frequency is divided by `scaling_factor`, effectively extending
+    /// the context window by that factor. A `scaling_factor` of 1.0 is equivalent
+    /// to the standard `new()` constructor.
+    pub fn with_scaling(head_dim: usize, max_seq_len: usize, theta: f32, scaling_factor: f32) -> Self {
+        let half_dim = head_dim / 2;
+        let mut cos_table = Vec::with_capacity(max_seq_len * half_dim);
+        let mut sin_table = Vec::with_capacity(max_seq_len * half_dim);
+
+        for pos in 0..max_seq_len {
+            for i in 0..half_dim {
+                let freq = (1.0 / theta.powf(2.0 * i as f32 / head_dim as f32)) / scaling_factor;
                 let angle = pos as f32 * freq;
                 cos_table.push(angle.cos());
                 sin_table.push(angle.sin());
@@ -135,6 +158,27 @@ mod tests {
         let x = Tensor::randn(vec![1, 2, 1, 32]);
         let y = rope.apply(&x, 10).unwrap();
         assert_eq!(y.shape(), &[1, 2, 1, 32]);
+    }
+
+    #[test]
+    fn test_rope_with_scaling() {
+        let rope = RoPEFreqs::with_scaling(64, 128, 10000.0, 8.0);
+        let x = Tensor::randn(vec![1, 4, 8, 64]);
+        let y = rope.apply(&x, 0).unwrap();
+        assert_eq!(y.shape(), &[1, 4, 8, 64]);
+
+        // Verify scaling: frequencies should be 1/8 of unscaled
+        let unscaled = RoPEFreqs::new(64, 128, 10000.0);
+        let identity_scaled = RoPEFreqs::with_scaling(64, 128, 10000.0, 1.0);
+        // with_scaling(factor=1.0) should match new()
+        let x_small = Tensor::randn(vec![1, 1, 1, 64]);
+        let y_unscaled = unscaled.apply(&x_small, 1).unwrap();
+        let y_identity = identity_scaled.apply(&x_small, 1).unwrap();
+        let d1 = y_unscaled.as_slice_f32().unwrap();
+        let d2 = y_identity.as_slice_f32().unwrap();
+        for i in 0..d1.len() {
+            assert!((d1[i] - d2[i]).abs() < 1e-5, "mismatch at {}", i);
+        }
     }
 
     #[test]

@@ -35,7 +35,7 @@ impl FeedForward {
         bias: bool,
         activation: Activation,
     ) -> Self {
-        let gate_proj = if activation == Activation::SwiGLU {
+        let gate_proj = if activation == Activation::SwiGLU || activation == Activation::GeGLU {
             Some(Linear::with_bias(d_model, hidden_dim, bias))
         } else {
             None
@@ -92,6 +92,24 @@ impl FeedForward {
         }
     }
 
+    /// Construct a GeGLU feed-forward from pre-loaded weights.
+    ///
+    /// GeGLU is like SwiGLU but uses GELU instead of SiLU: `gelu(gate(x)) * up(x)`.
+    pub fn from_weights_geglu(
+        up_proj: Linear,
+        gate_proj: Linear,
+        down_proj: Linear,
+    ) -> Self {
+        let hidden_dim = up_proj.out_features;
+        Self {
+            up_proj,
+            down_proj,
+            gate_proj: Some(gate_proj),
+            hidden_dim,
+            activation: Activation::GeGLU,
+        }
+    }
+
     /// Returns (total_params, frozen_params).
     pub fn parameter_count(&self) -> (usize, usize) {
         let (mut total, mut frozen) = (0, 0);
@@ -130,13 +148,24 @@ impl FeedForward {
                 let h = gate.mul(&up)?;
                 self.down_proj.forward(&h)
             }
+            Activation::GeGLU => {
+                let gate = self
+                    .gate_proj
+                    .as_ref()
+                    .expect("GeGLU requires gate_proj")
+                    .forward(input)?;
+                let gate = gate.gelu();
+                let up = self.up_proj.forward(input)?;
+                let h = gate.mul(&up)?;
+                self.down_proj.forward(&h)
+            }
             _ => {
                 let h = self.up_proj.forward(input)?;
                 let h = match self.activation {
                     Activation::Gelu => h.gelu(),
                     Activation::Silu => h.silu(),
                     Activation::Relu => h.relu(),
-                    Activation::SwiGLU => unreachable!(),
+                    Activation::SwiGLU | Activation::GeGLU => unreachable!(),
                 };
                 self.down_proj.forward(&h)
             }
@@ -162,6 +191,26 @@ mod tests {
         let x = Tensor::randn(vec![2, 8, 64]);
         let y = ff.forward(&x).unwrap();
         assert_eq!(y.shape(), &[2, 8, 64]);
+    }
+
+    #[test]
+    fn test_feedforward_geglu() {
+        let ff = FeedForward::with_activation(64, 256, false, Activation::GeGLU);
+        let x = Tensor::randn(vec![2, 8, 64]);
+        let y = ff.forward(&x).unwrap();
+        assert_eq!(y.shape(), &[2, 8, 64]);
+    }
+
+    #[test]
+    fn test_feedforward_geglu_from_weights() {
+        let up = crate::core::linear::Linear::new_no_bias(64, 256);
+        let gate = crate::core::linear::Linear::new_no_bias(64, 256);
+        let down = crate::core::linear::Linear::new_no_bias(256, 64);
+        let ff = FeedForward::from_weights_geglu(up, gate, down);
+        assert_eq!(ff.activation, Activation::GeGLU);
+        let x = Tensor::randn(vec![1, 4, 64]);
+        let y = ff.forward(&x).unwrap();
+        assert_eq!(y.shape(), &[1, 4, 64]);
     }
 
     #[test]
