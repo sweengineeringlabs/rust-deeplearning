@@ -53,11 +53,13 @@
 | Batch file | `sweai infer model.gguf --batch-file /tmp/prompts.txt --max-tokens 64` | Outputs `[0] ...`, `[1] ...` per prompt |
 | Timeout | `sweai infer model.gguf --prompt "Tell me a long story" --max-tokens 4096 --timeout 5` | Generation stops after ~5s |
 | Stdin prompt | `echo "Hello world" \| sweai infer model.gguf` | Reads prompt from stdin; stderr shows `Reading prompt from stdin...` |
-| SafeTensors basic | `sweai infer --safetensors openai-community/gpt2 --prompt "Hello" --max-tokens 10` | Loads GPT-2 via `LlmModel` with KV cache; generates text; stderr shows `Building model (LlmModel with KV cache)...` and `KV cache: <N> MB` |
+| SafeTensors basic | `sweai infer --safetensors openai-community/gpt2 --prompt "Hello" --max-tokens 10` | Loads GPT-2; stderr: `Config: arch=gpt2, ...`, `Building model...`, `Tokenizer: <N> tokens (BPE)` |
 | SafeTensors streaming | `sweai infer --safetensors openai-community/gpt2 --prompt "The quick brown fox" --stream --max-tokens 20` | Tokens printed incrementally |
 | SafeTensors greedy | `sweai infer --safetensors openai-community/gpt2 --prompt "The capital of France is" --temperature 0 --max-tokens 20` | Deterministic output |
 | SafeTensors sampling | `sweai infer --safetensors openai-community/gpt2 --prompt "Once upon" --temperature 0.7 --top-k 50 --top-p 0.9 --max-tokens 32` | All flags accepted; generates text |
-| SafeTensors chat warn | `sweai infer --safetensors openai-community/gpt2 --prompt "Hi" --chat --max-tokens 10` | Stderr: `--chat is not supported for SafeTensors GPT-2`, generates text anyway |
+| SafeTensors Gemma 3 | `sweai infer --safetensors google/gemma-3-1b-it --prompt "The capital of France is" --max-tokens 20 --stream` | Auto-detects `arch=gemma3`; stderr: `Tokenizer: <N> tokens (tokenizer.json)`; generates text |
+| SafeTensors Gemma 3 chat | `sweai infer --safetensors google/gemma-3-1b-it --prompt "What is 2+2?" --chat --max-tokens 32` | Uses chat template from config; generates conversational response |
+| SafeTensors bad model | `sweai infer --safetensors nonexistent/model-xyz --prompt "Hi"` | Error: `Failed to download model` |
 
 ## 3. GGUF Subcommand
 

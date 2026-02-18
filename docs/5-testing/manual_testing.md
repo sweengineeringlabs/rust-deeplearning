@@ -24,7 +24,8 @@
 1. Rust toolchain (edition 2024, stable channel 1.93+)
 2. The workspace builds cleanly: `cargo build --workspace`
 3. (Optional) A GGUF model file for inference and inspection tests (e.g., Gemma 3 1B Q4_0)
-4. (Optional) Internet access for Hub download tests
+4. (Optional) A cached SafeTensors model for SafeTensors inference tests (e.g., `sweai hub download openai-community/gpt2`)
+5. (Optional) Internet access for Hub download tests
 
 ## Building the CLIs
 
@@ -60,7 +61,7 @@ The `sweai` binary is a single facade over all four standalone CLIs. Every stand
 | `rustml-tokenizer` | `rustml-tokenizer` | Encode, decode, and inspect tokenizer vocabularies |
 | `rustml-gguf-inspect` | `rustml-gguf` | Inspect GGUF model files (metadata, tensors, config) |
 | `rustml-hub-cli` | `rustml-hub` | Download and manage HuggingFace models |
-| `rustml-infer` | `rustml-nlp` | Run text generation on GGUF models |
+| `rustml-infer` | `rustml-nlp` | Run text generation on GGUF or SafeTensors models |
 | `sweai` | `rustml-cli` | Unified CLI with `infer`, `gguf`, `hub`, `tokenizer` subcommands |
 
 ---
@@ -69,11 +70,11 @@ The `sweai` binary is a single facade over all four standalone CLIs. Every stand
 
 | Document | Domain | Tests |
 |----------|--------|-------|
-| [SweAI Unified CLI Tests](manual_sweai_tests.md) | Top-level help, subcommand dispatch, parity, error handling | 56 |
+| [SweAI Unified CLI Tests](manual_sweai_tests.md) | Top-level help, subcommand dispatch, parity, error handling | 70 |
 | [Tokenizer Tests](manual_tokenizer_tests.md) | Tokenizer encode/decode, backends, vocab info | 28 |
 | [GGUF Inspector Tests](manual_gguf_inspect_tests.md) | GGUF metadata, tensor listing, model info | 25 |
-| [Hub CLI Tests](manual_hub_cli_tests.md) | Model download, cache listing, config display | 18 |
-| [Inference Tests](manual_infer_tests.md) | GGUF model loading, text generation, streaming, batch, timeout | 52 |
+| [Hub CLI Tests](manual_hub_cli_tests.md) | Model download, cache listing, config display, SafeTensors inference | 29 |
+| [Inference Tests](manual_infer_tests.md) | GGUF and SafeTensors model loading, multi-arch dispatch, text generation, streaming, batch, timeout | 83 |
 
 > **Note:** Each test document lists standalone binary commands. All commands can also be run via the unified `sweai` binary — see the equivalence table above.
 
@@ -102,9 +103,9 @@ cargo test -p rustml-tokenizer
 | Hub CLI integration | `rustml/hub/tests/cli.rs` | 15 |
 | NLP unit tests | `rustml/nlp/main/src/` | 57 |
 | NLP integration tests | `rustml/nlp/tests/` | 4 |
-| Infer CLI integration | `rustml/nlp/tests/infer_cli.rs` | 13 |
+| Infer CLI integration | `rustml/nlp/tests/infer_cli.rs` | 14 |
 | Tokenizer CLI integration | `rustml/tokenizer/tests/cli.rs` | 18 |
-| **Total** | | **147** |
+| **Total** | | **148** |
 
 ---
 

@@ -21,9 +21,10 @@
 - [Batch File](#7-batch-file)
 - [Timeout](#8-timeout)
 - [Diagnostic Output](#9-diagnostic-output)
-- [SafeTensors Generation](#10-safetensors-generation)
-- [SafeTensors Diagnostics](#11-safetensors-diagnostics)
-- [Error Cases](#12-error-cases)
+- [SafeTensors Generation (GPT-2)](#10-safetensors-generation-gpt-2)
+- [SafeTensors Multi-Architecture](#11-safetensors-multi-architecture)
+- [SafeTensors Diagnostics](#12-safetensors-diagnostics)
+- [Error Cases](#13-error-cases)
 
 ---
 
@@ -127,7 +128,7 @@
 | Metrics (non-stream) | stderr after generation | `Generated in <T>s` |
 | Metrics (batch) | stderr after batch | `<N> prompts in <T>s (<R> prompts/sec)` |
 
-## 10. SafeTensors Generation
+## 10. SafeTensors Generation (GPT-2)
 
 > **Prerequisite**: Download `openai-community/gpt2` via `rustml-hub-cli download openai-community/gpt2` (or `sweai hub download openai-community/gpt2`).
 
@@ -138,30 +139,47 @@
 | Short output | `rustml-infer --safetensors openai-community/gpt2 --prompt "Hello" --max-tokens 5` | Output is at most ~5 tokens |
 | Sampling flags | `rustml-infer --safetensors openai-community/gpt2 --prompt "Once upon" --temperature 0.7 --top-k 50 --top-p 0.9 --repetition-penalty 1.1 --max-tokens 32` | All flags accepted; generates text |
 | Streaming | `rustml-infer --safetensors openai-community/gpt2 --prompt "The quick brown fox" --stream --max-tokens 20` | Tokens printed incrementally |
-| Chat warning | `rustml-infer --safetensors openai-community/gpt2 --prompt "Hi" --chat --max-tokens 10` | Stderr: `--chat is not supported for SafeTensors GPT-2`; generates text anyway |
 | Stdin prompt | `echo "Hello world" \| rustml-infer --safetensors openai-community/gpt2 --max-tokens 10` | Reads prompt from stdin |
 | Batch file | `rustml-infer --safetensors openai-community/gpt2 --batch-file /tmp/prompts.txt --max-tokens 32` | Outputs `[0] ...`, `[1] ...` per prompt |
 | Timeout | `rustml-infer --safetensors openai-community/gpt2 --prompt "Tell me a story" --max-tokens 4096 --timeout 5` | Generation stops after ~5s |
 | Conflicts with GGUF | `rustml-infer model.gguf --safetensors openai-community/gpt2 --prompt "Hi"` | Error: cannot use both GGUF path and `--safetensors` |
 
-## 11. SafeTensors Diagnostics
+## 11. SafeTensors Multi-Architecture
 
-> **Note:** SafeTensors models (e.g., GPT-2) now use `LlmModel` with a real KV cache — the same unified model path as GGUF models. This gives ~15x faster decoding compared to the previous `GptModel` path. See [ADR-001](../3-design/adr/adr-001-unified-llmmodel-for-gpt2.md) for details.
+> **Prerequisite**: Download target models via `sweai hub download <model-id>`. These tests verify that `--safetensors` auto-detects architecture from `config.json` `model_type`, selects the correct weight mapping and model constructor, and uses `HFTokenizer` (from `tokenizer.json`) when available.
+
+| Test | Command | Expected |
+|------|---------|----------|
+| Gemma 3 1B IT | `rustml-infer --safetensors google/gemma-3-1b-it --prompt "The capital of France is" --max-tokens 20 --stream` | Auto-detects `arch=gemma3`; uses HFTokenizer; generates text |
+| Gemma 3 config | (same as above) | stderr: `Config: arch=gemma3, dim=..., layers=..., heads=..., vocab=...` |
+| Gemma 3 tokenizer | (same as above) | stderr: `Tokenizer: <N> tokens (tokenizer.json)` |
+| GPT-2 BPE fallback | `rustml-infer --safetensors openai-community/gpt2 --prompt "Hello" --max-tokens 10` | stderr: `Tokenizer: <N> tokens (BPE)` (falls back when no tokenizer.json) |
+| GPT-2 arch detection | (same as above) | stderr: `Config: arch=gpt2, ...` |
+| Chat with template | `rustml-infer --safetensors google/gemma-3-1b-it --prompt "What is 2+2?" --chat --max-tokens 32` | Uses chat template from config if available |
+| EOS from config | `rustml-infer --safetensors google/gemma-3-1b-it --prompt "Hi" --max-tokens 64` | Stops at model's EOS token (from config.json `eos_token_id`), not GPT-2 hardcoded EOS |
+| Unsupported model_type | Download a model with unknown `model_type`, attempt inference | Error: `Unsupported SafeTensors model_type: '<type>'` |
+
+> **Supported architectures**: `gpt2`, `llama`, `mistral`, `qwen2`, `phi3`, `gemma3`, `gemma3_text`, `falcon`, `mixtral`. The dispatch is in `build_safetensors_model()` in `rustml/nlp/main/src/core/model.rs`.
+
+## 12. SafeTensors Diagnostics
+
+> **Note:** SafeTensors inference uses `LlmModel` with a real KV cache — the same unified model path as GGUF models. Architecture is auto-detected from `config.json` `model_type` and weights are remapped via `build_safetensors_model()`. See [ADR-001](../3-design/adr/adr-001-unified-llmmodel-for-gpt2.md) for details.
 
 | Test | What to check | Expected |
 |------|---------------|----------|
-| Cache hit | stderr when model is cached | `Using cached model: openai-community/gpt2` |
-| Cache miss | stderr when model is not cached | `Downloading model: openai-community/gpt2` |
-| Config summary | stderr | `Config: dim=768, layers=12, heads=12, vocab=50257` |
+| Cache hit | stderr when model is cached | `Using cached model: <model-id>` |
+| Cache miss | stderr when model is not cached | `Downloading model: <model-id>` |
+| Config with arch | stderr | `Config: arch=<type>, dim=<N>, layers=<N>, heads=<N>, vocab=<N>` |
 | Weight loading | stderr | `Loading SafeTensors weights...` then `<N> tensors loaded` |
-| Model build | stderr | `Building model (LlmModel with KV cache)...` |
+| Model build | stderr | `Building model...` |
 | Model ready | stderr | `Model ready: <N>M params` |
 | KV cache memory | stderr | `KV cache: <N> MB (<layers>layers x <heads>heads x <seq>seq x <dim>dim x f32 x 2)` |
-| Tokenizer info | stderr | `Tokenizer: <N> tokens` |
+| Tokenizer (HF) | stderr when tokenizer.json exists | `Tokenizer: <N> tokens (tokenizer.json)` |
+| Tokenizer (BPE) | stderr when no tokenizer.json | `Tokenizer: <N> tokens (BPE)` |
 | Metrics (stream) | stderr after streaming | `<N> tokens in <T>s (<R> tokens/sec)` |
 | Metrics (non-stream) | stderr after generation | `Generated in <T>s` |
 
-## 12. Error Cases
+## 13. Error Cases
 
 | Test | Command | Expected |
 |------|---------|----------|
