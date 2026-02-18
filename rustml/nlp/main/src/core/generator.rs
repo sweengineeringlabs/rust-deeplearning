@@ -9,6 +9,7 @@ use crate::api::error::NlpResult;
 use crate::api::types::LanguageModel;
 use crate::core::sampling;
 use rustml_tokenizer::Tokenizer;
+use rayon::prelude::*;
 use rustml_core::{DType, Tensor, f32_vec_to_bytes};
 use rustml_nn::KVCache;
 
@@ -480,6 +481,24 @@ impl<'a> Generator<'a> {
             .iter()
             .map(|prompt| self.generate(prompt, max_tokens))
             .collect()
+    }
+
+    /// Generate completions for multiple prompts in parallel using rayon.
+    ///
+    /// Requires the model and tokenizer to be Sync (most implementations are).
+    pub fn generate_batch_parallel(
+        &self,
+        prompts: &[&str],
+        max_tokens: usize,
+    ) -> NlpResult<Vec<String>>
+    where
+        dyn LanguageModel + 'a: Sync,
+        dyn Tokenizer + 'a: Sync,
+    {
+        prompts
+            .par_iter()
+            .map(|prompt| self.generate(prompt, max_tokens))
+            .collect::<Result<Vec<_>, _>>()
     }
 }
 

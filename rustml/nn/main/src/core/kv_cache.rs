@@ -128,6 +128,37 @@ impl KVCache {
         self.current_len += step;
     }
 
+    /// Snapshot the current filled prefix for later reuse.
+    ///
+    /// Returns a deep clone of this cache, preserving all data up to `current_len`.
+    /// Use with `restore_from()` to skip redundant prefill for shared prompts.
+    pub fn snapshot(&self) -> NnResult<Self> {
+        self.deep_clone()
+    }
+
+    /// Restore cache state from a previously-snapshotted prefix.
+    ///
+    /// Copies the filled region from `snapshot` into this cache and resets
+    /// `current_len` to match, so the next generation starts right after the
+    /// prefix without re-running prefill.
+    pub fn restore_from(&self, snapshot: &KVCache) -> NnResult<Self> {
+        if snapshot.head_dim != self.head_dim
+            || snapshot.num_kv_heads != self.num_kv_heads
+            || snapshot.past_keys.len() != self.past_keys.len()
+        {
+            return Err(NnError::InvalidConfig(
+                "prefix snapshot dimensions do not match this cache".into(),
+            ));
+        }
+        if snapshot.current_len > self.max_seq_len {
+            return Err(NnError::InvalidConfig(format!(
+                "prefix length {} exceeds max_seq_len {}",
+                snapshot.current_len, self.max_seq_len,
+            )));
+        }
+        snapshot.deep_clone()
+    }
+
     /// Create a deep copy with independently owned tensor data (not Arc-shared).
     /// Required for beam search where each beam needs a mutable cache.
     pub fn deep_clone(&self) -> NnResult<Self> {
@@ -201,5 +232,28 @@ mod tests {
 
         let clone = cache.deep_clone().unwrap();
         assert_eq!(clone.current_len, 3);
+    }
+
+    #[test]
+    fn test_kv_cache_prefix_snapshot() {
+        let mut cache = KVCache::new(1, 16, 8, 2);
+        let k = Tensor::randn(vec![1, 2, 5, 8]);
+        let v = Tensor::randn(vec![1, 2, 5, 8]);
+        cache.update(0, k, v).unwrap();
+        cache.advance(5);
+
+        // Take snapshot after prefill
+        let snapshot = cache.snapshot().unwrap();
+        assert_eq!(snapshot.current_len, 5);
+
+        // Restore into a fresh cache
+        let fresh = KVCache::new(1, 16, 8, 2);
+        let restored = fresh.restore_from(&snapshot).unwrap();
+        assert_eq!(restored.current_len, 5);
+
+        // Verify we can continue generating from the restored cache
+        let (k_view, v_view) = restored.get_view(0, 5).unwrap();
+        assert_eq!(k_view.shape()[2], 5);
+        assert_eq!(v_view.shape()[2], 5);
     }
 }

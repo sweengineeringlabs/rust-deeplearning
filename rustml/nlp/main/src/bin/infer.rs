@@ -1,6 +1,6 @@
 use std::io::{self, Read};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
@@ -184,8 +184,12 @@ fn main() -> Result<()> {
     let prompt = read_prompt(&cli)?;
     eprintln!("---");
 
+    let gen_start = Instant::now();
+
     if cli.stream {
+        let mut token_count: usize = 0;
         let _output = generator.generate_stream(&prompt, cli.max_tokens, |token_id| {
+            token_count += 1;
             match tokenizer.decode(&[token_id]) {
                 Ok(piece) => print!("{piece}"),
                 Err(e) => eprintln!("[warn] failed to decode token {}: {}", token_id, e),
@@ -193,9 +197,20 @@ fn main() -> Result<()> {
             true
         })?;
         println!();
+        let elapsed = gen_start.elapsed();
+        let tps = if elapsed.as_secs_f64() > 0.0 {
+            token_count as f64 / elapsed.as_secs_f64()
+        } else {
+            0.0
+        };
+        eprintln!("---");
+        eprintln!("  {} tokens in {:.2}s ({:.1} tokens/sec)", token_count, elapsed.as_secs_f64(), tps);
     } else {
         let output = generator.generate(&prompt, cli.max_tokens)?;
+        let elapsed = gen_start.elapsed();
         println!("{output}");
+        eprintln!("---");
+        eprintln!("  Generated in {:.2}s", elapsed.as_secs_f64());
     }
 
     Ok(())

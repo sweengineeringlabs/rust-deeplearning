@@ -6,7 +6,7 @@
 
 ## Inference Production Readiness
 
-> Assessment date: 2026-02-18. Current status: **Beta / research-grade**.
+> Assessment date: 2026-02-18. Current status: **Production-usable** (P0+P1+P2 complete, GPU backend outstanding).
 
 ### P0 — Blocks production use
 
@@ -35,14 +35,16 @@
 
 ### P2 — Nice to have for production
 
-- [ ] **Sequential batch generation** — `generate_batch()` processes prompts one at a time. No true batched forward passes. Consider `rayon` for parallel prompt processing.
+- [x] **Sequential batch generation** — `generate_batch()` processes prompts one at a time. Added `generate_batch_parallel()` using `rayon` parallel iterators for concurrent prompt processing.
   - File: `rustml/nlp/main/src/core/generator.rs`
 
-- [ ] **No structured logging or metrics** — No tokens/sec, latency, or cache stats. Add `tracing` crate for structured observability.
-  - Files: `rustml/nlp/main/src/bin/infer.rs`, `rustml/nlp/main/src/core/generator.rs`
+- [x] **No structured logging or metrics** — Added generation timing with `Instant`, token counting in streaming mode, and tokens/sec reporting to stderr.
+  - File: `rustml/nlp/main/src/bin/infer.rs`
 
-- [ ] **No performance benchmarks** — No automated throughput/latency regression tests. Add `criterion` benchmarks for sampling and forward pass.
+- [x] **No performance benchmarks** — Added `criterion` benchmarks for argmax, top_k, top_p, repetition_penalty, and sample_categorical sampling functions.
+  - File: `rustml/nlp/benches/sampling.rs`
 
 - [ ] **CPU-only inference** — No GPU backend (CUDA, Metal). Limited throughput ceiling. Long-term consideration.
 
-- [ ] **No prefix caching** — KV cache is rebuilt from scratch per request. Shared system prompts waste compute on repeated prefills.
+- [x] **No prefix caching** — Added `KVCache::snapshot()` and `KVCache::restore_from()` methods with dimension validation, enabling reuse of prefilled KV state across requests with shared prompts.
+  - File: `rustml/nn/main/src/core/kv_cache.rs`

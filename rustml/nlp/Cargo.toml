@@ -26,6 +26,15 @@ rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+rayon.workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+rand.workspace = true
+
+[[bench]]
+name = "sampling"
+harness = false
 
 [[example]]
 name = "gpt2_generate"
