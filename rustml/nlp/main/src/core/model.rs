@@ -6,6 +6,7 @@
 
 use crate::api::error::{NlpError, NlpResult};
 use crate::api::types::{LanguageModel, ModelConfig};
+use crate::core::weight_map::WeightMap;
 use rustml_core::{DType, Tensor, f32_vec_to_bytes};
 use rustml_nn::{
     Activation, Embedding, FeedForward, KVCache, LayerNorm, Linear, MoeLayer,
@@ -1102,6 +1103,55 @@ pub fn map_gpt2_weights(
     }
 
     mapped
+}
+
+/// Build a SafeTensors model by dispatching on `model_type` from config.json.
+///
+/// Handles weight remapping and constructor selection for all supported architectures.
+pub fn build_safetensors_model(
+    model_type: &str,
+    config: &ModelConfig,
+    weights: HashMap<String, Tensor>,
+) -> NlpResult<LlmModel> {
+    match model_type {
+        "gpt2" | "" => {
+            let weights = map_gpt2_weights(weights);
+            LlmModel::from_pretrained_gpt2(config, weights)
+        }
+        "llama" => {
+            let wm = WeightMap::llama2(config.n_layers);
+            let weights = wm.remap(weights);
+            LlmModel::from_pretrained(config, weights)
+        }
+        "mistral" | "qwen2" | "phi3" => {
+            let wm = if config.attention_bias.unwrap_or(false) {
+                WeightMap::llama2_with_attn_bias(config.n_layers)
+            } else {
+                WeightMap::llama2(config.n_layers)
+            };
+            let weights = wm.remap(weights);
+            LlmModel::from_pretrained(config, weights)
+        }
+        "gemma3" | "gemma3_text" => {
+            let wm = WeightMap::gemma3(config.n_layers);
+            let weights = wm.remap(weights);
+            LlmModel::from_pretrained_gemma3(config, weights)
+        }
+        "falcon" => {
+            let wm = WeightMap::falcon(config.n_layers);
+            let weights = wm.remap(weights);
+            LlmModel::from_pretrained_falcon(config, weights)
+        }
+        "mixtral" => {
+            let n_experts = config.num_local_experts.unwrap_or(8);
+            let wm = WeightMap::mixtral(config.n_layers, n_experts);
+            let weights = wm.remap(weights);
+            LlmModel::from_pretrained_mixtral(config, weights)
+        }
+        other => Err(NlpError::ModelError(
+            format!("Unsupported SafeTensors model_type: '{}'", other),
+        )),
+    }
 }
 
 #[cfg(test)]

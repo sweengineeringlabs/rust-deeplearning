@@ -44,7 +44,11 @@ fn no_arguments_shows_usage() {
     let out = bin().output().unwrap();
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("Usage") || stderr.contains("GGUF_PATH"));
+    assert!(
+        stderr.contains("Usage")
+            || stderr.contains("GGUF_PATH")
+            || stderr.contains("Provide a GGUF model path or --safetensors")
+    );
 }
 
 #[test]
@@ -154,6 +158,30 @@ fn unknown_flag_fails() {
         .output()
         .unwrap();
     assert!(!out.status.success());
+}
+
+// ── safetensors error cases ──────────────────────────────────────────
+
+#[test]
+fn safetensors_invalid_model_id_fails() {
+    let out = bin()
+        .args([
+            "--safetensors",
+            "not-a-real-org/not-a-real-model-xyz-12345",
+            "--prompt",
+            "Hello",
+        ])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    // Should produce a download/cache error, not a GPT-2-specific error
+    assert!(
+        stderr.contains("Failed to download model")
+            || stderr.contains("not-a-real-org/not-a-real-model-xyz-12345"),
+        "Expected download error mentioning model ID, got: {}",
+        stderr
+    );
 }
 
 // ── flag acceptance (argument parsing succeeds even if file doesn't exist) ──

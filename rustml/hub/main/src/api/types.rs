@@ -33,6 +33,11 @@ impl ModelBundle {
         self.model_dir.join("merges.txt")
     }
 
+    /// Get path to tokenizer.json (HuggingFace universal tokenizer)
+    pub fn tokenizer_json_path(&self) -> PathBuf {
+        self.model_dir.join("tokenizer.json")
+    }
+
     /// Load model configuration
     pub async fn load_config(&self) -> HubResult<serde_json::Value> {
         let content = tokio::fs::read_to_string(self.config_path()).await?;

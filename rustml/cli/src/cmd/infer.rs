@@ -12,7 +12,7 @@ use rustml_nlp::{
     Generator, LanguageModel, LlmModel, convert_tensors,
     gguf_config_to_model_config,
 };
-use rustml_tokenizer::{BpeTokenizer, GgufTokenizer, Tokenizer};
+use rustml_tokenizer::{BpeTokenizer, GgufTokenizer, HFTokenizer, Tokenizer};
 
 #[derive(Args)]
 pub struct InferArgs {
@@ -256,10 +256,12 @@ fn run_safetensors(
     let json_config = bundle
         .load_config_sync()
         .with_context(|| "Failed to load config.json")?;
+    let model_type = json_config["model_type"].as_str().unwrap_or("").to_string();
     let config = rustml_nlp::ModelConfig::from_json_value(&json_config)
         .with_context(|| "Failed to parse model config")?;
     eprintln!(
-        "  Config: dim={}, layers={}, heads={}, vocab={}",
+        "  Config: arch={}, dim={}, layers={}, heads={}, vocab={}",
+        if model_type.is_empty() { "gpt2" } else { &model_type },
         config.dim, config.n_layers, config.n_heads, config.vocab_size
     );
 
@@ -269,10 +271,9 @@ fn run_safetensors(
         .with_context(|| "Failed to load SafeTensors weights")?;
     eprintln!("  {} tensors loaded", weights.len());
 
-    eprintln!("  Building model (LlmModel with KV cache)...");
-    let weights = rustml_nlp::map_gpt2_weights(weights);
-    let model = LlmModel::from_pretrained_gpt2(&config, weights)
-        .with_context(|| "Failed to build GPT-2 model")?;
+    eprintln!("  Building model...");
+    let model = rustml_nlp::build_safetensors_model(&model_type, &config, weights)
+        .with_context(|| format!("Failed to build {} model", if model_type.is_empty() { "gpt2" } else { &model_type }))?;
     let (total_params, _) = model.parameter_count();
     eprintln!("  Model ready: {:.1}M params", total_params as f64 / 1e6);
 
@@ -285,16 +286,38 @@ fn run_safetensors(
         cache_mb, config.n_layers, n_kv_heads, config.max_seq_len, head_dim
     );
 
-    let tokenizer = BpeTokenizer::from_files(bundle.vocab_path(), bundle.merges_path())
-        .with_context(|| "Failed to load BPE tokenizer")?;
-    eprintln!("  Tokenizer: {} tokens", tokenizer.vocab_size());
+    // Use HFTokenizer if tokenizer.json exists, otherwise fall back to BPE (GPT-2)
+    let tokenizer_json = bundle.tokenizer_json_path();
+    let tokenizer: Box<dyn Tokenizer + Sync> = if tokenizer_json.exists() {
+        let hf = HFTokenizer::from_file(&tokenizer_json)
+            .with_context(|| "Failed to load HFTokenizer from tokenizer.json")?;
+        eprintln!("  Tokenizer: {} tokens (tokenizer.json)", hf.vocab_size());
+        Box::new(hf)
+    } else {
+        let bpe = BpeTokenizer::from_files(bundle.vocab_path(), bundle.merges_path())
+            .with_context(|| "Failed to load BPE tokenizer")?;
+        eprintln!("  Tokenizer: {} tokens (BPE)", bpe.vocab_size());
+        Box::new(bpe)
+    };
 
-    if args.chat {
-        eprintln!("[warn] --chat is not supported for SafeTensors GPT-2 (no chat template), ignoring");
-    }
+    let eos = config.eos_token_id.or_else(|| {
+        // Fall back to GPT-2 EOS if no eos_token_id in config (legacy GPT-2 models)
+        if model_type.is_empty() || model_type == "gpt2" {
+            Some(BpeTokenizer::GPT2_EOS_TOKEN_ID)
+        } else {
+            None
+        }
+    });
 
-    let eos = Some(BpeTokenizer::GPT2_EOS_TOKEN_ID);
-    run_generation(&model, &tokenizer, args, batch_contents, eos, None, None)
+    run_generation(
+        &model,
+        tokenizer.as_ref(),
+        args,
+        batch_contents,
+        eos,
+        config.bos_token_id,
+        config.chat_template.clone(),
+    )
 }
 
 fn run_gguf(
