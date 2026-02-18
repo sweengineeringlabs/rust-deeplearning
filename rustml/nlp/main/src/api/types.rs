@@ -866,7 +866,7 @@ impl ModelConfig {
 // ======================== LanguageModel trait ========================
 
 /// Trait for language models that can be used with TextGenerator.
-pub trait LanguageModel {
+pub trait LanguageModel: Send + Sync {
     /// Forward pass: input_ids [B, S] -> logits [B, S, vocab_size]
     fn forward(&self, input_ids: &Tensor) -> NlpResult<Tensor>;
 

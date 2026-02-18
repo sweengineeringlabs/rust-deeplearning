@@ -1,7 +1,7 @@
 use crate::api::error::TokenizerResult;
 
 /// Common tokenizer interface.
-pub trait Tokenizer {
+pub trait Tokenizer: Send + Sync {
     /// Encode text to token IDs.
     fn encode(&self, text: &str) -> TokenizerResult<Vec<u32>>;
     /// Decode token IDs to text.

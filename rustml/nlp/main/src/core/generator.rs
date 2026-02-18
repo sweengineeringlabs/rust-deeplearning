@@ -490,11 +490,7 @@ impl<'a> Generator<'a> {
         &self,
         prompts: &[&str],
         max_tokens: usize,
-    ) -> NlpResult<Vec<String>>
-    where
-        dyn LanguageModel + 'a: Sync,
-        dyn Tokenizer + 'a: Sync,
-    {
+    ) -> NlpResult<Vec<String>> {
         prompts
             .par_iter()
             .map(|prompt| self.generate(prompt, max_tokens))

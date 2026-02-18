@@ -1,3 +1,4 @@
+use std::fs;
 use std::io::{self, Read};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -17,8 +18,12 @@ struct Cli {
     gguf_path: PathBuf,
 
     /// Prompt text. Reads from stdin if omitted.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "batch_file")]
     prompt: Option<String>,
+
+    /// File with one prompt per line. Runs parallel generation via rayon.
+    #[arg(long)]
+    batch_file: Option<PathBuf>,
 
     /// Maximum number of tokens to generate.
     #[arg(long, default_value_t = 256)]
@@ -180,37 +185,63 @@ fn main() -> Result<()> {
         }
     }
 
-    // 8. Read prompt and generate
-    let prompt = read_prompt(&cli)?;
-    eprintln!("---");
-
-    let gen_start = Instant::now();
-
-    if cli.stream {
-        let mut token_count: usize = 0;
-        let _output = generator.generate_stream(&prompt, cli.max_tokens, |token_id| {
-            token_count += 1;
-            match tokenizer.decode(&[token_id]) {
-                Ok(piece) => print!("{piece}"),
-                Err(e) => eprintln!("[warn] failed to decode token {}: {}", token_id, e),
-            }
-            true
-        })?;
-        println!();
-        let elapsed = gen_start.elapsed();
-        let tps = if elapsed.as_secs_f64() > 0.0 {
-            token_count as f64 / elapsed.as_secs_f64()
-        } else {
-            0.0
-        };
+    // 8. Read prompt(s) and generate
+    if let Some(ref batch_path) = cli.batch_file {
+        if cli.stream {
+            bail!("--stream is not supported with --batch-file");
+        }
+        let contents = fs::read_to_string(batch_path)
+            .with_context(|| format!("Failed to read batch file: {}", batch_path.display()))?;
+        let prompts: Vec<&str> = contents.lines().filter(|l| !l.trim().is_empty()).collect();
+        if prompts.is_empty() {
+            bail!("Batch file is empty: {}", batch_path.display());
+        }
+        eprintln!("  Batch: {} prompts", prompts.len());
         eprintln!("---");
-        eprintln!("  {} tokens in {:.2}s ({:.1} tokens/sec)", token_count, elapsed.as_secs_f64(), tps);
+
+        let gen_start = Instant::now();
+        let results = generator.generate_batch_parallel(&prompts, cli.max_tokens)?;
+        let elapsed = gen_start.elapsed();
+
+        for (i, output) in results.iter().enumerate() {
+            println!("[{}] {}", i, output);
+        }
+        eprintln!("---");
+        eprintln!("  {} prompts in {:.2}s ({:.1} prompts/sec)",
+            results.len(), elapsed.as_secs_f64(),
+            results.len() as f64 / elapsed.as_secs_f64().max(1e-9));
     } else {
-        let output = generator.generate(&prompt, cli.max_tokens)?;
-        let elapsed = gen_start.elapsed();
-        println!("{output}");
+        let prompt = read_prompt(&cli)?;
         eprintln!("---");
-        eprintln!("  Generated in {:.2}s", elapsed.as_secs_f64());
+
+        let gen_start = Instant::now();
+
+        if cli.stream {
+            let mut token_count: usize = 0;
+            let _output = generator.generate_stream(&prompt, cli.max_tokens, |token_id| {
+                token_count += 1;
+                match tokenizer.decode(&[token_id]) {
+                    Ok(piece) => print!("{piece}"),
+                    Err(e) => eprintln!("[warn] failed to decode token {}: {}", token_id, e),
+                }
+                true
+            })?;
+            println!();
+            let elapsed = gen_start.elapsed();
+            let tps = if elapsed.as_secs_f64() > 0.0 {
+                token_count as f64 / elapsed.as_secs_f64()
+            } else {
+                0.0
+            };
+            eprintln!("---");
+            eprintln!("  {} tokens in {:.2}s ({:.1} tokens/sec)", token_count, elapsed.as_secs_f64(), tps);
+        } else {
+            let output = generator.generate(&prompt, cli.max_tokens)?;
+            let elapsed = gen_start.elapsed();
+            println!("{output}");
+            eprintln!("---");
+            eprintln!("  Generated in {:.2}s", elapsed.as_secs_f64());
+        }
     }
 
     Ok(())
