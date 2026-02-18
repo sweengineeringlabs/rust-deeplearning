@@ -26,6 +26,8 @@
 ---
 
 > **Prerequisite**: A GGUF model file (e.g., Gemma 3 1B IT Q4_0). Release build recommended for inference speed: `cargo build --release -p rustml-nlp`.
+>
+> **Unified CLI**: All `rustml-infer` commands below can also be run as `sweai infer` (e.g., `sweai infer model.gguf --prompt "Hello"`). Build with `cargo build --release -p rustml-cli`.
 
 ## 1. Help & Version
 
@@ -34,6 +36,7 @@
 | Help flag | `rustml-infer --help` | Lists `GGUF_PATH` positional, `--prompt`, `--batch-file`, `--max-tokens`, `--temperature`, `--top-k`, `--top-p`, `--repetition-penalty`, `--stream`, `--chat`, `--timeout` |
 | Version flag | `rustml-infer --version` | Prints version string |
 | No args | `rustml-infer` | Shows error and usage with `GGUF_PATH` |
+| Unified help | `sweai infer --help` | Same flags as `rustml-infer --help` |
 
 ## 2. Basic Generation
 

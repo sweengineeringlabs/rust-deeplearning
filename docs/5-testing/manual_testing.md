@@ -29,17 +29,31 @@
 ## Building the CLIs
 
 ```bash
-# Build all four CLI binaries (debug)
+# Build all four standalone CLI binaries (debug)
 cargo build -p rustml-tokenizer -p rustml-gguf -p rustml-nlp -p rustml-hub
 
-# Build all four CLI binaries (release, recommended for inference)
-cargo build --release -p rustml-tokenizer -p rustml-gguf -p rustml-nlp -p rustml-hub
+# Build the unified sweai binary (debug)
+cargo build -p rustml-cli
+
+# Build everything (release, recommended for inference)
+cargo build --release -p rustml-tokenizer -p rustml-gguf -p rustml-nlp -p rustml-hub -p rustml-cli
 
 # Verify binaries exist
-ls target/debug/rustml-tokenizer target/debug/rustml-gguf-inspect target/debug/rustml-hub-cli target/debug/rustml-infer
+ls target/debug/rustml-tokenizer target/debug/rustml-gguf-inspect target/debug/rustml-hub-cli target/debug/rustml-infer target/debug/sweai
 ```
 
-The four CLI binaries:
+### Unified CLI: `sweai`
+
+The `sweai` binary is a single facade over all four standalone CLIs. Every standalone command has a `sweai` equivalent:
+
+| Standalone | Unified equivalent |
+|------------|-------------------|
+| `rustml-infer ...` | `sweai infer ...` |
+| `rustml-gguf-inspect ...` | `sweai gguf ...` |
+| `rustml-hub-cli ...` | `sweai hub ...` |
+| `rustml-tokenizer ...` | `sweai tokenizer ...` |
+
+### Standalone binaries
 
 | Binary | Package | Purpose |
 |--------|---------|---------|
@@ -47,6 +61,7 @@ The four CLI binaries:
 | `rustml-gguf-inspect` | `rustml-gguf` | Inspect GGUF model files (metadata, tensors, config) |
 | `rustml-hub-cli` | `rustml-hub` | Download and manage HuggingFace models |
 | `rustml-infer` | `rustml-nlp` | Run text generation on GGUF models |
+| `sweai` | `rustml-cli` | Unified CLI with `infer`, `gguf`, `hub`, `tokenizer` subcommands |
 
 ---
 
@@ -58,6 +73,8 @@ The four CLI binaries:
 | [GGUF Inspector Tests](manual_gguf_inspect_tests.md) | GGUF metadata, tensor listing, model info | 25 |
 | [Hub CLI Tests](manual_hub_cli_tests.md) | Model download, cache listing, config display | 18 |
 | [Inference Tests](manual_infer_tests.md) | GGUF model loading, text generation, streaming, batch, timeout | 52 |
+
+> **Note:** Each test document lists standalone binary commands. All commands can also be run via the unified `sweai` binary — see the equivalence table above.
 
 ---
 

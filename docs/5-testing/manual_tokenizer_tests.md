@@ -25,6 +25,8 @@
 
 ---
 
+> **Unified CLI**: All `rustml-tokenizer` commands below can also be run as `sweai tokenizer` (e.g., `sweai tokenizer --byte encode "Hello"`). Build with `cargo build -p rustml-cli`.
+
 ## 1. Help & Version
 
 | Test | Command | Expected |
@@ -32,6 +34,7 @@
 | Help flag | `rustml-tokenizer --help` | Prints usage with `encode`, `decode`, `info` subcommands |
 | Version flag | `rustml-tokenizer --version` | Prints version string |
 | No args | `rustml-tokenizer` | Shows error and usage (backend required) |
+| Unified help | `sweai tokenizer --help` | Same backends and subcommands as `rustml-tokenizer --help` |
 
 ## 2. Byte Backend — Encode
 

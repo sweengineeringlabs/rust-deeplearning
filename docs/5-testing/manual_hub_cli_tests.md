@@ -23,6 +23,8 @@
 ---
 
 > **Prerequisite**: Internet access for download tests. A HuggingFace API token for private model tests (optional).
+>
+> **Unified CLI**: All `rustml-hub-cli` commands below can also be run as `sweai hub` (e.g., `sweai hub download openai-community/gpt2`). Build with `cargo build -p rustml-cli`.
 
 ## 1. Help & Version
 
@@ -34,6 +36,7 @@
 | Download help | `rustml-hub-cli download --help` | Shows `MODEL_ID` positional and `--gguf` option |
 | List help | `rustml-hub-cli list --help` | Shows list usage |
 | Info help | `rustml-hub-cli info --help` | Shows `MODEL_ID` positional |
+| Unified help | `sweai hub --help` | Same subcommands and flags as `rustml-hub-cli --help` |
 
 ## 2. Global Flags
 

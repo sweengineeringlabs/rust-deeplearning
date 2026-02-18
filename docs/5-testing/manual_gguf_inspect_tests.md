@@ -27,6 +27,8 @@
 ---
 
 > **Prerequisite**: A GGUF model file. Examples below use a Gemma 3 1B IT Q4_0 model. Substitute your own model path.
+>
+> **Unified CLI**: All `rustml-gguf-inspect` commands below can also be run as `sweai gguf` (e.g., `sweai gguf info model.gguf`). Build with `cargo build -p rustml-cli`.
 
 ## 1. Help & Version
 
@@ -39,6 +41,7 @@
 | Meta help | `rustml-gguf-inspect meta --help` | Shows `--key` option |
 | Tensors help | `rustml-gguf-inspect tensors --help` | Shows `--filter`, `--stats`, `--head` options |
 | Verify help | `rustml-gguf-inspect verify --help` | Shows PATH positional arg |
+| Unified help | `sweai gguf --help` | Same subcommands as `rustml-gguf-inspect --help` |
 
 ## 2. Info Subcommand
 
