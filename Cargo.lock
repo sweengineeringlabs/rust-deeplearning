@@ -6215,15 +6215,14 @@ name = "rustml-nlp"
 version = "0.1.0"
 dependencies = [
  "rand 0.8.5",
- "regex",
  "rustml-core",
  "rustml-gguf",
  "rustml-hub",
  "rustml-nn",
+ "rustml-tokenizer",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
- "tokenizers",
  "tokio",
 ]
 
@@ -6248,6 +6247,17 @@ dependencies = [
  "half",
  "rayon",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "rustml-tokenizer"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "rustml-gguf",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokenizers",
 ]
 
 [[package]]

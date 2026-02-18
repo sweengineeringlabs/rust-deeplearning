@@ -8,9 +8,9 @@
 use rustml_core::Tensor;
 use rustml_gguf::GGUFFile;
 use rustml_nlp::{
-    convert_tensors, gguf_config_to_model_config, GgufTokenizer, LlmModel, LanguageModel,
-    Tokenizer,
+    convert_tensors, gguf_config_to_model_config, LlmModel, LanguageModel,
 };
+use rustml_tokenizer::{GgufTokenizer, Tokenizer};
 use rustml_nn::KVCache;
 use std::time::Instant;
 

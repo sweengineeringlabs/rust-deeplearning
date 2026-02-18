@@ -10,7 +10,7 @@
 //! If either variable is unset, the test is skipped (not failed).
 
 use rustml_gguf::GGUFFile;
-use rustml_nlp::{GgufTokenizer, HFTokenizer, Tokenizer};
+use rustml_tokenizer::{GgufTokenizer, HFTokenizer, Tokenizer};
 
 /// Get paths from env, returning None if either is missing.
 fn get_paths() -> Option<(String, String)> {

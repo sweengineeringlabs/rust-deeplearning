@@ -1,6 +1,7 @@
 //! BPE (Byte Pair Encoding) Tokenizer for GPT-2
 
-use crate::api::error::{NlpError, NlpResult};
+use crate::api::error::{TokenizerError, TokenizerResult};
+use crate::spi::contract::Tokenizer;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -22,16 +23,16 @@ impl BpeTokenizer {
     pub const GPT2_EOS_TOKEN_ID: u32 = 50256;
 
     /// Create a tokenizer from vocab.json and merges.txt files
-    pub fn from_files(vocab_path: impl AsRef<Path>, merges_path: impl AsRef<Path>) -> NlpResult<Self> {
+    pub fn from_files(vocab_path: impl AsRef<Path>, merges_path: impl AsRef<Path>) -> TokenizerResult<Self> {
         let vocab_content = fs::read_to_string(vocab_path)?;
         let merges_content = fs::read_to_string(merges_path)?;
         Self::from_strings(&vocab_content, &merges_content)
     }
 
     /// Create a tokenizer from vocab and merges content strings
-    pub fn from_strings(vocab_json: &str, merges_txt: &str) -> NlpResult<Self> {
+    pub fn from_strings(vocab_json: &str, merges_txt: &str) -> TokenizerResult<Self> {
         let encoder: HashMap<String, u32> = serde_json::from_str(vocab_json)
-            .map_err(|e| NlpError::TokenizerError(format!("Failed to parse vocab: {}", e)))?;
+            .map_err(|e| TokenizerError::TokenizerError(format!("Failed to parse vocab: {}", e)))?;
 
         let decoder: HashMap<u32, String> = encoder.iter().map(|(k, v)| (*v, k.clone())).collect();
         let bpe_ranks = Self::parse_merges(merges_txt)?;
@@ -42,7 +43,7 @@ impl BpeTokenizer {
         // We use a simplified version that captures the main tokenization patterns
         let pat = regex::Regex::new(
             r"'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+"
-        ).map_err(|e| NlpError::TokenizerError(format!("Regex error: {}", e)))?;
+        ).map_err(|e| TokenizerError::TokenizerError(format!("Regex error: {}", e)))?;
 
         // EOS token: the token at position 50256. We look it up or default.
         let eos_token_id = Self::GPT2_EOS_TOKEN_ID;
@@ -164,7 +165,7 @@ impl BpeTokenizer {
     }
 
     /// Parse merges.txt file
-    fn parse_merges(content: &str) -> NlpResult<HashMap<(String, String), usize>> {
+    fn parse_merges(content: &str) -> TokenizerResult<HashMap<(String, String), usize>> {
         let mut ranks = HashMap::new();
 
         for (rank, line) in content.lines().enumerate() {
@@ -213,6 +214,22 @@ impl BpeTokenizer {
         let byte_decoder: HashMap<char, u8> = cs.iter().copied().zip(bs.iter().copied()).collect();
 
         (byte_encoder, byte_decoder)
+    }
+}
+
+/// Implement Tokenizer for BpeTokenizer (wraps its non-Result methods).
+impl Tokenizer for BpeTokenizer {
+    fn encode(&self, text: &str) -> TokenizerResult<Vec<u32>> {
+        Ok(BpeTokenizer::encode(self, text))
+    }
+    fn decode(&self, tokens: &[u32]) -> TokenizerResult<String> {
+        Ok(BpeTokenizer::decode(self, tokens))
+    }
+    fn vocab_size(&self) -> usize {
+        BpeTokenizer::vocab_size(self)
+    }
+    fn token_to_id(&self, _token: &str) -> Option<u32> {
+        None
     }
 }
 

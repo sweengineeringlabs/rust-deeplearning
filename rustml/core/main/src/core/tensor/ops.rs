@@ -315,6 +315,10 @@ impl Tensor {
             });
         }
 
+        // Ensure contiguous layout before in-place mutation
+        if !self.is_contiguous() {
+            *self = self.contiguous()?;
+        }
         let data = self.as_mut_slice_f32()?;
         let num_rows = data.len() / last_dim;
 
@@ -581,7 +585,8 @@ impl Tensor {
 
         if dim_idx == ndim - 1 {
             // Fast path: softmax along last dim
-            let input_data = self.as_slice_f32()?;
+            let x = if self.is_contiguous() { self.clone() } else { self.contiguous()? };
+            let input_data = x.as_slice_f32()?;
             let last_dim_size = self.shape_sv[ndim - 1];
 
             let mut out_data = vec![0.0f32; input_data.len()];
@@ -688,7 +693,9 @@ impl Tensor {
             });
         }
         let last_dim = self.shape_sv[self.shape_sv.len() - 1];
-        let input = self.as_slice_f32()?;
+        // Ensure contiguous layout so row iteration matches logical shape
+        let x = if self.is_contiguous() { self.clone() } else { self.contiguous()? };
+        let input = x.as_slice_f32()?;
         let gamma = weight.as_slice_f32()?;
 
         if gamma.len() != last_dim {

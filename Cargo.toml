@@ -6,6 +6,7 @@ members = [
     "rustml/nn",
     "rustml/hub",
     "rustml/nlp",
+    "rustml/tokenizer",
     "rustml/quant",
     "rustml/gguf",
     # AudioLearn (umbrella: audiolearn/)
@@ -60,6 +61,7 @@ rustml-core = { path = "rustml/core" }
 rustml-nn = { path = "rustml/nn" }
 rustml-hub = { path = "rustml/hub" }
 rustml-nlp = { path = "rustml/nlp" }
+rustml-tokenizer = { path = "rustml/tokenizer" }
 rustml-quant = { path = "rustml/quant" }
 rustml-gguf = { path = "rustml/gguf" }
 # Shared deps for quant/gguf crates

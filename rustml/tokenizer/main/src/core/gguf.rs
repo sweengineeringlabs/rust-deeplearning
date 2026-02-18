@@ -1,98 +1,16 @@
-//! Tokenizer module
-//!
-//! Provides:
-//! - `Tokenizer` trait for any tokenizer backend
-//! - `BpeTokenizer` — GPT-2 BPE tokenizer
-//! - `HFTokenizer` — wrapper around the HuggingFace `tokenizers` crate
-//! - `ByteTokenizer` — naive byte-level tokenizer for testing
+//! GGUF SentencePiece BPE tokenizer
 
-mod bpe;
-
-pub use bpe::BpeTokenizer;
-
-use crate::api::error::{NlpError, NlpResult};
-
-/// Common tokenizer interface.
-pub trait Tokenizer {
-    /// Encode text to token IDs.
-    fn encode(&self, text: &str) -> NlpResult<Vec<u32>>;
-    /// Decode token IDs to text.
-    fn decode(&self, tokens: &[u32]) -> NlpResult<String>;
-    /// Vocabulary size.
-    fn vocab_size(&self) -> usize;
-    /// Look up a special token by name, returning its ID if present.
-    fn token_to_id(&self, token: &str) -> Option<u32>;
-}
-
-/// Implement Tokenizer for BpeTokenizer (wraps its non-Result methods).
-impl Tokenizer for BpeTokenizer {
-    fn encode(&self, text: &str) -> NlpResult<Vec<u32>> {
-        Ok(BpeTokenizer::encode(self, text))
-    }
-    fn decode(&self, tokens: &[u32]) -> NlpResult<String> {
-        Ok(BpeTokenizer::decode(self, tokens))
-    }
-    fn vocab_size(&self) -> usize {
-        BpeTokenizer::vocab_size(self)
-    }
-    fn token_to_id(&self, _token: &str) -> Option<u32> {
-        None
-    }
-}
-
-/// HuggingFace Tokenizer wrapper (uses the `tokenizers` crate).
-///
-/// Supports all tokenizer formats loadable by HuggingFace: BPE, SentencePiece,
-/// WordPiece, etc. Load from a `tokenizer.json` file.
-pub struct HFTokenizer {
-    inner: tokenizers::Tokenizer,
-}
-
-impl HFTokenizer {
-    /// Load from a `tokenizer.json` file.
-    pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> NlpResult<Self> {
-        let p = path.as_ref();
-        let tokenizer = tokenizers::Tokenizer::from_file(p).map_err(|e| {
-            NlpError::TokenizerError(format!(
-                "Failed to load tokenizer file: {}: {}",
-                p.display(),
-                e
-            ))
-        })?;
-        Ok(Self { inner: tokenizer })
-    }
-}
-
-impl Tokenizer for HFTokenizer {
-    fn encode(&self, text: &str) -> NlpResult<Vec<u32>> {
-        let encoding = self.inner.encode(text, false).map_err(|e| {
-            NlpError::TokenizerError(format!("Tokenizer encode failed: {}", e))
-        })?;
-        Ok(encoding.get_ids().to_vec())
-    }
-
-    fn decode(&self, tokens: &[u32]) -> NlpResult<String> {
-        self.inner.decode(tokens, true).map_err(|e| {
-            NlpError::TokenizerError(format!("Tokenizer decode failed: {}", e))
-        })
-    }
-
-    fn vocab_size(&self) -> usize {
-        self.inner.get_vocab_size(true)
-    }
-
-    fn token_to_id(&self, token: &str) -> Option<u32> {
-        self.inner.token_to_id(token)
-    }
-}
+use crate::api::error::{TokenizerError, TokenizerResult};
+use crate::spi::contract::Tokenizer;
 
 /// GGUF token type flags (from `tokenizer.ggml.token_type`).
+const TOKEN_TYPE_CONTROL: i32 = 2;
 const TOKEN_TYPE_USER_DEFINED: i32 = 4;
 
 /// SentencePiece BPE tokenizer built from GGUF vocabulary and merge scores.
 ///
 /// Implements proper BPE encoding using the token scores stored in GGUF metadata.
-/// Handles the SentencePiece "▁" space marker convention and USER_DEFINED tokens
+/// Handles the SentencePiece "\u{2581}" space marker convention and USER_DEFINED tokens
 /// (matched greedily on the original text before BPE).
 pub struct GgufTokenizer {
     id_to_token: Vec<String>,
@@ -105,18 +23,18 @@ pub struct GgufTokenizer {
 
 impl GgufTokenizer {
     /// Build from GGUF metadata: tokens, scores, and config.
-    pub fn from_gguf(gguf: &rustml_gguf::GGUFFile) -> NlpResult<Self> {
+    pub fn from_gguf(gguf: &rustml_gguf::GGUFFile) -> TokenizerResult<Self> {
         let tokens_val = gguf
             .metadata
             .get("tokenizer.ggml.tokens")
             .ok_or_else(|| {
-                NlpError::TokenizerError("GGUF missing tokenizer.ggml.tokens".to_string())
+                TokenizerError::TokenizerError("GGUF missing tokenizer.ggml.tokens".to_string())
             })?;
 
         let tokens_arr = match tokens_val {
             rustml_gguf::GGUFValue::Array(arr) => arr,
             _ => {
-                return Err(NlpError::TokenizerError(
+                return Err(TokenizerError::TokenizerError(
                     "tokenizer.ggml.tokens is not an array".to_string(),
                 ))
             }
@@ -160,7 +78,7 @@ impl GgufTokenizer {
                     rustml_gguf::GGUFValue::U32(v) => *v as i32,
                     _ => 0,
                 };
-                if ttype == TOKEN_TYPE_USER_DEFINED && i < id_to_token.len() {
+                if (ttype == TOKEN_TYPE_USER_DEFINED || ttype == TOKEN_TYPE_CONTROL) && i < id_to_token.len() {
                     let tok = &id_to_token[i];
                     // Only collect non-empty tokens with len >= 2 (single chars
                     // are already handled by initial_tokens)
@@ -260,7 +178,7 @@ impl GgufTokenizer {
         segments
     }
 
-    /// Normalize a text segment: replace spaces with ▁ (U+2581).
+    /// Normalize a text segment: replace spaces with \u{2581} (U+2581).
     fn normalize_segment(&self, text: &str, is_first: bool) -> String {
         if is_first && self.add_space_prefix {
             format!("\u{2581}{}", text.replace(' ', "\u{2581}"))
@@ -337,7 +255,7 @@ enum UserDefinedSegment<'a> {
 }
 
 impl Tokenizer for GgufTokenizer {
-    fn encode(&self, text: &str) -> NlpResult<Vec<u32>> {
+    fn encode(&self, text: &str) -> TokenizerResult<Vec<u32>> {
         if text.is_empty() {
             return Ok(Vec::new());
         }
@@ -345,7 +263,7 @@ impl Tokenizer for GgufTokenizer {
         // Step 1: Match USER_DEFINED tokens on the original text (greedy longest-match).
         // These tokens (e.g. multi-space "   ", newline runs, HTML tags) are matched
         // before SentencePiece normalization because GGUF stores them with literal
-        // spaces while normalization converts spaces to ▁.
+        // spaces while normalization converts spaces to \u{2581}.
         let segments = self.split_user_defined(text);
 
         // Step 2: For each segment, either emit the matched token ID or
@@ -374,7 +292,7 @@ impl Tokenizer for GgufTokenizer {
         Ok(result)
     }
 
-    fn decode(&self, tokens: &[u32]) -> NlpResult<String> {
+    fn decode(&self, tokens: &[u32]) -> TokenizerResult<String> {
         let mut bytes = Vec::new();
         for &id in tokens {
             if (id as usize) >= self.id_to_token.len() {
@@ -406,27 +324,5 @@ impl Tokenizer for GgufTokenizer {
 
     fn token_to_id(&self, token: &str) -> Option<u32> {
         self.token_to_id.get(token).copied()
-    }
-}
-
-/// Naive byte-level tokenizer for testing. Maps each byte to its value as a token ID.
-pub struct ByteTokenizer;
-
-impl Tokenizer for ByteTokenizer {
-    fn encode(&self, text: &str) -> NlpResult<Vec<u32>> {
-        Ok(text.bytes().map(|b| b as u32).collect())
-    }
-    fn decode(&self, tokens: &[u32]) -> NlpResult<String> {
-        let bytes: Vec<u8> = tokens
-            .iter()
-            .filter_map(|&t| if t < 256 { Some(t as u8) } else { None })
-            .collect();
-        Ok(String::from_utf8_lossy(&bytes).into_owned())
-    }
-    fn vocab_size(&self) -> usize {
-        256
-    }
-    fn token_to_id(&self, _token: &str) -> Option<u32> {
-        None
     }
 }

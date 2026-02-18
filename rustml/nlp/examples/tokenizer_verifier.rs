@@ -12,7 +12,7 @@
 //!     /path/to/model.gguf /path/to/tokenizer.json "custom test string"
 
 use rustml_gguf::GGUFFile;
-use rustml_nlp::{GgufTokenizer, HFTokenizer, Tokenizer};
+use rustml_tokenizer::{GgufTokenizer, HFTokenizer, Tokenizer};
 
 /// Default test strings covering common tokenization edge cases.
 const DEFAULT_TEST_STRINGS: &[&str] = &[

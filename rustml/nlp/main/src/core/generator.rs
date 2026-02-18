@@ -6,7 +6,7 @@
 use crate::api::error::NlpResult;
 use crate::api::types::LanguageModel;
 use crate::core::sampling;
-use crate::core::tokenizer::Tokenizer;
+use rustml_tokenizer::Tokenizer;
 use rustml_core::{DType, Tensor, f32_vec_to_bytes};
 use rustml_nn::KVCache;
 
@@ -130,7 +130,7 @@ impl<'a> Generator<'a> {
     fn encode_prompt(&self, prompt: &str) -> NlpResult<Vec<u32>> {
         let template = match self.chat_template {
             Some(ref tmpl) => tmpl,
-            None => return self.tokenizer.encode(prompt),
+            None => return Ok(self.tokenizer.encode(prompt)?),
         };
 
         let segments = build_template_segments(prompt, template);
@@ -169,7 +169,7 @@ impl<'a> Generator<'a> {
                 TemplateSegment::Text(t) => t.as_str(),
             })
             .collect();
-        self.tokenizer.encode(&formatted)
+        Ok(self.tokenizer.encode(&formatted)?)
     }
 
     /// Full sampling pipeline: rep_penalty → temperature → top_k → top_p → categorical/argmax
@@ -252,7 +252,7 @@ impl<'a> Generator<'a> {
 
         if let Some(eos) = self.eos_token_id {
             if next_token == eos {
-                return self.tokenizer.decode(&tokens);
+                return Ok(self.tokenizer.decode(&tokens)?);
             }
         }
         tokens.push(next_token);
@@ -269,7 +269,7 @@ impl<'a> Generator<'a> {
             tokens.push(next_token);
         }
 
-        self.tokenizer.decode(&tokens)
+        Ok(self.tokenizer.decode(&tokens)?)
     }
 
     /// Generate with a streaming callback. The callback receives each new token ID
@@ -291,12 +291,12 @@ impl<'a> Generator<'a> {
 
         if let Some(eos) = self.eos_token_id {
             if next_token == eos {
-                return self.tokenizer.decode(&tokens);
+                return Ok(self.tokenizer.decode(&tokens)?);
             }
         }
         tokens.push(next_token);
         if !callback(next_token) {
-            return self.tokenizer.decode(&tokens);
+            return Ok(self.tokenizer.decode(&tokens)?);
         }
 
         for _ in 1..max_tokens {
@@ -314,7 +314,7 @@ impl<'a> Generator<'a> {
             }
         }
 
-        self.tokenizer.decode(&tokens)
+        Ok(self.tokenizer.decode(&tokens)?)
     }
 
     /// Beam search generation. Maintains `beam_width` candidate sequences
@@ -395,7 +395,7 @@ impl<'a> Generator<'a> {
 
         beams.sort_unstable_by(|a, b| b.log_prob.total_cmp(&a.log_prob));
         let best = &beams[0];
-        self.tokenizer.decode(&best.tokens)
+        Ok(self.tokenizer.decode(&best.tokens)?)
     }
 
     /// Generate completions for multiple prompts sequentially.
@@ -429,10 +429,10 @@ mod tests {
     struct ByteTokenizer;
 
     impl Tokenizer for ByteTokenizer {
-        fn encode(&self, text: &str) -> NlpResult<Vec<u32>> {
+        fn encode(&self, text: &str) -> rustml_tokenizer::TokenizerResult<Vec<u32>> {
             Ok(text.bytes().map(|b| b as u32).collect())
         }
-        fn decode(&self, tokens: &[u32]) -> NlpResult<String> {
+        fn decode(&self, tokens: &[u32]) -> rustml_tokenizer::TokenizerResult<String> {
             let bytes: Vec<u8> = tokens.iter().map(|&t| t as u8).collect();
             Ok(String::from_utf8_lossy(&bytes).into_owned())
         }

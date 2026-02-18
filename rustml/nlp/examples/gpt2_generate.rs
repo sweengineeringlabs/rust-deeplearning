@@ -9,8 +9,9 @@
 
 use rustml_hub::HubApi;
 use rustml_nlp::{
-    BpeTokenizer, GenerationConfig, GptConfig, GptModel, NlpResult, TextGenerator,
+    GenerationConfig, GptConfig, GptModel, NlpResult, TextGenerator,
 };
+use rustml_tokenizer::BpeTokenizer;
 use rustml_core::Tensor;
 
 #[tokio::main]

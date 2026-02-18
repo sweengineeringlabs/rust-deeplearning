@@ -18,7 +18,7 @@ pub enum NlpError {
     HubError(#[from] rustml_hub::HubError),
 
     #[error("Tokenizer error: {0}")]
-    TokenizerError(String),
+    TokenizerError(#[from] rustml_tokenizer::TokenizerError),
 
     #[error("Model error: {0}")]
     ModelError(String),
