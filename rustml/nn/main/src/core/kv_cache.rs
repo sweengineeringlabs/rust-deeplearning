@@ -86,6 +86,21 @@ impl KVCache {
         self.num_kv_heads
     }
 
+    /// Number of layers in this cache.
+    pub fn num_layers(&self) -> usize {
+        self.past_keys.len()
+    }
+
+    /// Total bytes allocated for all K/V buffers.
+    pub fn memory_bytes(&self) -> usize {
+        let per_tensor = |t: &Tensor| -> usize {
+            t.shape().iter().product::<usize>() * std::mem::size_of::<f32>()
+        };
+        let k_bytes: usize = self.past_keys.iter().map(per_tensor).sum();
+        let v_bytes: usize = self.past_values.iter().map(per_tensor).sum();
+        k_bytes + v_bytes
+    }
+
     /// Get a view of cached K/V for `0..len` on the sequence dimension.
     pub fn get_view(&self, layer_idx: usize, len: usize) -> NnResult<(Tensor, Tensor)> {
         let k = self.past_keys[layer_idx].slice_sequence(0, len)?;

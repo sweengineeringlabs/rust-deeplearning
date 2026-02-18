@@ -24,13 +24,13 @@
 
 ### P1 — Important for reliability
 
-- [ ] **No request timeout or cancellation** — `generate()` and `generate_stream()` run to completion or `max_tokens` without interrupt. Long generations block indefinitely. Add a deadline or cancellation token parameter.
+- [x] **No request timeout or cancellation** — `generate()` and `generate_stream()` run to completion or `max_tokens` without interrupt. Long generations block indefinitely. Added `with_deadline(Instant)` and `with_timeout(Duration)` to `Generator`, deadline checks in all generation loops, and `--timeout` CLI flag.
+  - Files: `rustml/nlp/main/src/core/generator.rs`, `rustml/nlp/main/src/bin/infer.rs`
+
+- [x] **Chat templates are hardcoded** — Only 3 template formats recognized (`<|user|>`, `[INST]`, `<|im_start|>`). Unknown templates silently fall back to plain text with no warning. Added stderr warning on unrecognized template fallback.
   - File: `rustml/nlp/main/src/core/generator.rs`
 
-- [ ] **Chat templates are hardcoded** — Only 3 template formats recognized (`<|user|>`, `[INST]`, `<|im_start|>`). Unknown templates silently fall back to plain text with no warning. Consider `minijinja` crate or at minimum a stderr warning.
-  - File: `rustml/nlp/main/src/core/generator.rs`
-
-- [ ] **No peak memory reporting** — KV cache grows linearly with context length. No way to monitor or limit memory usage. Add `--max-memory` flag or at least report peak cache size on stderr.
+- [x] **No peak memory reporting** — KV cache grows linearly with context length. No way to monitor or limit memory usage. Added `KVCache::memory_bytes()` and KV cache size reporting on stderr during model load.
   - Files: `rustml/nn/main/src/core/kv_cache.rs`, `rustml/nlp/main/src/bin/infer.rs`
 
 ### P2 — Nice to have for production

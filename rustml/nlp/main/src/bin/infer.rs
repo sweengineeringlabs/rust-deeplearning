@@ -1,5 +1,6 @@
 use std::io::{self, Read};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
@@ -46,6 +47,10 @@ struct Cli {
     /// Wrap the prompt in a chat template extracted from GGUF metadata.
     #[arg(long)]
     chat: bool,
+
+    /// Generation timeout in seconds. Stops generation if exceeded.
+    #[arg(long)]
+    timeout: Option<f64>,
 }
 
 fn read_prompt(cli: &Cli) -> Result<String> {
@@ -118,6 +123,14 @@ fn main() -> Result<()> {
     let (total_params, _) = model.parameter_count();
     eprintln!("  Model ready: {:.1}M params", total_params as f64 / 1e6);
 
+    // Report KV cache memory
+    let n_kv_heads = config.n_kv_heads.unwrap_or(config.n_heads);
+    let head_dim = config.head_dim.unwrap_or(config.dim / config.n_heads);
+    let cache_bytes = 2 * config.n_layers * 1 * n_kv_heads * config.max_seq_len * head_dim * 4;
+    let cache_mb = cache_bytes as f64 / (1024.0 * 1024.0);
+    eprintln!("  KV cache: {:.1} MB ({}layers x {}heads x {}seq x {}dim x f32 x 2)",
+        cache_mb, config.n_layers, n_kv_heads, config.max_seq_len, head_dim);
+
     // 6. Build generator
     let mut generator = Generator::new(&model, &tokenizer, cli.temperature);
 
@@ -138,6 +151,13 @@ fn main() -> Result<()> {
     }
     if cli.chat {
         generator = generator.with_chat_template(config.chat_template.clone());
+    }
+    if let Some(secs) = cli.timeout {
+        if secs <= 0.0 {
+            bail!("--timeout must be > 0.0, got {}", secs);
+        }
+        generator = generator.with_timeout(Duration::from_secs_f64(secs));
+        eprintln!("  Timeout: {:.1}s", secs);
     }
 
     // 7. Validate sampling parameters

@@ -3,6 +3,8 @@
 //! Works with any `LanguageModel` implementation (GptModel, LlmModel, etc.)
 //! and any `Tokenizer` implementation (BpeTokenizer, HFTokenizer, etc.).
 
+use std::time::{Duration, Instant};
+
 use crate::api::error::NlpResult;
 use crate::api::types::LanguageModel;
 use crate::core::sampling;
@@ -58,6 +60,7 @@ fn build_template_segments(prompt: &str, template: &str) -> Vec<TemplateSegment>
     }
 
     // Unknown template — encode the prompt as plain text
+    eprintln!("[warn] unrecognized chat template format, falling back to plain text encoding");
     vec![TemplateSegment::Text(prompt.to_string())]
 }
 
@@ -75,6 +78,7 @@ pub struct Generator<'a> {
     pub top_p: Option<f32>,
     pub repetition_penalty: Option<f32>,
     chat_template: Option<String>,
+    deadline: Option<Instant>,
 }
 
 impl<'a> Generator<'a> {
@@ -93,6 +97,7 @@ impl<'a> Generator<'a> {
             top_p: None,
             repetition_penalty: None,
             chat_template: None,
+            deadline: None,
         }
     }
 
@@ -123,6 +128,16 @@ impl<'a> Generator<'a> {
 
     pub fn with_chat_template(mut self, template: Option<String>) -> Self {
         self.chat_template = template;
+        self
+    }
+
+    pub fn with_deadline(mut self, deadline: Instant) -> Self {
+        self.deadline = Some(deadline);
+        self
+    }
+
+    pub fn with_timeout(mut self, duration: Duration) -> Self {
+        self.deadline = Some(Instant::now() + duration);
         self
     }
 
@@ -270,6 +285,18 @@ impl<'a> Generator<'a> {
         Ok(())
     }
 
+    /// Check if the generation deadline has been exceeded.
+    fn check_deadline(&self) -> NlpResult<()> {
+        if let Some(deadline) = self.deadline {
+            if Instant::now() >= deadline {
+                return Err(crate::api::error::NlpError::GenerationError(
+                    "generation deadline exceeded".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Generate text from a prompt. Returns the full output (prompt + generated).
     pub fn generate(&self, prompt: &str, max_tokens: usize) -> NlpResult<String> {
         self.validate_params()?;
@@ -290,6 +317,7 @@ impl<'a> Generator<'a> {
         tokens.push(next_token);
 
         for _ in 1..max_tokens {
+            self.check_deadline()?;
             let logits = self.decode_step(next_token, &mut cache)?;
             next_token = self.sample_token(&logits, &tokens);
 
@@ -333,6 +361,7 @@ impl<'a> Generator<'a> {
         }
 
         for _ in 1..max_tokens {
+            self.check_deadline()?;
             let logits = self.decode_step(next_token, &mut cache)?;
             next_token = self.sample_token(&logits, &tokens);
 
@@ -386,6 +415,7 @@ impl<'a> Generator<'a> {
         }
 
         for _ in 1..max_tokens {
+            self.check_deadline()?;
             if beams.iter().all(|b| b.finished) {
                 break;
             }
