@@ -70,8 +70,8 @@ fn build_template_segments(prompt: &str, template: &str) -> Vec<TemplateSegment>
 /// Supports greedy/sampling generation, streaming output, beam search, and
 /// chat template application.
 pub struct Generator<'a> {
-    model: &'a dyn LanguageModel,
-    tokenizer: &'a dyn Tokenizer,
+    model: &'a (dyn LanguageModel + Sync),
+    tokenizer: &'a (dyn Tokenizer + Sync),
     temperature: f32,
     pub eos_token_id: Option<u32>,
     pub bos_token_id: Option<u32>,
@@ -84,8 +84,8 @@ pub struct Generator<'a> {
 
 impl<'a> Generator<'a> {
     pub fn new(
-        model: &'a dyn LanguageModel,
-        tokenizer: &'a dyn Tokenizer,
+        model: &'a (dyn LanguageModel + Sync),
+        tokenizer: &'a (dyn Tokenizer + Sync),
         temperature: f32,
     ) -> Self {
         Self {
