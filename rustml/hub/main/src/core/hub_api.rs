@@ -162,6 +162,9 @@ impl HubApi {
         let _merges = repo.get("merges.txt").ok();
         let _tokenizer = repo.get("tokenizer.json").ok();
 
+        // Register in the rustml cache so get_cached() and hub list can find it
+        self.link_to_cache(model_id, &model_dir);
+
         Ok(ModelBundle {
             model_id: model_id.to_string(),
             model_dir,
@@ -190,6 +193,26 @@ impl HubApi {
     }
 
     // ======================== Cache management ========================
+
+    /// Create a symlink in the rustml cache directory pointing to a model
+    /// directory managed by the hf-hub crate. This bridges the two cache
+    /// layouts so that `get_cached()` / `hub list` can discover models
+    /// downloaded via the synchronous hf-hub path.
+    fn link_to_cache(&self, model_id: &str, model_dir: &std::path::Path) {
+        let cache_entry = self.cache_dir.join(model_id.replace('/', "--"));
+        if cache_entry.exists() {
+            return;
+        }
+        let _ = std::fs::create_dir_all(&self.cache_dir);
+        #[cfg(unix)]
+        {
+            let _ = std::os::unix::fs::symlink(model_dir, &cache_entry);
+        }
+        #[cfg(windows)]
+        {
+            let _ = std::os::windows::fs::symlink_dir(model_dir, &cache_entry);
+        }
+    }
 
     /// Check if a model is cached locally
     pub fn is_cached(&self, model_id: &str) -> bool {

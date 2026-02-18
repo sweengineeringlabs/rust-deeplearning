@@ -86,7 +86,9 @@ pub fn run(args: HubArgs) -> Result<()> {
                 .with_context(|| format!("Failed to read cache dir: {}", cache.display()))?;
             for entry in entries {
                 let entry = entry?;
-                if entry.file_type()?.is_dir() {
+                // Use path().is_dir() to follow symlinks (e.g. cache entries
+                // created by download_model_sync linking to hf-hub snapshots).
+                if entry.path().is_dir() {
                     let dir_name = entry.file_name();
                     let dir_str = dir_name.to_string_lossy();
                     let model_id = dir_str.replacen("--", "/", 1);
