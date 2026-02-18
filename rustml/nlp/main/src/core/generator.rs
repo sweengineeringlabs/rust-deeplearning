@@ -80,6 +80,7 @@ pub struct Generator<'a> {
     pub repetition_penalty: Option<f32>,
     chat_template: Option<String>,
     deadline: Option<Instant>,
+    context_len_override: Option<usize>,
 }
 
 impl<'a> Generator<'a> {
@@ -99,6 +100,7 @@ impl<'a> Generator<'a> {
             repetition_penalty: None,
             chat_template: None,
             deadline: None,
+            context_len_override: None,
         }
     }
 
@@ -139,6 +141,11 @@ impl<'a> Generator<'a> {
 
     pub fn with_timeout(mut self, duration: Duration) -> Self {
         self.deadline = Some(Instant::now() + duration);
+        self
+    }
+
+    pub fn with_context_len(mut self, context_len: usize) -> Self {
+        self.context_len_override = Some(context_len);
         self
     }
 
@@ -217,9 +224,14 @@ impl<'a> Generator<'a> {
     }
 
     fn make_cache(&self) -> KVCache {
+        let max_seq = self.model.max_sequence_length();
+        let effective = match self.context_len_override {
+            Some(n) => n.min(max_seq),
+            None => max_seq,
+        };
         KVCache::new(
             self.model.num_layers(),
-            self.model.max_sequence_length(),
+            effective,
             self.model.head_dim(),
             self.model.num_kv_heads(),
         )
@@ -234,12 +246,10 @@ impl<'a> Generator<'a> {
         let logits = self.model.forward_with_cache(&input, cache)?;
         cache.advance(seq_len);
 
-        let logits_data: Vec<f32> = logits.iter().collect();
+        let logits_data = logits.to_vec();
         let vocab_size = self.model.vocab_size();
         let start = (seq_len - 1) * vocab_size;
-        let last_logits = &logits_data[start..start + vocab_size];
-
-        Ok(last_logits.to_vec())
+        Ok(logits_data[start..start + vocab_size].to_vec())
     }
 
     fn decode_step(&self, token: u32, cache: &mut KVCache) -> NlpResult<Vec<f32>> {
@@ -250,9 +260,7 @@ impl<'a> Generator<'a> {
         let logits = self.model.forward_with_cache(&input, cache)?;
         cache.advance(1);
 
-        let logits_data: Vec<f32> = logits.iter().collect();
-        let vocab_size = self.model.vocab_size();
-        Ok(logits_data[0..vocab_size].to_vec())
+        Ok(logits.to_vec())
     }
 
     /// Validate sampling parameters before generation.

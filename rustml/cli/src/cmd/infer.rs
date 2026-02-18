@@ -63,6 +63,10 @@ pub struct InferArgs {
     /// Generation timeout in seconds. Stops generation if exceeded.
     #[arg(long, allow_negative_numbers = true)]
     timeout: Option<f64>,
+
+    /// KV cache context length. Auto-sized from prompt + max_tokens if omitted.
+    #[arg(long)]
+    context_len: Option<usize>,
 }
 
 fn read_prompt(args: &InferArgs) -> Result<String> {
@@ -108,6 +112,11 @@ fn validate_args(args: &InferArgs) -> Result<Option<String>> {
             bail!("--timeout must be > 0.0, got {}", secs);
         }
     }
+    if let Some(cl) = args.context_len {
+        if cl == 0 {
+            bail!("--context-len must be > 0");
+        }
+    }
     if args.stream && args.batch_file.is_some() {
         bail!("--stream is not supported with --batch-file");
     }
@@ -135,7 +144,48 @@ fn run_generation(
     bos_token_id: Option<u32>,
     chat_template: Option<String>,
 ) -> Result<()> {
+    // Read prompt(s) early so we can compute effective KV cache context length.
+    let (prompts, is_batch) = if let Some(ref contents) = batch_contents {
+        let ps: Vec<String> = contents
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(String::from)
+            .collect();
+        (ps, true)
+    } else {
+        let prompt = read_prompt(args)?;
+        (vec![prompt], false)
+    };
+
+    // Compute effective context length for KV cache auto-sizing.
+    let model_max = model.max_sequence_length();
+    let effective_ctx = match args.context_len {
+        Some(cl) => cl.min(model_max),
+        None => {
+            let max_prompt_tokens = prompts
+                .iter()
+                .map(|p| tokenizer.encode(p).map(|t| t.len()).unwrap_or(0))
+                .max()
+                .unwrap_or(0);
+            // Margin: extra 128 if chat template may add tokens, else 64
+            let margin = if args.chat { 128 } else { 64 };
+            (max_prompt_tokens + args.max_tokens + margin).min(model_max)
+        }
+    };
+
+    // Print effective KV cache size.
+    let n_kv_heads = model.num_kv_heads();
+    let head_dim = model.head_dim();
+    let n_layers = model.num_layers();
+    let cache_bytes = 2 * n_layers * n_kv_heads * effective_ctx * head_dim * 4;
+    let cache_mb = cache_bytes as f64 / (1024.0 * 1024.0);
+    eprintln!(
+        "  KV cache: {:.1} MB ({}layers x {}heads x {}seq x {}dim x f32 x 2)",
+        cache_mb, n_layers, n_kv_heads, effective_ctx, head_dim
+    );
+
     let mut generator = Generator::new(model, tokenizer, args.temperature);
+    generator = generator.with_context_len(effective_ctx);
 
     if let Some(k) = args.top_k {
         generator = generator.with_top_k(k);
@@ -160,13 +210,13 @@ fn run_generation(
         eprintln!("  Timeout: {:.1}s", secs);
     }
 
-    if let Some(ref contents) = batch_contents {
-        let prompts: Vec<&str> = contents.lines().filter(|l| !l.trim().is_empty()).collect();
-        eprintln!("  Batch: {} prompts", prompts.len());
+    if is_batch {
+        let prompt_refs: Vec<&str> = prompts.iter().map(|s| s.as_str()).collect();
+        eprintln!("  Batch: {} prompts", prompt_refs.len());
         eprintln!("---");
 
         let gen_start = Instant::now();
-        let results = generator.generate_batch_parallel(&prompts, args.max_tokens)?;
+        let results = generator.generate_batch_parallel(&prompt_refs, args.max_tokens)?;
         let elapsed = gen_start.elapsed();
 
         for (i, output) in results.iter().enumerate() {
@@ -180,7 +230,7 @@ fn run_generation(
             results.len() as f64 / elapsed.as_secs_f64().max(1e-9)
         );
     } else {
-        let prompt = read_prompt(args)?;
+        let prompt = &prompts[0];
         eprintln!("---");
 
         let gen_start = Instant::now();
@@ -188,7 +238,7 @@ fn run_generation(
         if args.stream {
             let mut token_count: usize = 0;
             let _output =
-                generator.generate_stream(&prompt, args.max_tokens, |token_id| {
+                generator.generate_stream(prompt, args.max_tokens, |token_id| {
                     token_count += 1;
                     match tokenizer.decode(&[token_id]) {
                         Ok(piece) => print!("{piece}"),
@@ -213,7 +263,7 @@ fn run_generation(
                 tps
             );
         } else {
-            let output = generator.generate(&prompt, args.max_tokens)?;
+            let output = generator.generate(prompt, args.max_tokens)?;
             let elapsed = gen_start.elapsed();
             println!("{output}");
             eprintln!("---");
@@ -276,15 +326,6 @@ fn run_safetensors(
         .with_context(|| format!("Failed to build {} model", if model_type.is_empty() { "gpt2" } else { &model_type }))?;
     let (total_params, _) = model.parameter_count();
     eprintln!("  Model ready: {:.1}M params", total_params as f64 / 1e6);
-
-    let n_kv_heads = config.n_kv_heads.unwrap_or(config.n_heads);
-    let head_dim = config.head_dim.unwrap_or(config.dim / config.n_heads);
-    let cache_bytes = 2 * config.n_layers * 1 * n_kv_heads * config.max_seq_len * head_dim * 4;
-    let cache_mb = cache_bytes as f64 / (1024.0 * 1024.0);
-    eprintln!(
-        "  KV cache: {:.1} MB ({}layers x {}heads x {}seq x {}dim x f32 x 2)",
-        cache_mb, config.n_layers, n_kv_heads, config.max_seq_len, head_dim
-    );
 
     // Use HFTokenizer if tokenizer.json exists, otherwise fall back to BPE (GPT-2)
     let tokenizer_json = bundle.tokenizer_json_path();
@@ -370,15 +411,6 @@ fn run_gguf(
     };
     let (total_params, _) = model.parameter_count();
     eprintln!("  Model ready: {:.1}M params", total_params as f64 / 1e6);
-
-    let n_kv_heads = config.n_kv_heads.unwrap_or(config.n_heads);
-    let head_dim = config.head_dim.unwrap_or(config.dim / config.n_heads);
-    let cache_bytes = 2 * config.n_layers * 1 * n_kv_heads * config.max_seq_len * head_dim * 4;
-    let cache_mb = cache_bytes as f64 / (1024.0 * 1024.0);
-    eprintln!(
-        "  KV cache: {:.1} MB ({}layers x {}heads x {}seq x {}dim x f32 x 2)",
-        cache_mb, config.n_layers, n_kv_heads, config.max_seq_len, head_dim
-    );
 
     run_generation(
         &model,

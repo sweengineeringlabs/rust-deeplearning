@@ -35,14 +35,40 @@ pub fn apply_repetition_penalty(logits: &mut [f32], past_tokens: &[u32], penalty
 
 /// Keep only the top-k logits; set the rest to NEG_INFINITY.
 /// If k >= logits.len(), this is a no-op.
+///
+/// For small k (<=1024), uses a compact buffer instead of copying the full
+/// vocab, reducing allocation from ~1 MB to ~8 KB for typical vocab sizes.
 pub fn apply_top_k(logits: &mut [f32], k: usize) {
     if k >= logits.len() {
         return;
     }
-    let mut vals: Vec<f32> = logits.to_vec();
-    let pivot = vals.len() - k;
-    vals.select_nth_unstable_by(pivot, |a: &f32, b: &f32| a.total_cmp(b));
-    let threshold = vals[pivot];
+
+    let threshold = if k <= 1024 {
+        // Small k: collect top-k candidates in a compact buffer (≤2k elements)
+        // instead of cloning the entire vocab-sized slice.
+        let mut buf: Vec<f32> = Vec::with_capacity(2 * k);
+        for &v in logits.iter() {
+            buf.push(v);
+            if buf.len() == 2 * k {
+                let pivot = buf.len() - k;
+                buf.select_nth_unstable_by(pivot, |a, b| a.total_cmp(b));
+                buf.drain(..pivot);
+            }
+        }
+        if buf.len() > k {
+            let pivot = buf.len() - k;
+            buf.select_nth_unstable_by(pivot, |a, b| a.total_cmp(b));
+            buf[pivot]
+        } else {
+            *buf.iter().min_by(|a, b| a.total_cmp(b)).unwrap()
+        }
+    } else {
+        // Large k: full copy + select_nth (original approach)
+        let mut vals: Vec<f32> = logits.to_vec();
+        let pivot = vals.len() - k;
+        vals.select_nth_unstable_by(pivot, |a: &f32, b: &f32| a.total_cmp(b));
+        vals[pivot]
+    };
 
     for v in logits.iter_mut() {
         if *v < threshold {
@@ -53,56 +79,65 @@ pub fn apply_top_k(logits: &mut [f32], k: usize) {
 
 /// Apply nucleus (top-p) sampling: keep the smallest set of tokens whose
 /// cumulative probability exceeds `p`, mask the rest to NEG_INFINITY.
+///
+/// Uses a single `Vec<(f32, usize)>` allocation instead of 4 separate Vecs.
 pub fn apply_top_p(logits: &mut [f32], p: f32) {
     if p >= 1.0 {
         return;
     }
 
-    // Stable softmax
+    // Stable softmax — compute sum without allocating
     let max_val = logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-    let exps: Vec<f32> = logits.iter().map(|&v| (v - max_val).exp()).collect();
-    let sum: f32 = exps.iter().sum();
-    let probs: Vec<f32> = exps.iter().map(|&e| e / sum).collect();
+    let sum: f32 = logits.iter().map(|&v| (v - max_val).exp()).sum();
 
-    // Sort indices by probability descending
-    let mut indices: Vec<usize> = (0..probs.len()).collect();
-    indices.sort_unstable_by(|&a, &b| probs[b].total_cmp(&probs[a]));
+    // Single allocation: (probability, original_index) pairs
+    let mut prob_idx: Vec<(f32, usize)> = logits
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| ((v - max_val).exp() / sum, i))
+        .collect();
 
-    // Cumulative sum; find cutoff
+    // Sort by probability descending
+    prob_idx.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
+
+    // Find cutoff index where cumulative probability reaches p
     let mut cumsum = 0.0f32;
-    let mut keep = vec![false; logits.len()];
-    for &idx in &indices {
-        cumsum += probs[idx];
-        keep[idx] = true;
+    let mut cutoff = prob_idx.len();
+    for (i, &(prob, _)) in prob_idx.iter().enumerate() {
+        cumsum += prob;
         if cumsum >= p {
+            cutoff = i + 1;
             break;
         }
     }
 
-    for (i, v) in logits.iter_mut().enumerate() {
-        if !keep[i] {
-            *v = f32::NEG_INFINITY;
-        }
+    // Mask tokens beyond the cutoff directly
+    for &(_, idx) in &prob_idx[cutoff..] {
+        logits[idx] = f32::NEG_INFINITY;
     }
 }
 
 /// Sample from a categorical distribution defined by logits (not probabilities).
 /// Applies stable softmax internally then draws using the given RNG.
+///
+/// Zero-allocation: uses two streaming passes instead of materializing
+/// `exps` and `probs` Vecs (saves ~2 MB per call for 256K vocab).
 pub fn sample_categorical<R: Rng>(logits: &[f32], rng: &mut R) -> u32 {
     let max_val = logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-    let exps: Vec<f32> = logits.iter().map(|&v| (v - max_val).exp()).collect();
-    let sum: f32 = exps.iter().sum();
-    let probs: Vec<f32> = exps.iter().map(|&e| e / sum).collect();
 
-    let r: f32 = rng.r#gen();
-    let mut cumsum = 0.0;
-    for (i, &p) in probs.iter().enumerate() {
-        cumsum += p;
-        if r < cumsum {
+    // First pass: compute sum(exp(logit - max))
+    let sum: f32 = logits.iter().map(|&v| (v - max_val).exp()).sum();
+
+    // Second pass: cumulative sampling against r * sum threshold
+    let threshold = rng.r#gen::<f32>() * sum;
+    let mut cumsum = 0.0f32;
+    for (i, &v) in logits.iter().enumerate() {
+        cumsum += (v - max_val).exp();
+        if cumsum > threshold {
             return i as u32;
         }
     }
-    (probs.len() - 1) as u32
+    (logits.len() - 1) as u32
 }
 
 /// Compute log-softmax of logits: log(softmax(x))
