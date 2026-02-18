@@ -57,7 +57,7 @@ The four CLI binaries:
 | [Tokenizer Tests](manual_tokenizer_tests.md) | Tokenizer encode/decode, backends, vocab info | 28 |
 | [GGUF Inspector Tests](manual_gguf_inspect_tests.md) | GGUF metadata, tensor listing, model info | 25 |
 | [Hub CLI Tests](manual_hub_cli_tests.md) | Model download, cache listing, config display | 18 |
-| [Inference Tests](manual_infer_tests.md) | GGUF model loading, text generation, streaming | 20 |
+| [Inference Tests](manual_infer_tests.md) | GGUF model loading, text generation, streaming, batch, timeout | 52 |
 
 ---
 

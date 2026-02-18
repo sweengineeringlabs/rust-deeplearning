@@ -18,8 +18,10 @@
 - [Streaming](#4-streaming)
 - [Chat Mode](#5-chat-mode)
 - [Stdin Input](#6-stdin-input)
-- [Diagnostic Output](#7-diagnostic-output)
-- [Error Cases](#8-error-cases)
+- [Batch File](#7-batch-file)
+- [Timeout](#8-timeout)
+- [Diagnostic Output](#9-diagnostic-output)
+- [Error Cases](#10-error-cases)
 
 ---
 
@@ -29,7 +31,7 @@
 
 | Test | Command | Expected |
 |------|---------|----------|
-| Help flag | `rustml-infer --help` | Lists `GGUF_PATH` positional, `--prompt`, `--max-tokens`, `--temperature`, `--top-k`, `--top-p`, `--repetition-penalty`, `--stream`, `--chat` |
+| Help flag | `rustml-infer --help` | Lists `GGUF_PATH` positional, `--prompt`, `--batch-file`, `--max-tokens`, `--temperature`, `--top-k`, `--top-p`, `--repetition-penalty`, `--stream`, `--chat`, `--timeout` |
 | Version flag | `rustml-infer --version` | Prints version string |
 | No args | `rustml-infer` | Shows error and usage with `GGUF_PATH` |
 
@@ -73,7 +75,37 @@
 | Prompt from stdin | `echo "Hello world" \| rustml-infer model.gguf` | Reads prompt from stdin; prints `Reading prompt from stdin...` on stderr |
 | Multiline stdin | `printf "Line one\nLine two" \| rustml-infer model.gguf --max-tokens 32` | Accepts multiline input |
 
-## 7. Diagnostic Output
+## 7. Batch File
+
+> **Setup:** Create a prompts file with one prompt per line:
+> ```
+> echo "What is Rust?" > /tmp/prompts.txt
+> echo "Explain transformers" >> /tmp/prompts.txt
+> echo "What is GGUF?" >> /tmp/prompts.txt
+> ```
+
+| Test | Command | Expected |
+|------|---------|----------|
+| Batch generation | `rustml-infer model.gguf --batch-file /tmp/prompts.txt --max-tokens 64` | Outputs `[0] ...`, `[1] ...`, `[2] ...` with one response per prompt |
+| Batch prompt count | (same as above) | stderr shows `Batch: 3 prompts` and `3 prompts in Xs (Y prompts/sec)` |
+| Batch with sampling | `rustml-infer model.gguf --batch-file /tmp/prompts.txt --temperature 0.5 --top-k 20 --max-tokens 32` | Sampling flags applied to all prompts |
+| Batch conflicts with prompt | `rustml-infer model.gguf --batch-file /tmp/prompts.txt --prompt "Hello"` | Error: `--prompt` cannot be used with `--batch-file` |
+| Batch conflicts with stream | `rustml-infer model.gguf --batch-file /tmp/prompts.txt --stream` | Error: `--stream is not supported with --batch-file` |
+| Empty batch file | `touch /tmp/empty.txt && rustml-infer model.gguf --batch-file /tmp/empty.txt` | Error: `Batch file is empty` |
+| Nonexistent batch file | `rustml-infer model.gguf --batch-file /nonexistent.txt` | Error: `Failed to read batch file` |
+| Blank lines skipped | File with blank lines between prompts | Only non-empty lines treated as prompts |
+
+## 8. Timeout
+
+| Test | Command | Expected |
+|------|---------|----------|
+| Timeout flag | `rustml-infer model.gguf --prompt "Tell me a long story" --max-tokens 4096 --timeout 5` | Generation stops after ~5s; stderr shows `Timeout: 5.0s` |
+| Timeout with stream | `rustml-infer model.gguf --prompt "Tell me a story" --stream --timeout 3` | Streaming stops after ~3s |
+| Zero timeout rejected | `rustml-infer model.gguf --prompt "Hello" --timeout 0` | Error: `--timeout must be > 0.0` |
+| Negative timeout rejected | `rustml-infer model.gguf --prompt "Hello" --timeout -1` | Error: `--timeout must be > 0.0` |
+| No timeout (default) | `rustml-infer model.gguf --prompt "Hello" --max-tokens 32` | No `Timeout:` line in stderr; runs to completion |
+
+## 9. Diagnostic Output
 
 | Test | What to check | Expected |
 |------|---------------|----------|
@@ -83,9 +115,14 @@
 | Tokenizer info | stderr | `Tokenizer: <N> tokens` |
 | Tensor loading | stderr | `Loading tensors...` then `<N> tensors loaded` |
 | Model ready | stderr | `Model ready: <N>M params` |
-| Separator | stderr | `---` before generation output |
+| KV cache memory | stderr | `KV cache: <N> MB (<layers>layers x <heads>heads x <seq>seq x <dim>dim x f32 x 2)` |
+| Timeout (if set) | stderr | `Timeout: <N>s` |
+| Separator | stderr | `---` before and after generation output |
+| Metrics (stream) | stderr after streaming | `<N> tokens in <T>s (<R> tokens/sec)` |
+| Metrics (non-stream) | stderr after generation | `Generated in <T>s` |
+| Metrics (batch) | stderr after batch | `<N> prompts in <T>s (<R> prompts/sec)` |
 
-## 8. Error Cases
+## 10. Error Cases
 
 | Test | Command | Expected |
 |------|---------|----------|
@@ -94,6 +131,10 @@
 | Bad temperature type | `rustml-infer model.gguf --temperature abc` | Error: invalid value for `--temperature` |
 | Bad max-tokens type | `rustml-infer model.gguf --max-tokens xyz` | Error: invalid value for `--max-tokens` |
 | Unknown flag | `rustml-infer model.gguf --unknown-flag` | Error: unexpected argument |
+| Negative temperature | `rustml-infer model.gguf --prompt "Hi" --temperature -1` | Error: `--temperature must be >= 0.0` |
+| Top-k zero | `rustml-infer model.gguf --prompt "Hi" --top-k 0` | Error: `--top-k must be > 0` |
+| Top-p out of range | `rustml-infer model.gguf --prompt "Hi" --top-p 1.5` | Error: `--top-p must be in (0.0, 1.0]` |
+| Repetition penalty zero | `rustml-infer model.gguf --prompt "Hi" --repetition-penalty 0` | Error: `--repetition-penalty must be > 0.0` |
 
 ---
 
