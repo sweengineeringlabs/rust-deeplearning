@@ -140,14 +140,35 @@ fn main() -> Result<()> {
         generator = generator.with_chat_template(config.chat_template.clone());
     }
 
-    // 7. Read prompt and generate
+    // 7. Validate sampling parameters
+    if cli.temperature < 0.0 {
+        bail!("--temperature must be >= 0.0, got {}", cli.temperature);
+    }
+    if let Some(k) = cli.top_k {
+        if k == 0 {
+            bail!("--top-k must be > 0");
+        }
+    }
+    if let Some(p) = cli.top_p {
+        if p <= 0.0 || p > 1.0 {
+            bail!("--top-p must be in (0.0, 1.0], got {}", p);
+        }
+    }
+    if let Some(rp) = cli.repetition_penalty {
+        if rp <= 0.0 {
+            bail!("--repetition-penalty must be > 0.0, got {}", rp);
+        }
+    }
+
+    // 8. Read prompt and generate
     let prompt = read_prompt(&cli)?;
     eprintln!("---");
 
     if cli.stream {
         let _output = generator.generate_stream(&prompt, cli.max_tokens, |token_id| {
-            if let Ok(piece) = tokenizer.decode(&[token_id]) {
-                print!("{piece}");
+            match tokenizer.decode(&[token_id]) {
+                Ok(piece) => print!("{piece}"),
+                Err(e) => eprintln!("[warn] failed to decode token {}: {}", token_id, e),
             }
             true
         })?;

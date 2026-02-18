@@ -239,8 +239,40 @@ impl<'a> Generator<'a> {
         Ok(logits_data[0..vocab_size].to_vec())
     }
 
+    /// Validate sampling parameters before generation.
+    fn validate_params(&self) -> NlpResult<()> {
+        if self.temperature < 0.0 {
+            return Err(crate::api::error::NlpError::GenerationError(
+                format!("temperature must be >= 0.0, got {}", self.temperature),
+            ));
+        }
+        if let Some(k) = self.top_k {
+            if k == 0 {
+                return Err(crate::api::error::NlpError::GenerationError(
+                    "top_k must be > 0".into(),
+                ));
+            }
+        }
+        if let Some(p) = self.top_p {
+            if p <= 0.0 || p > 1.0 {
+                return Err(crate::api::error::NlpError::GenerationError(
+                    format!("top_p must be in (0.0, 1.0], got {}", p),
+                ));
+            }
+        }
+        if let Some(rp) = self.repetition_penalty {
+            if rp <= 0.0 {
+                return Err(crate::api::error::NlpError::GenerationError(
+                    format!("repetition_penalty must be > 0.0, got {}", rp),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Generate text from a prompt. Returns the full output (prompt + generated).
     pub fn generate(&self, prompt: &str, max_tokens: usize) -> NlpResult<String> {
+        self.validate_params()?;
         let mut tokens = self.encode_prompt(prompt)?;
         if let Some(bos) = self.bos_token_id {
             tokens.insert(0, bos);
@@ -280,6 +312,7 @@ impl<'a> Generator<'a> {
         max_tokens: usize,
         mut callback: F,
     ) -> NlpResult<String> {
+        self.validate_params()?;
         let mut tokens = self.encode_prompt(prompt)?;
         if let Some(bos) = self.bos_token_id {
             tokens.insert(0, bos);
@@ -325,6 +358,7 @@ impl<'a> Generator<'a> {
         max_tokens: usize,
         beam_width: usize,
     ) -> NlpResult<String> {
+        self.validate_params()?;
         let prompt_tokens = self.tokenizer.encode(prompt)?;
         let mut cache = self.make_cache();
 
@@ -364,7 +398,11 @@ impl<'a> Generator<'a> {
                     continue;
                 }
 
-                let last_token = *beam.tokens.last().unwrap();
+                let last_token = *beam.tokens.last().ok_or_else(|| {
+                    crate::api::error::NlpError::GenerationError(
+                        "beam search: empty token sequence".into(),
+                    )
+                })?;
                 let mut beam_cache = beam.cache;
                 let logits = self.decode_step(last_token, &mut beam_cache)?;
                 let lp = sampling::compute_log_probs(&logits);
@@ -394,7 +432,11 @@ impl<'a> Generator<'a> {
         }
 
         beams.sort_unstable_by(|a, b| b.log_prob.total_cmp(&a.log_prob));
-        let best = &beams[0];
+        let best = beams.first().ok_or_else(|| {
+            crate::api::error::NlpError::GenerationError(
+                "beam search: no candidate beams produced".into(),
+            )
+        })?;
         Ok(self.tokenizer.decode(&best.tokens)?)
     }
 

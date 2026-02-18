@@ -3,3 +3,46 @@
 ## Model Format Support
 
 - [ ] **ONNX runtime/loading is not implemented** — No `.onnx` model loading exists in the production crates. SafeTensors and GGUF are supported; ONNX is not. Requires adding an ONNX parser or integrating an ONNX runtime (e.g., `ort` crate) to load and execute ONNX graphs.
+
+## Inference Production Readiness
+
+> Assessment date: 2026-02-18. Current status: **Beta / research-grade**.
+
+### P0 — Blocks production use
+
+- [x] **Sampling parameter validation** — `--top-k`, `--top-p`, `--temperature`, `--repetition-penalty` are not validated at CLI entry or in `Generator`. Invalid values (top_k=0, temperature<0, top_p>1) silently produce degenerate output. Add `GenerationConfig::validate()` and call it from CLI and `Generator::new()`.
+  - Files: `rustml/nlp/main/src/bin/infer.rs`, `rustml/nlp/main/src/core/generator.rs`, `rustml/nlp/main/src/api/types.rs`
+
+- [x] **Beam search panic on empty beams** — `generator.rs:367` calls `.unwrap()` on `beam.tokens.last()` and `:397` indexes `beams[0]` without bounds checks. Either can panic if beams are unexpectedly empty. Replace with proper error returns.
+  - File: `rustml/nlp/main/src/core/generator.rs`
+
+- [x] **Silent error suppression in streaming** — `infer.rs:149` uses `if let Ok(piece)` which silently drops tokenizer decode errors. Log a warning to stderr instead.
+  - File: `rustml/nlp/main/src/bin/infer.rs`
+
+- [x] **`GptConfig::from_hf_config` uses `unwrap_or` defaults** — `types.rs:82-88` silently falls back to GPT-2 small defaults when JSON fields are missing. Should return errors for required fields.
+  - File: `rustml/nlp/main/src/api/types.rs`
+
+### P1 — Important for reliability
+
+- [ ] **No request timeout or cancellation** — `generate()` and `generate_stream()` run to completion or `max_tokens` without interrupt. Long generations block indefinitely. Add a deadline or cancellation token parameter.
+  - File: `rustml/nlp/main/src/core/generator.rs`
+
+- [ ] **Chat templates are hardcoded** — Only 3 template formats recognized (`<|user|>`, `[INST]`, `<|im_start|>`). Unknown templates silently fall back to plain text with no warning. Consider `minijinja` crate or at minimum a stderr warning.
+  - File: `rustml/nlp/main/src/core/generator.rs`
+
+- [ ] **No peak memory reporting** — KV cache grows linearly with context length. No way to monitor or limit memory usage. Add `--max-memory` flag or at least report peak cache size on stderr.
+  - Files: `rustml/nn/main/src/core/kv_cache.rs`, `rustml/nlp/main/src/bin/infer.rs`
+
+### P2 — Nice to have for production
+
+- [ ] **Sequential batch generation** — `generate_batch()` processes prompts one at a time. No true batched forward passes. Consider `rayon` for parallel prompt processing.
+  - File: `rustml/nlp/main/src/core/generator.rs`
+
+- [ ] **No structured logging or metrics** — No tokens/sec, latency, or cache stats. Add `tracing` crate for structured observability.
+  - Files: `rustml/nlp/main/src/bin/infer.rs`, `rustml/nlp/main/src/core/generator.rs`
+
+- [ ] **No performance benchmarks** — No automated throughput/latency regression tests. Add `criterion` benchmarks for sampling and forward pass.
+
+- [ ] **CPU-only inference** — No GPU backend (CUDA, Metal). Limited throughput ceiling. Long-term consideration.
+
+- [ ] **No prefix caching** — KV cache is rebuilt from scratch per request. Shared system prompts waste compute on repeated prefills.

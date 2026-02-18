@@ -76,14 +76,22 @@ impl GptConfig {
         }
     }
 
-    /// Create config from HuggingFace config.json
+    /// Create config from HuggingFace config.json.
+    ///
+    /// Returns an error if required fields (`vocab_size`, `n_embd`, `n_layer`,
+    /// `n_head`) are missing from the JSON.
     pub fn from_hf_config(config: &serde_json::Value) -> NlpResult<Self> {
+        let get_u64 = |key: &str| -> NlpResult<u64> {
+            config[key].as_u64().ok_or_else(|| {
+                NlpError::ModelError(format!("missing or invalid '{}' in GPT-2 config", key))
+            })
+        };
         Ok(Self {
-            vocab_size: config["vocab_size"].as_u64().unwrap_or(50257) as usize,
+            vocab_size: get_u64("vocab_size")? as usize,
             n_positions: config["n_positions"].as_u64().unwrap_or(1024) as usize,
-            n_embd: config["n_embd"].as_u64().unwrap_or(768) as usize,
-            n_layer: config["n_layer"].as_u64().unwrap_or(12) as usize,
-            n_head: config["n_head"].as_u64().unwrap_or(12) as usize,
+            n_embd: get_u64("n_embd")? as usize,
+            n_layer: get_u64("n_layer")? as usize,
+            n_head: get_u64("n_head")? as usize,
             layer_norm_eps: config["layer_norm_epsilon"]
                 .as_f64()
                 .unwrap_or(1e-5) as f32,
@@ -134,6 +142,35 @@ impl Default for GenerationConfig {
 }
 
 impl GenerationConfig {
+    /// Validate generation parameters.
+    pub fn validate(&self) -> NlpResult<()> {
+        if self.temperature < 0.0 {
+            return Err(NlpError::GenerationError(
+                format!("temperature must be >= 0.0, got {}", self.temperature),
+            ));
+        }
+        if let Some(k) = self.top_k {
+            if k == 0 {
+                return Err(NlpError::GenerationError(
+                    "top_k must be > 0".into(),
+                ));
+            }
+        }
+        if let Some(p) = self.top_p {
+            if p <= 0.0 || p > 1.0 {
+                return Err(NlpError::GenerationError(
+                    format!("top_p must be in (0.0, 1.0], got {}", p),
+                ));
+            }
+        }
+        if self.repetition_penalty <= 0.0 {
+            return Err(NlpError::GenerationError(
+                format!("repetition_penalty must be > 0.0, got {}", self.repetition_penalty),
+            ));
+        }
+        Ok(())
+    }
+
     /// Create a greedy decoding config
     pub fn greedy(max_new_tokens: usize) -> Self {
         Self {
