@@ -1,6 +1,6 @@
 # Manual GGUF Inspector Tests
 
-> **TLDR:** Manual test checklist for the `rustml-gguf-inspect` CLI: model info, metadata dump, and tensor listing.
+> **TLDR:** Manual test checklist for the `rustml-gguf-inspect` CLI: model info, metadata dump, tensor listing, tensor stats/head inspection, and verify checks.
 
 **Audience**: Developers, QA
 
@@ -18,8 +18,11 @@
 - [Meta Filtering](#4-meta-filtering)
 - [Tensors Subcommand](#5-tensors-subcommand)
 - [Tensor Filtering](#6-tensor-filtering)
-- [Value Formatting](#7-value-formatting)
-- [Error Cases](#8-error-cases)
+- [Tensor Stats](#7-tensor-stats)
+- [Tensor Head](#8-tensor-head)
+- [Verify Subcommand](#9-verify-subcommand)
+- [Value Formatting](#10-value-formatting)
+- [Error Cases](#11-error-cases)
 
 ---
 
@@ -29,12 +32,13 @@
 
 | Test | Command | Expected |
 |------|---------|----------|
-| Help flag | `rustml-gguf-inspect --help` | Lists `info`, `meta`, `tensors` subcommands |
+| Help flag | `rustml-gguf-inspect --help` | Lists `info`, `meta`, `tensors`, `verify` subcommands |
 | Version flag | `rustml-gguf-inspect --version` | Prints version string |
 | No args | `rustml-gguf-inspect` | Shows error and usage |
 | Info help | `rustml-gguf-inspect info --help` | Shows PATH positional arg |
 | Meta help | `rustml-gguf-inspect meta --help` | Shows `--key` option |
-| Tensors help | `rustml-gguf-inspect tensors --help` | Shows `--filter` option |
+| Tensors help | `rustml-gguf-inspect tensors --help` | Shows `--filter`, `--stats`, `--head` options |
+| Verify help | `rustml-gguf-inspect verify --help` | Shows PATH positional arg |
 
 ## 2. Info Subcommand
 
@@ -85,7 +89,41 @@
 | Filter by layer | `rustml-gguf-inspect tensors model.gguf --filter blk.0.` | Only layer 0 tensors |
 | Filter no match | `rustml-gguf-inspect tensors model.gguf --filter nonexistent` | No tensors; `0 tensor(s) listed` |
 
-## 7. Value Formatting
+## 7. Tensor Stats
+
+| Test | Command | Expected |
+|------|---------|----------|
+| Stats for single tensor | `rustml-gguf-inspect tensors model.gguf --filter token_embd --stats` | Shows `stats: min=... max=... mean=... std=... n=...` below tensor line |
+| Stats for all tensors | `rustml-gguf-inspect tensors model.gguf --stats` | Each tensor followed by a stats line |
+| Stats with filter | `rustml-gguf-inspect tensors model.gguf --filter attn_q --stats` | Only filtered tensors show stats |
+| No stats without flag | `rustml-gguf-inspect tensors model.gguf --filter token_embd` | No `stats:` line in output |
+| Stats + head combined | `rustml-gguf-inspect tensors model.gguf --filter token_embd --stats --head 5` | Both stats and head lines printed |
+
+## 8. Tensor Head
+
+| Test | Command | Expected |
+|------|---------|----------|
+| Head first N values | `rustml-gguf-inspect tensors model.gguf --filter token_embd --head 10` | Shows `head(10): [v0, v1, ..., v9]` with dequantized f32 values |
+| Head larger than tensor | `rustml-gguf-inspect tensors model.gguf --filter some_small_tensor --head 999999` | Clamps to tensor size, prints all values |
+| Head zero | `rustml-gguf-inspect tensors model.gguf --filter token_embd --head 0` | Shows `head(0): []` |
+| Head without stats | `rustml-gguf-inspect tensors model.gguf --filter token_embd --head 5` | Shows head line but no stats line |
+
+## 9. Verify Subcommand
+
+| Test | Command | Expected |
+|------|---------|----------|
+| Valid model passes | `rustml-gguf-inspect verify model.gguf` | PASS for all checks, exit code 0 |
+| token_embd.weight check | (in output) | `PASS  token_embd.weight exists` |
+| Embedding shape check | (in output) | `PASS  token_embd.weight shape [DxV] matches dim=D` |
+| Vocab size consistency | (in output) | `PASS  vocab_size=V matches token_embd.weight[1]` |
+| output.weight check | (in output) | `PASS  output.weight exists` (or `WARN  output.weight missing` for tied-embedding models) |
+| Layer tensor completeness | (in output) | `PASS  all layer tensors present for N layers (9 suffixes each)` |
+| Embedding dim consistency | (in output) | `PASS  embedding dim consistent across attention projections` |
+| Summary line | (in output) | `--- Summary: N PASS, 0 FAIL, M WARN ---` |
+| Missing token_embd | Use a broken GGUF | `FAIL  token_embd.weight missing`, exit code 1 |
+| Tied embeddings | Model without output.weight | `WARN  output.weight missing`, exit code 0 |
+
+## 10. Value Formatting
 
 | Test | What to check | Expected |
 |------|---------------|----------|
@@ -95,7 +133,7 @@
 | Boolean values | Meta output for bool keys | `true` or `false` |
 | Array values | Meta output for token arrays | `[array, len=N]` |
 
-## 8. Error Cases
+## 11. Error Cases
 
 | Test | Command | Expected |
 |------|---------|----------|
@@ -103,6 +141,8 @@
 | Invalid file | `rustml-gguf-inspect info /tmp/not_a_gguf.bin` | Error: invalid GGUF magic |
 | Meta on bad file | `rustml-gguf-inspect meta /nonexistent.gguf` | Error |
 | Tensors on bad file | `rustml-gguf-inspect tensors /nonexistent.gguf` | Error |
+| Verify on bad file | `rustml-gguf-inspect verify /nonexistent.gguf` | Error: failed to parse GGUF |
+| Stats on bad file | `rustml-gguf-inspect tensors /nonexistent.gguf --stats` | Error |
 
 ---
 
