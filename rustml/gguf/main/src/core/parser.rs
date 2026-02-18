@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use crate::api::error::{GgufError, GgufResult};
@@ -365,6 +365,60 @@ impl GGUFFile {
         let tensors = self.load_tensors(path)?;
         let weight_map = gguf_gemma3_weight_map(n_layers);
         Ok(weight_map.remap(tensors))
+    }
+
+    /// Read and dequantize a single tensor to f32 values.
+    ///
+    /// Uses seek+read_exact to read only the bytes for this tensor,
+    /// avoiding loading the entire file into memory.
+    pub fn read_tensor_f32<P: AsRef<Path>>(path: P, info: &GGUFTensorInfo, data_offset: usize) -> GgufResult<Vec<f32>> {
+        let n_elements: usize = info.dimensions.iter().product();
+        let n_blocks = if info.ggml_type.block_size() > 1 {
+            n_elements / info.ggml_type.block_size()
+        } else {
+            n_elements
+        };
+        let byte_size = n_blocks * info.ggml_type.block_bytes();
+
+        let abs_offset = data_offset + info.offset as usize;
+        let mut file = File::open(path)?;
+        file.seek(SeekFrom::Start(abs_offset as u64))?;
+        let mut raw = vec![0u8; byte_size];
+        file.read_exact(&mut raw)?;
+
+        match info.ggml_type {
+            GGMLType::F32 => {
+                let mut out = vec![0.0f32; n_elements];
+                for i in 0..n_elements {
+                    let off = i * 4;
+                    out[i] = f32::from_le_bytes([raw[off], raw[off+1], raw[off+2], raw[off+3]]);
+                }
+                Ok(out)
+            }
+            GGMLType::F16 => {
+                let mut out = vec![0.0f32; n_elements];
+                for i in 0..n_elements {
+                    let off = i * 2;
+                    out[i] = f16_from_bytes(raw[off], raw[off+1]);
+                }
+                Ok(out)
+            }
+            GGMLType::Q4_0 => rustml_quant::dequantize_q4_0(&raw, n_elements)
+                .map_err(|e| GgufError::UnsupportedType(e.to_string())),
+            GGMLType::Q8_0 => rustml_quant::dequantize_q8_0(&raw, n_elements)
+                .map_err(|e| GgufError::UnsupportedType(e.to_string())),
+            GGMLType::Q4_1 => rustml_quant::dequantize_q4_1(&raw, n_elements)
+                .map_err(|e| GgufError::UnsupportedType(e.to_string())),
+            GGMLType::Q5_0 | GGMLType::Q5_1 | GGMLType::Q8_1 => {
+                dequantize_legacy(&raw, n_elements, info.ggml_type)
+            }
+            t if t.needs_dequant() => {
+                dequantize_kquant(&raw, n_elements, info.ggml_type)
+            }
+            _ => Err(GgufError::UnsupportedType(
+                format!("Unsupported GGML type {:?} for read_tensor_f32", info.ggml_type)
+            )),
+        }
     }
 }
 

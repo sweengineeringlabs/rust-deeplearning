@@ -163,6 +163,49 @@ pub struct GgufBundle {
     pub model_config: GgufModelConfig,
 }
 
+/// Per-tensor statistics computed from dequantized f32 values.
+#[derive(Debug, Clone)]
+pub struct TensorStats {
+    pub min: f32,
+    pub max: f32,
+    pub mean: f32,
+    pub std: f32,
+    pub n_elements: usize,
+}
+
+impl TensorStats {
+    /// Compute min/max/mean/std from f32 values.
+    /// Returns `None` if the slice is empty.
+    pub fn compute(values: &[f32]) -> Option<Self> {
+        if values.is_empty() {
+            return None;
+        }
+        let n = values.len();
+        let mut min = f32::INFINITY;
+        let mut max = f32::NEG_INFINITY;
+        let mut sum = 0.0f64;
+        for &v in values {
+            if v < min { min = v; }
+            if v > max { max = v; }
+            sum += v as f64;
+        }
+        let mean_f64 = sum / n as f64;
+        let mut var_sum = 0.0f64;
+        for &v in values {
+            let d = v as f64 - mean_f64;
+            var_sum += d * d;
+        }
+        let std_f64 = (var_sum / n as f64).sqrt();
+        Some(TensorStats {
+            min,
+            max,
+            mean: mean_f64 as f32,
+            std: std_f64 as f32,
+            n_elements: n,
+        })
+    }
+}
+
 /// Model configuration extracted from GGUF metadata.
 #[derive(Debug, Clone)]
 pub struct GgufModelConfig {

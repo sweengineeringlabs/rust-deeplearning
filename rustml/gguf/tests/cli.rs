@@ -12,6 +12,7 @@ const GGUF_MAGIC: [u8; 4] = [0x47, 0x47, 0x55, 0x46];
 struct GgufBuilder {
     metadata: Vec<(String, u32, Vec<u8>)>, // (key, type_id, encoded_value)
     tensors: Vec<(String, Vec<usize>, u32, u64)>, // (name, dims, ggml_type, offset)
+    tensor_data: Vec<Vec<u8>>,             // raw bytes per tensor (parallel to tensors)
 }
 
 impl GgufBuilder {
@@ -19,6 +20,7 @@ impl GgufBuilder {
         Self {
             metadata: Vec::new(),
             tensors: Vec::new(),
+            tensor_data: Vec::new(),
         }
     }
 
@@ -65,6 +67,14 @@ impl GgufBuilder {
         self
     }
 
+    /// Add a tensor with associated raw data. Offset is auto-computed in `build_with_data()`.
+    fn add_tensor_with_data(&mut self, name: &str, dims: &[usize], ggml_type: u32, raw_data: Vec<u8>) -> &mut Self {
+        // offset=0 placeholder — build_with_data() will fix it
+        self.tensors.push((name.to_string(), dims.to_vec(), ggml_type, 0));
+        self.tensor_data.push(raw_data);
+        self
+    }
+
     fn build(&self) -> Vec<u8> {
         let mut data = Vec::new();
         data.extend_from_slice(&GGUF_MAGIC);
@@ -102,6 +112,46 @@ impl GgufBuilder {
 
         data
     }
+
+    /// Build GGUF with actual tensor data appended.
+    /// Computes offsets and aligns data to 32-byte boundaries.
+    fn build_with_data(&mut self) -> Vec<u8> {
+        // First, compute tensor offsets relative to data section start
+        let mut offset = 0u64;
+        for (i, (_name, _dims, _ggml_type, tensor_offset)) in self.tensors.iter_mut().enumerate() {
+            *tensor_offset = offset;
+            let data_len = self.tensor_data[i].len() as u64;
+            // Align next tensor to 32 bytes
+            offset = (offset + data_len + 31) & !31;
+        }
+
+        // Build the header
+        let mut data = self.build();
+
+        // Pad header to 32-byte alignment (data_offset)
+        let header_end = data.len();
+        let data_offset = (header_end + 31) & !31;
+        data.resize(data_offset, 0);
+
+        // Append tensor data with 32-byte alignment
+        for td in &self.tensor_data {
+            data.extend_from_slice(td);
+            // Pad to 32-byte alignment
+            let padded = (data.len() + 31) & !31;
+            data.resize(padded, 0);
+        }
+
+        data
+    }
+}
+
+/// Encode f32 slice to little-endian bytes.
+fn encode_f32(values: &[f32]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(values.len() * 4);
+    for v in values {
+        buf.extend_from_slice(&v.to_le_bytes());
+    }
+    buf
 }
 
 /// Build a GGUF file with realistic model metadata (llama architecture).
@@ -504,4 +554,321 @@ fn tensors_nonexistent_file_fails() {
         .output()
         .unwrap();
     assert!(!out.status.success());
+}
+
+// ── verify subcommand ───────────────────────────────────────────────
+
+/// Build a GGUF with full layer tensors that passes all verify checks.
+fn build_verify_passing_gguf() -> GgufBuilder {
+    let mut b = GgufBuilder::new();
+    let dim = 64usize;
+    let vocab = 128usize;
+    let hidden = 256usize;
+    let n_layers = 2usize;
+    let n_kv_heads = 2usize;
+    let kv_dim = (dim / 4) * n_kv_heads; // 32
+
+    b.add_string("general.architecture", "llama")
+        .add_u32("llama.embedding_length", dim as u32)
+        .add_u32("llama.feed_forward_length", hidden as u32)
+        .add_u32("llama.block_count", n_layers as u32)
+        .add_u32("llama.attention.head_count", 4)
+        .add_u32("llama.attention.head_count_kv", n_kv_heads as u32)
+        .add_u32("llama.vocab_size", vocab as u32)
+        .add_u32("llama.context_length", 512)
+        .add_f32("llama.attention.layer_norm_rms_epsilon", 1e-5)
+        .add_f32("llama.rope.freq_base", 10000.0)
+        // Global tensors
+        .add_tensor("token_embd.weight", &[dim, vocab], 0, 0)
+        .add_tensor("output.weight", &[dim, vocab], 0, 0);
+
+    // Per-layer tensors
+    for layer in 0..n_layers {
+        let l = layer;
+        b.add_tensor(&format!("blk.{l}.attn_norm.weight"), &[dim], 0, 0)
+            .add_tensor(&format!("blk.{l}.ffn_norm.weight"), &[dim], 0, 0)
+            .add_tensor(&format!("blk.{l}.attn_q.weight"), &[dim, dim], 0, 0)
+            .add_tensor(&format!("blk.{l}.attn_k.weight"), &[dim, kv_dim], 0, 0)
+            .add_tensor(&format!("blk.{l}.attn_v.weight"), &[dim, kv_dim], 0, 0)
+            .add_tensor(&format!("blk.{l}.attn_output.weight"), &[dim, dim], 0, 0)
+            .add_tensor(&format!("blk.{l}.ffn_gate.weight"), &[dim, hidden], 0, 0)
+            .add_tensor(&format!("blk.{l}.ffn_up.weight"), &[dim, hidden], 0, 0)
+            .add_tensor(&format!("blk.{l}.ffn_down.weight"), &[hidden, dim], 0, 0);
+    }
+    b
+}
+
+#[test]
+fn verify_pass_valid_model() {
+    let b = build_verify_passing_gguf();
+    let path = write_gguf(&b.build());
+    let out = bin().args(["verify"]).arg(&path).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("PASS  token_embd.weight exists"));
+    assert!(stdout.contains("PASS  output.weight exists"));
+    assert!(stdout.contains("PASS  all layer tensors present"));
+    // Check no FAIL check lines (the summary line "0 FAIL" is fine)
+    assert!(!stdout.lines().any(|l| l.starts_with("FAIL")), "unexpected FAIL in output:\n{stdout}");
+}
+
+#[test]
+fn verify_fail_missing_token_embd() {
+    let mut b = GgufBuilder::new();
+    b.add_string("general.architecture", "llama")
+        .add_u32("llama.embedding_length", 64)
+        .add_u32("llama.block_count", 0)
+        .add_u32("llama.attention.head_count", 4)
+        .add_u32("llama.context_length", 512);
+    // No token_embd.weight
+    let path = write_gguf(&b.build());
+    let out = bin().args(["verify"]).arg(&path).output().unwrap();
+    assert!(!out.status.success()); // exit code 1
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("FAIL  token_embd.weight missing"));
+}
+
+#[test]
+fn verify_fail_wrong_vocab_size() {
+    let mut b = GgufBuilder::new();
+    b.add_string("general.architecture", "llama")
+        .add_u32("llama.embedding_length", 64)
+        .add_u32("llama.block_count", 0)
+        .add_u32("llama.attention.head_count", 4)
+        .add_u32("llama.vocab_size", 999) // mismatch!
+        .add_u32("llama.context_length", 512)
+        .add_tensor("token_embd.weight", &[64, 128], 0, 0);
+    let path = write_gguf(&b.build());
+    let out = bin().args(["verify"]).arg(&path).output().unwrap();
+    assert!(!out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("FAIL  vocab_size=999 != token_embd.weight[1]=128"));
+}
+
+#[test]
+fn verify_fail_missing_layer_tensors() {
+    let mut b = GgufBuilder::new();
+    b.add_string("general.architecture", "llama")
+        .add_u32("llama.embedding_length", 64)
+        .add_u32("llama.block_count", 2) // 2 layers
+        .add_u32("llama.attention.head_count", 4)
+        .add_u32("llama.vocab_size", 128)
+        .add_u32("llama.context_length", 512)
+        .add_tensor("token_embd.weight", &[64, 128], 0, 0)
+        .add_tensor("output.weight", &[64, 128], 0, 0);
+    // Only blk.0 tensors, no blk.1
+    for suffix in &[
+        "attn_norm.weight", "ffn_norm.weight", "attn_q.weight",
+        "attn_k.weight", "attn_v.weight", "attn_output.weight",
+        "ffn_gate.weight", "ffn_up.weight", "ffn_down.weight",
+    ] {
+        b.add_tensor(&format!("blk.0.{suffix}"), &[64], 0, 0);
+    }
+    let path = write_gguf(&b.build());
+    let out = bin().args(["verify"]).arg(&path).output().unwrap();
+    assert!(!out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("FAIL  missing blk.1."));
+}
+
+#[test]
+fn verify_warns_no_output_weight() {
+    let mut b = GgufBuilder::new();
+    b.add_string("general.architecture", "llama")
+        .add_u32("llama.embedding_length", 64)
+        .add_u32("llama.block_count", 0)
+        .add_u32("llama.attention.head_count", 4)
+        .add_u32("llama.vocab_size", 128)
+        .add_u32("llama.context_length", 512)
+        .add_tensor("token_embd.weight", &[64, 128], 0, 0);
+    // No output.weight
+    let path = write_gguf(&b.build());
+    let out = bin().args(["verify"]).arg(&path).output().unwrap();
+    assert!(out.status.success()); // exit 0 — warns only
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("WARN  output.weight missing"));
+}
+
+#[test]
+fn verify_help() {
+    let out = bin().args(["verify", "--help"]).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("PATH"));
+}
+
+// ── tensors --stats ─────────────────────────────────────────────────
+
+#[test]
+fn tensors_stats_f32_known_values() {
+    let values: Vec<f32> = (0..32).map(|i| i as f32).collect();
+    let raw = encode_f32(&values);
+    let mut b = GgufBuilder::new();
+    b.add_string("general.architecture", "llama")
+        .add_u32("llama.embedding_length", 32)
+        .add_u32("llama.block_count", 0)
+        .add_u32("llama.attention.head_count", 1)
+        .add_u32("llama.context_length", 32)
+        .add_tensor_with_data("test.weight", &[32], 0, raw);
+    let path = write_gguf(&b.build_with_data());
+    let out = bin()
+        .args(["tensors", "--stats"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("stats:"), "expected stats output, got:\n{stdout}");
+    assert!(stdout.contains("min=0.0"));
+    assert!(stdout.contains("max=31.0"));
+    assert!(stdout.contains("mean=15.5"));
+    assert!(stdout.contains("n=32"));
+}
+
+#[test]
+fn tensors_stats_with_filter() {
+    let v1: Vec<f32> = vec![1.0; 32];
+    let v2: Vec<f32> = vec![2.0; 32];
+    let mut b = GgufBuilder::new();
+    b.add_string("general.architecture", "llama")
+        .add_u32("llama.embedding_length", 32)
+        .add_u32("llama.block_count", 0)
+        .add_u32("llama.attention.head_count", 1)
+        .add_u32("llama.context_length", 32)
+        .add_tensor_with_data("alpha.weight", &[32], 0, encode_f32(&v1))
+        .add_tensor_with_data("beta.weight", &[32], 0, encode_f32(&v2));
+    let path = write_gguf(&b.build_with_data());
+    let out = bin()
+        .args(["tensors", "--stats", "--filter", "beta"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("beta.weight"));
+    assert!(!stdout.contains("alpha.weight"));
+    assert!(stdout.contains("min=2.0"));
+}
+
+#[test]
+fn tensors_stats_no_flag_no_stats() {
+    let values: Vec<f32> = vec![1.0; 32];
+    let mut b = GgufBuilder::new();
+    b.add_string("general.architecture", "llama")
+        .add_u32("llama.embedding_length", 32)
+        .add_u32("llama.block_count", 0)
+        .add_u32("llama.attention.head_count", 1)
+        .add_u32("llama.context_length", 32)
+        .add_tensor_with_data("test.weight", &[32], 0, encode_f32(&values));
+    let path = write_gguf(&b.build_with_data());
+    // No --stats flag
+    let out = bin()
+        .args(["tensors"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.contains("stats:"));
+}
+
+#[test]
+fn tensors_stats_combined_with_head() {
+    let values: Vec<f32> = (0..32).map(|i| i as f32 * 0.5).collect();
+    let mut b = GgufBuilder::new();
+    b.add_string("general.architecture", "llama")
+        .add_u32("llama.embedding_length", 32)
+        .add_u32("llama.block_count", 0)
+        .add_u32("llama.attention.head_count", 1)
+        .add_u32("llama.context_length", 32)
+        .add_tensor_with_data("test.weight", &[32], 0, encode_f32(&values));
+    let path = write_gguf(&b.build_with_data());
+    let out = bin()
+        .args(["tensors", "--stats", "--head", "3"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("stats:"));
+    assert!(stdout.contains("head(3):"));
+}
+
+// ── tensors --head ──────────────────────────────────────────────────
+
+#[test]
+fn tensors_head_shows_first_n_values() {
+    let values: Vec<f32> = (0..64).map(|i| i as f32 + 0.5).collect();
+    let mut b = GgufBuilder::new();
+    b.add_string("general.architecture", "llama")
+        .add_u32("llama.embedding_length", 64)
+        .add_u32("llama.block_count", 0)
+        .add_u32("llama.attention.head_count", 1)
+        .add_u32("llama.context_length", 64)
+        .add_tensor_with_data("test.weight", &[64], 0, encode_f32(&values));
+    let path = write_gguf(&b.build_with_data());
+    let out = bin()
+        .args(["tensors", "--head", "5"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("head(5):"));
+    assert!(stdout.contains("0.5"));
+    assert!(stdout.contains("1.5"));
+    assert!(stdout.contains("4.5"));
+}
+
+#[test]
+fn tensors_head_larger_than_tensor() {
+    let values: Vec<f32> = (0..16).map(|i| i as f32).collect();
+    let mut b = GgufBuilder::new();
+    b.add_string("general.architecture", "llama")
+        .add_u32("llama.embedding_length", 16)
+        .add_u32("llama.block_count", 0)
+        .add_u32("llama.attention.head_count", 1)
+        .add_u32("llama.context_length", 16)
+        .add_tensor_with_data("test.weight", &[16], 0, encode_f32(&values));
+    let path = write_gguf(&b.build_with_data());
+    let out = bin()
+        .args(["tensors", "--head", "100"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // Should print all 16 elements, clamped to tensor size
+    assert!(stdout.contains("head(16):"));
+    assert!(stdout.contains("15.0"));
+}
+
+#[test]
+fn tensors_head_zero() {
+    let values: Vec<f32> = vec![1.0; 32];
+    let mut b = GgufBuilder::new();
+    b.add_string("general.architecture", "llama")
+        .add_u32("llama.embedding_length", 32)
+        .add_u32("llama.block_count", 0)
+        .add_u32("llama.attention.head_count", 1)
+        .add_u32("llama.context_length", 32)
+        .add_tensor_with_data("test.weight", &[32], 0, encode_f32(&values));
+    let path = write_gguf(&b.build_with_data());
+    let out = bin()
+        .args(["tensors", "--head", "0"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("head(0): []"));
+}
+
+#[test]
+fn tensors_help_shows_new_flags() {
+    let out = bin().args(["tensors", "--help"]).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("--stats"));
+    assert!(stdout.contains("--head"));
 }
