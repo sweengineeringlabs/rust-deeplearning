@@ -1,7 +1,48 @@
-//! GPT-2 Model Implementation
+//! GPT-2 Reference Implementation (Teaching / Educational)
 //!
-//! This module provides a complete GPT-2 implementation compatible with
-//! HuggingFace pre-trained weights.
+//! This module provides a standalone, readable GPT-2 implementation intended as
+//! a learning reference. It mirrors the original OpenAI GPT-2 architecture
+//! one-to-one, using the same weight names (wte, wpe, c_attn, c_fc, etc.) and
+//! the same pre-LN transformer block layout.
+//!
+//! **For production inference, use [`LlmModel::from_pretrained_gpt2`] instead.**
+//! `LlmModel` routes GPT-2 through the unified transformer infrastructure that
+//! includes a proper KV cache, giving ~15x faster autoregressive decoding.
+//!
+//! This module is kept because it is useful for:
+//! - Understanding GPT-2 architecture without abstraction layers
+//! - Unit tests that need a lightweight, self-contained model
+//! - Comparing outputs against the optimized `LlmModel` path
+//!
+//! ## Architecture (GPT-2 Small, 124M params)
+//!
+//! ```text
+//! Input token IDs  [B, S]
+//!       |
+//!   wte (token embedding)   +   wpe (position embedding)
+//!       |                           |
+//!       +---------------------------+
+//!       |
+//!   12x GptBlock:
+//!       |-- LayerNorm (ln_1)
+//!       |-- CausalSelfAttention (fused QKV via c_attn)
+//!       |-- Residual add
+//!       |-- LayerNorm (ln_2)
+//!       |-- MLP: Linear(c_fc) -> GELU -> Linear(c_proj)
+//!       |-- Residual add
+//!       |
+//!   LayerNorm (ln_f)
+//!       |
+//!   Logits = hidden @ wte.weight.T   (weight tying)
+//! ```
+//!
+//! ## Performance note
+//!
+//! `GptModel::forward` recomputes attention over the full sequence at every
+//! decode step (O(n^2) total for n generated tokens). The `forward_with_cache`
+//! impl on the `LanguageModel` trait works around this by accumulating a token
+//! history and replaying the full forward pass, but this is still O(n^2).
+//! `LlmModel` avoids this entirely with a real KV cache (O(n) total).
 
 use crate::api::error::{NlpError, NlpResult};
 use crate::api::types::GptConfig;
@@ -12,9 +53,12 @@ use std::collections::HashMap;
 
 /// GPT-2 MLP (Feed-Forward Network)
 ///
-/// Structure: fc -> GELU -> proj
-/// - fc: Linear(n_embd, 4 * n_embd)
-/// - proj: Linear(4 * n_embd, n_embd)
+/// Two-layer expansion/projection with GELU activation, matching the original
+/// OpenAI GPT-2 naming convention (`c_fc` / `c_proj` from Conv1D layers).
+///
+/// ```text
+/// x -> c_fc [n_embd, 4*n_embd] -> GELU -> c_proj [4*n_embd, n_embd] -> out
+/// ```
 #[derive(Debug, Clone)]
 pub struct GptMlp {
     /// First linear layer (expansion)
@@ -55,11 +99,16 @@ impl GptMlp {
     }
 }
 
-/// GPT-2 Transformer Block
+/// GPT-2 Transformer Block (Pre-LN variant)
 ///
-/// Structure:
-/// - LN -> Attention -> Residual
-/// - LN -> MLP -> Residual
+/// Each block applies layer normalization *before* the sub-layer (pre-LN),
+/// followed by a residual connection. This matches the GPT-2 paper.
+///
+/// ```text
+/// x  ->  LN(ln_1)  ->  CausalSelfAttention  ->  + (residual)
+///                                                 |
+///        LN(ln_2)  ->  MLP (GELU)            ->  + (residual)  ->  out
+/// ```
 #[derive(Debug, Clone)]
 pub struct GptBlock {
     /// Pre-attention layer norm
@@ -146,15 +195,18 @@ impl GptBlock {
     }
 }
 
-/// GPT-2 Model
+/// Standalone GPT-2 model — educational / reference implementation.
 ///
-/// Full GPT-2 architecture:
-/// - Token embeddings (wte)
-/// - Position embeddings (wpe)
-/// - Transformer blocks
-/// - Final layer norm (ln_f)
+/// This struct mirrors the HuggingFace `GPT2LMHeadModel` layout exactly:
+/// token embedding (`wte`), learned position embedding (`wpe`), N transformer
+/// blocks, final layer norm (`ln_f`), and weight-tied output projection.
 ///
-/// Output: logits over vocabulary
+/// **Not used for production inference.** The CLI (`rustml-infer` and
+/// `sweai infer`) uses [`LlmModel::from_pretrained_gpt2`] which provides
+/// the same correctness with a real KV cache (~15x faster decoding).
+///
+/// Kept as a reference because the code maps 1:1 to the GPT-2 paper and
+/// HuggingFace weight names, making it easy to follow.
 #[derive(Debug, Clone)]
 pub struct GptModel {
     /// Model configuration
@@ -309,9 +361,39 @@ impl crate::api::types::LanguageModel for GptModel {
         GptModel::forward(self, input_ids)
     }
 
-    fn forward_with_cache(&self, input_ids: &Tensor, _cache: &mut rustml_nn::KVCache) -> NlpResult<Tensor> {
-        // GptModel doesn't support KV cache — fall back to full forward
-        GptModel::forward(self, input_ids)
+    fn forward_with_cache(&self, input_ids: &Tensor, cache: &mut rustml_nn::KVCache) -> NlpResult<Tensor> {
+        // Compatibility shim: GptModel has no native KV cache.
+        // We accumulate the full token history and replay a complete forward
+        // pass each step, giving correct results but O(n²) total cost.
+        //
+        // For production use, prefer LlmModel::from_pretrained_gpt2() which
+        // caches K/V projections per-layer and runs O(n) per decode step.
+        let input_data: Vec<f32> = input_ids.iter().collect();
+        let new_tokens: Vec<u32> = input_data.iter().map(|&v| v as u32).collect();
+        let new_len = new_tokens.len();
+
+        if cache.current_len == 0 {
+            cache.token_history.clear();
+        }
+        cache.token_history.extend(&new_tokens);
+        let full_len = cache.token_history.len();
+
+        // Prefill: history == input, run forward directly
+        if full_len == new_len {
+            return GptModel::forward(self, input_ids);
+        }
+
+        // Decode step: re-run forward on full accumulated sequence
+        let all_data: Vec<f32> = cache.token_history.iter().map(|&t| t as f32).collect();
+        let full_input = Tensor::from_vec(all_data, vec![1, full_len])?;
+        let full_logits = GptModel::forward(self, &full_input)?;
+
+        // Return only logits for the new positions (last new_len positions)
+        let logits_data: Vec<f32> = full_logits.iter().collect();
+        let vocab_size = self.config.vocab_size;
+        let start = (full_len - new_len) * vocab_size;
+        let new_logits: Vec<f32> = logits_data[start..start + new_len * vocab_size].to_vec();
+        Ok(Tensor::from_vec(new_logits, vec![1, new_len, vocab_size])?)
     }
 
     fn vocab_size(&self) -> usize { self.config.vocab_size }

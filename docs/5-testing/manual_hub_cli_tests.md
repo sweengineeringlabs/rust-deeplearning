@@ -19,6 +19,7 @@
 - [List](#5-list)
 - [Info](#6-info)
 - [Error Cases](#7-error-cases)
+- [SafeTensors Inference (Standalone)](#8-safetensors-inference-standalone)
 
 ---
 
@@ -90,6 +91,18 @@
 |------|---------|----------|
 | Info uncached model | `rustml-hub-cli info nonexistent/model` | Error: model not cached |
 | Download bad model | `rustml-hub-cli download nonexistent/model-xyz-99999` | Error: download failed |
+
+## 8. SafeTensors Inference (Standalone)
+
+> **Prerequisite**: Download `openai-community/gpt2` first (Section 3). Build with `cargo build -p rustml-nlp`.
+>
+> **Architecture note:** SafeTensors models now load through `LlmModel` with a real KV cache (same path as GGUF models), giving ~15x faster decoding than the previous `GptModel` path. Stderr will show `Building model (LlmModel with KV cache)...`, parameter count, and KV cache memory usage. See [ADR-001](../3-design/adr/adr-001-unified-llmmodel-for-gpt2.md).
+
+| Test | Command | Expected |
+|------|---------|----------|
+| SafeTensors infer | `rustml-infer --safetensors openai-community/gpt2 --prompt "Hello" --max-tokens 10` | Loads GPT-2 via `LlmModel`; stderr shows KV cache info; generates text |
+| SafeTensors streaming | `rustml-infer --safetensors openai-community/gpt2 --prompt "The quick brown fox" --stream --max-tokens 20` | Tokens printed incrementally; stderr shows `tokens/sec` |
+| SafeTensors greedy | `rustml-infer --safetensors openai-community/gpt2 --prompt "1+1=" --temperature 0 --max-tokens 10` | Deterministic output |
 
 ---
 

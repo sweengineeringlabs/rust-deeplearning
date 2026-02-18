@@ -44,6 +44,9 @@
 - [x] **No performance benchmarks** — Added `criterion` benchmarks for argmax, top_k, top_p, repetition_penalty, and sample_categorical sampling functions.
   - File: `rustml/nlp/benches/sampling.rs`
 
+- [x] **SafeTensors GPT-2 used separate GptModel without KV cache** — The `--safetensors` inference path loaded GPT-2 weights into `GptModel`, a standalone implementation with no KV cache (O(n^2) per generation). Rewired to use `LlmModel::from_pretrained_gpt2()` with `map_gpt2_weights()`, reusing the unified model path that already had KV cache from GGUF work. Result: ~15x faster decoding (0.64 tok/s to 9.3 tok/s). `GptModel` retained as a teaching/reference implementation. See [ADR-001](../3-design/adr/adr-001-unified-llmmodel-for-gpt2.md).
+  - Files: `rustml/nlp/main/src/bin/infer.rs`, `rustml/cli/src/cmd/infer.rs`, `rustml/nlp/main/src/core/gpt.rs`
+
 - [ ] **CPU-only inference** — No GPU backend (CUDA, Metal). Limited throughput ceiling. Long-term consideration.
 
 - [x] **No prefix caching** — Added `KVCache::snapshot()` and `KVCache::restore_from()` methods with dimension validation, enabling reuse of prefilled KV state across requests with shared prompts.

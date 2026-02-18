@@ -244,6 +244,20 @@ The tokenizer and model weights must agree on a shared vocabulary. This is not e
 | **Token-to-ID mapping** | `"Hello"` → `17534` | Row `17534` = learned vector for `"Hello"` | Correct IDs retrieve wrong vectors; garbage output |
 | **Special token IDs** | BOS=`2`, EOS=`1` | Training used same IDs for start/end signals | Model doesn't recognize sequence boundaries |
 
+### Where Agreement Lives in SafeTensors (GPT-2)
+
+SafeTensors models store weights separately from the tokenizer. Agreement must be maintained across files:
+
+```
+~/.cache/rustml/hub/openai-community--gpt2/
+├── config.json            ← Model dimensions, vocab_size
+├── model.safetensors      ← Weights (token_embedding must match vocab_size)
+├── vocab.json             ← Token-to-ID mapping (BPE vocabulary)
+└── merges.txt             ← BPE merge rules
+```
+
+The inference CLI loads weights via `map_gpt2_weights()` (remaps HuggingFace names to LlmModel internal names) and builds the model via `LlmModel::from_pretrained_gpt2()` — the same unified model path used for GGUF, with KV cache support. Weight tying (output projection = embedding weight) is handled automatically.
+
 ### Where Agreement Lives in GGUF
 
 GGUF bundles both tokenizer and weights in one file, which helps maintain agreement:
@@ -340,6 +354,7 @@ What happens when the tokenizer–weight contract is broken:
 ## See Also
 
 - [Architecture](../architecture.md) — project structure and crate layout
+- [ADR-001: Unified LlmModel for GPT-2](../adr/adr-001-unified-llmmodel-for-gpt2.md) — why SafeTensors models use LlmModel
 - [Manual Testing Guide](../../5-testing/manual_testing.md) — CLI test procedures
 - [Manual Tokenizer Tests](../../5-testing/manual_tokenizer_tests.md) — tokenizer verification tests
 - [Manual GGUF Inspector Tests](../../5-testing/manual_gguf_inspect_tests.md) — weight/metadata inspection tests

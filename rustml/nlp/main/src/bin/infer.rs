@@ -7,15 +7,24 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 
 use rustml_gguf::GGUFFile;
-use rustml_nlp::{Generator, LlmModel, convert_tensors, gguf_config_to_model_config};
-use rustml_tokenizer::{GgufTokenizer, Tokenizer};
+use rustml_hub::HubApi;
+use rustml_nlp::{
+    Generator, LanguageModel, LlmModel, convert_tensors,
+    gguf_config_to_model_config,
+};
+use rustml_tokenizer::{BpeTokenizer, GgufTokenizer, Tokenizer};
 
-/// RustML Inference CLI — run text generation on a GGUF model.
+/// RustML Inference CLI — run text generation on a GGUF or SafeTensors model.
 #[derive(Parser)]
 #[command(name = "rustml-infer", version, about)]
 struct Cli {
     /// Path to a GGUF model file.
-    gguf_path: PathBuf,
+    #[arg(conflicts_with = "safetensors")]
+    gguf_path: Option<PathBuf>,
+
+    /// HuggingFace model ID to load via SafeTensors (e.g. openai-community/gpt2).
+    #[arg(long)]
+    safetensors: Option<String>,
 
     /// Prompt text. Reads from stdin if omitted.
     #[arg(long, conflicts_with = "batch_file")]
@@ -74,10 +83,10 @@ fn read_prompt(cli: &Cli) -> Result<String> {
     }
 }
 
-fn main() -> Result<()> {
-    let cli = Cli::parse();
-
-    // 1. Validate parameters (fail fast before loading model)
+fn validate_args(cli: &Cli) -> Result<Option<String>> {
+    if cli.gguf_path.is_none() && cli.safetensors.is_none() {
+        bail!("Provide a GGUF model path or --safetensors <MODEL_ID>");
+    }
     if cli.temperature < 0.0 {
         bail!("--temperature must be >= 0.0, got {}", cli.temperature);
     }
@@ -104,6 +113,7 @@ fn main() -> Result<()> {
     if cli.stream && cli.batch_file.is_some() {
         bail!("--stream is not supported with --batch-file");
     }
+
     let batch_contents = if let Some(ref batch_path) = cli.batch_file {
         let contents = fs::read_to_string(batch_path)
             .with_context(|| format!("Failed to read batch file: {}", batch_path.display()))?;
@@ -115,67 +125,19 @@ fn main() -> Result<()> {
         None
     };
 
-    // 2. Parse GGUF header
-    eprintln!("Loading GGUF: {}", cli.gguf_path.display());
-    let gguf = GGUFFile::parse_header(&cli.gguf_path)
-        .with_context(|| format!("Failed to parse GGUF: {}", cli.gguf_path.display()))?;
-    eprintln!(
-        "  GGUF v{}, {} tensors",
-        gguf.version,
-        gguf.tensor_infos.len()
-    );
+    Ok(batch_contents)
+}
 
-    // 2. Extract config
-    let gguf_config = gguf
-        .to_model_config()
-        .with_context(|| "Failed to extract model config from GGUF")?;
-    let config = gguf_config_to_model_config(&gguf_config)
-        .with_context(|| "Failed to convert GGUF config to model config")?;
-    eprintln!(
-        "  arch={}, dim={}, layers={}, heads={}, vocab={}",
-        gguf_config.architecture, config.dim, config.n_layers, config.n_heads, config.vocab_size
-    );
-
-    // 3. Build tokenizer
-    let tokenizer = GgufTokenizer::from_gguf(&gguf)
-        .with_context(|| "Failed to build tokenizer from GGUF")?;
-    eprintln!("  Tokenizer: {} tokens", tokenizer.vocab_size());
-
-    // 4. Load tensors (architecture-dependent)
-    eprintln!("  Loading tensors...");
-    let is_gemma3 = gguf_config.architecture == "gemma3";
-    let loaded_tensors = if is_gemma3 {
-        gguf.load_and_remap_gemma3(&cli.gguf_path, config.n_layers)
-            .with_context(|| "Failed to load/remap gemma3 tensors")?
-    } else {
-        gguf.load_and_remap(&cli.gguf_path, config.n_layers)
-            .with_context(|| "Failed to load/remap tensors")?
-    };
-    let tensors = convert_tensors(loaded_tensors);
-    eprintln!("  {} tensors loaded", tensors.len());
-
-    // 5. Build model
-    eprintln!("  Building model...");
-    let model = if is_gemma3 {
-        LlmModel::from_pretrained_gemma3(&config, tensors)
-            .with_context(|| "Failed to build gemma3 model")?
-    } else {
-        LlmModel::from_pretrained(&config, tensors)
-            .with_context(|| "Failed to build model")?
-    };
-    let (total_params, _) = model.parameter_count();
-    eprintln!("  Model ready: {:.1}M params", total_params as f64 / 1e6);
-
-    // Report KV cache memory
-    let n_kv_heads = config.n_kv_heads.unwrap_or(config.n_heads);
-    let head_dim = config.head_dim.unwrap_or(config.dim / config.n_heads);
-    let cache_bytes = 2 * config.n_layers * 1 * n_kv_heads * config.max_seq_len * head_dim * 4;
-    let cache_mb = cache_bytes as f64 / (1024.0 * 1024.0);
-    eprintln!("  KV cache: {:.1} MB ({}layers x {}heads x {}seq x {}dim x f32 x 2)",
-        cache_mb, config.n_layers, n_kv_heads, config.max_seq_len, head_dim);
-
-    // 6. Build generator
-    let mut generator = Generator::new(&model, &tokenizer, cli.temperature);
+fn run_generation(
+    model: &(dyn LanguageModel + Sync),
+    tokenizer: &(dyn Tokenizer + Sync),
+    cli: &Cli,
+    batch_contents: Option<String>,
+    eos_token_id: Option<u32>,
+    bos_token_id: Option<u32>,
+    chat_template: Option<String>,
+) -> Result<()> {
+    let mut generator = Generator::new(model, tokenizer, cli.temperature);
 
     if let Some(k) = cli.top_k {
         generator = generator.with_top_k(k);
@@ -186,21 +148,20 @@ fn main() -> Result<()> {
     if let Some(rp) = cli.repetition_penalty {
         generator = generator.with_repetition_penalty(rp);
     }
-    if let Some(eos) = config.eos_token_id {
+    if let Some(eos) = eos_token_id {
         generator = generator.with_eos_token(eos);
     }
-    if let Some(bos) = config.bos_token_id {
+    if let Some(bos) = bos_token_id {
         generator = generator.with_bos_token(bos);
     }
     if cli.chat {
-        generator = generator.with_chat_template(config.chat_template.clone());
+        generator = generator.with_chat_template(chat_template);
     }
     if let Some(secs) = cli.timeout {
         generator = generator.with_timeout(Duration::from_secs_f64(secs));
         eprintln!("  Timeout: {:.1}s", secs);
     }
 
-    // 8. Read prompt(s) and generate
     if let Some(ref contents) = batch_contents {
         let prompts: Vec<&str> = contents.lines().filter(|l| !l.trim().is_empty()).collect();
         eprintln!("  Batch: {} prompts", prompts.len());
@@ -214,25 +175,31 @@ fn main() -> Result<()> {
             println!("[{}] {}", i, output);
         }
         eprintln!("---");
-        eprintln!("  {} prompts in {:.2}s ({:.1} prompts/sec)",
-            results.len(), elapsed.as_secs_f64(),
-            results.len() as f64 / elapsed.as_secs_f64().max(1e-9));
+        eprintln!(
+            "  {} prompts in {:.2}s ({:.1} prompts/sec)",
+            results.len(),
+            elapsed.as_secs_f64(),
+            results.len() as f64 / elapsed.as_secs_f64().max(1e-9)
+        );
     } else {
-        let prompt = read_prompt(&cli)?;
+        let prompt = read_prompt(cli)?;
         eprintln!("---");
 
         let gen_start = Instant::now();
 
         if cli.stream {
             let mut token_count: usize = 0;
-            let _output = generator.generate_stream(&prompt, cli.max_tokens, |token_id| {
-                token_count += 1;
-                match tokenizer.decode(&[token_id]) {
-                    Ok(piece) => print!("{piece}"),
-                    Err(e) => eprintln!("[warn] failed to decode token {}: {}", token_id, e),
-                }
-                true
-            })?;
+            let _output =
+                generator.generate_stream(&prompt, cli.max_tokens, |token_id| {
+                    token_count += 1;
+                    match tokenizer.decode(&[token_id]) {
+                        Ok(piece) => print!("{piece}"),
+                        Err(e) => {
+                            eprintln!("[warn] failed to decode token {}: {}", token_id, e)
+                        }
+                    }
+                    true
+                })?;
             println!();
             let elapsed = gen_start.elapsed();
             let tps = if elapsed.as_secs_f64() > 0.0 {
@@ -241,7 +208,12 @@ fn main() -> Result<()> {
                 0.0
             };
             eprintln!("---");
-            eprintln!("  {} tokens in {:.2}s ({:.1} tokens/sec)", token_count, elapsed.as_secs_f64(), tps);
+            eprintln!(
+                "  {} tokens in {:.2}s ({:.1} tokens/sec)",
+                token_count,
+                elapsed.as_secs_f64(),
+                tps
+            );
         } else {
             let output = generator.generate(&prompt, cli.max_tokens)?;
             let elapsed = gen_start.elapsed();
@@ -252,4 +224,149 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    let batch_contents = validate_args(&cli)?;
+
+    if let Some(ref model_id) = cli.safetensors {
+        run_safetensors(model_id, &cli, batch_contents)
+    } else {
+        let gguf_path = cli.gguf_path.as_ref().unwrap();
+        run_gguf(gguf_path, &cli, batch_contents)
+    }
+}
+
+fn run_safetensors(
+    model_id: &str,
+    cli: &Cli,
+    batch_contents: Option<String>,
+) -> Result<()> {
+    let hub = HubApi::new();
+    let bundle = match hub.get_cached(model_id) {
+        Some(b) => {
+            eprintln!("Using cached model: {}", model_id);
+            b
+        }
+        None => {
+            eprintln!("Downloading model: {}", model_id);
+            hub.download_model_sync(model_id)
+                .with_context(|| format!("Failed to download model: {}", model_id))?
+        }
+    };
+
+    let json_config = bundle
+        .load_config_sync()
+        .with_context(|| "Failed to load config.json")?;
+    let config = rustml_nlp::ModelConfig::from_json_value(&json_config)
+        .with_context(|| "Failed to parse model config")?;
+    eprintln!(
+        "  Config: dim={}, layers={}, heads={}, vocab={}",
+        config.dim, config.n_layers, config.n_heads, config.vocab_size
+    );
+
+    eprintln!("  Loading SafeTensors weights...");
+    let weights = bundle
+        .load_tensors()
+        .with_context(|| "Failed to load SafeTensors weights")?;
+    eprintln!("  {} tensors loaded", weights.len());
+
+    eprintln!("  Building model (LlmModel with KV cache)...");
+    let weights = rustml_nlp::map_gpt2_weights(weights);
+    let model = LlmModel::from_pretrained_gpt2(&config, weights)
+        .with_context(|| "Failed to build GPT-2 model")?;
+    let (total_params, _) = model.parameter_count();
+    eprintln!("  Model ready: {:.1}M params", total_params as f64 / 1e6);
+
+    let n_kv_heads = config.n_kv_heads.unwrap_or(config.n_heads);
+    let head_dim = config.head_dim.unwrap_or(config.dim / config.n_heads);
+    let cache_bytes = 2 * config.n_layers * 1 * n_kv_heads * config.max_seq_len * head_dim * 4;
+    let cache_mb = cache_bytes as f64 / (1024.0 * 1024.0);
+    eprintln!(
+        "  KV cache: {:.1} MB ({}layers x {}heads x {}seq x {}dim x f32 x 2)",
+        cache_mb, config.n_layers, n_kv_heads, config.max_seq_len, head_dim
+    );
+
+    let tokenizer = BpeTokenizer::from_files(bundle.vocab_path(), bundle.merges_path())
+        .with_context(|| "Failed to load BPE tokenizer")?;
+    eprintln!("  Tokenizer: {} tokens", tokenizer.vocab_size());
+
+    if cli.chat {
+        eprintln!("[warn] --chat is not supported for SafeTensors GPT-2 (no chat template), ignoring");
+    }
+
+    let eos = Some(BpeTokenizer::GPT2_EOS_TOKEN_ID);
+    run_generation(&model, &tokenizer, cli, batch_contents, eos, None, None)
+}
+
+fn run_gguf(
+    gguf_path: &PathBuf,
+    cli: &Cli,
+    batch_contents: Option<String>,
+) -> Result<()> {
+    eprintln!("Loading GGUF: {}", gguf_path.display());
+    let gguf = GGUFFile::parse_header(gguf_path)
+        .with_context(|| format!("Failed to parse GGUF: {}", gguf_path.display()))?;
+    eprintln!(
+        "  GGUF v{}, {} tensors",
+        gguf.version,
+        gguf.tensor_infos.len()
+    );
+
+    let gguf_config = gguf
+        .to_model_config()
+        .with_context(|| "Failed to extract model config from GGUF")?;
+    let config = gguf_config_to_model_config(&gguf_config)
+        .with_context(|| "Failed to convert GGUF config to model config")?;
+    eprintln!(
+        "  arch={}, dim={}, layers={}, heads={}, vocab={}",
+        gguf_config.architecture, config.dim, config.n_layers, config.n_heads, config.vocab_size
+    );
+
+    let tokenizer = GgufTokenizer::from_gguf(&gguf)
+        .with_context(|| "Failed to build tokenizer from GGUF")?;
+    eprintln!("  Tokenizer: {} tokens", tokenizer.vocab_size());
+
+    eprintln!("  Loading tensors...");
+    let is_gemma3 = gguf_config.architecture == "gemma3";
+    let loaded_tensors = if is_gemma3 {
+        gguf.load_and_remap_gemma3(gguf_path, config.n_layers)
+            .with_context(|| "Failed to load/remap gemma3 tensors")?
+    } else {
+        gguf.load_and_remap(gguf_path, config.n_layers)
+            .with_context(|| "Failed to load/remap tensors")?
+    };
+    let tensors = convert_tensors(loaded_tensors);
+    eprintln!("  {} tensors loaded", tensors.len());
+
+    eprintln!("  Building model...");
+    let model = if is_gemma3 {
+        LlmModel::from_pretrained_gemma3(&config, tensors)
+            .with_context(|| "Failed to build gemma3 model")?
+    } else {
+        LlmModel::from_pretrained(&config, tensors)
+            .with_context(|| "Failed to build model")?
+    };
+    let (total_params, _) = model.parameter_count();
+    eprintln!("  Model ready: {:.1}M params", total_params as f64 / 1e6);
+
+    let n_kv_heads = config.n_kv_heads.unwrap_or(config.n_heads);
+    let head_dim = config.head_dim.unwrap_or(config.dim / config.n_heads);
+    let cache_bytes = 2 * config.n_layers * 1 * n_kv_heads * config.max_seq_len * head_dim * 4;
+    let cache_mb = cache_bytes as f64 / (1024.0 * 1024.0);
+    eprintln!(
+        "  KV cache: {:.1} MB ({}layers x {}heads x {}seq x {}dim x f32 x 2)",
+        cache_mb, config.n_layers, n_kv_heads, config.max_seq_len, head_dim
+    );
+
+    run_generation(
+        &model,
+        &tokenizer,
+        cli,
+        batch_contents,
+        config.eos_token_id,
+        config.bos_token_id,
+        config.chat_template.clone(),
+    )
 }

@@ -1,11 +1,11 @@
 # Manual Inference Tests
 
-> **TLDR:** Manual test checklist for the `rustml-infer` CLI: load GGUF models, generate text, sampling options, and streaming.
+> **TLDR:** Manual test checklist for the `rustml-infer` CLI: load GGUF or SafeTensors models, generate text, sampling options, and streaming.
 
 **Audience**: Developers, QA
 
 **WHAT**: Manual test procedures for the inference CLI tool
-**WHY**: Validates end-to-end text generation from GGUF models — the primary user-facing workflow
+**WHY**: Validates end-to-end text generation from GGUF and SafeTensors models — the primary user-facing workflow
 **HOW**: Step-by-step test tables with expected outcomes
 
 ---
@@ -21,11 +21,13 @@
 - [Batch File](#7-batch-file)
 - [Timeout](#8-timeout)
 - [Diagnostic Output](#9-diagnostic-output)
-- [Error Cases](#10-error-cases)
+- [SafeTensors Generation](#10-safetensors-generation)
+- [SafeTensors Diagnostics](#11-safetensors-diagnostics)
+- [Error Cases](#12-error-cases)
 
 ---
 
-> **Prerequisite**: A GGUF model file (e.g., Gemma 3 1B IT Q4_0). Release build recommended for inference speed: `cargo build --release -p rustml-nlp`.
+> **Prerequisite**: A GGUF model file (e.g., Gemma 3 1B IT Q4_0) for GGUF tests, or a cached SafeTensors model (e.g., `openai-community/gpt2`) for SafeTensors tests. Release build recommended for inference speed: `cargo build --release -p rustml-nlp`.
 >
 > **Unified CLI**: All `rustml-infer` commands below can also be run as `sweai infer` (e.g., `sweai infer model.gguf --prompt "Hello"`). Build with `cargo build --release -p rustml-cli`.
 
@@ -33,9 +35,9 @@
 
 | Test | Command | Expected |
 |------|---------|----------|
-| Help flag | `rustml-infer --help` | Lists `GGUF_PATH` positional, `--prompt`, `--batch-file`, `--max-tokens`, `--temperature`, `--top-k`, `--top-p`, `--repetition-penalty`, `--stream`, `--chat`, `--timeout` |
+| Help flag | `rustml-infer --help` | Lists `GGUF_PATH` positional, `--safetensors`, `--prompt`, `--batch-file`, `--max-tokens`, `--temperature`, `--top-k`, `--top-p`, `--repetition-penalty`, `--stream`, `--chat`, `--timeout` |
 | Version flag | `rustml-infer --version` | Prints version string |
-| No args | `rustml-infer` | Shows error and usage with `GGUF_PATH` |
+| No args | `rustml-infer` | Error: `Provide a GGUF model path or --safetensors <MODEL_ID>` |
 | Unified help | `sweai infer --help` | Same flags as `rustml-infer --help` |
 
 ## 2. Basic Generation
@@ -125,10 +127,45 @@
 | Metrics (non-stream) | stderr after generation | `Generated in <T>s` |
 | Metrics (batch) | stderr after batch | `<N> prompts in <T>s (<R> prompts/sec)` |
 
-## 10. Error Cases
+## 10. SafeTensors Generation
+
+> **Prerequisite**: Download `openai-community/gpt2` via `rustml-hub-cli download openai-community/gpt2` (or `sweai hub download openai-community/gpt2`).
 
 | Test | Command | Expected |
 |------|---------|----------|
+| Basic generation | `rustml-infer --safetensors openai-community/gpt2 --prompt "The capital of France is" --max-tokens 20` | Prints generated continuation |
+| Greedy decoding | `rustml-infer --safetensors openai-community/gpt2 --prompt "1+1=" --temperature 0 --max-tokens 10` | Deterministic output (same result on repeated runs) |
+| Short output | `rustml-infer --safetensors openai-community/gpt2 --prompt "Hello" --max-tokens 5` | Output is at most ~5 tokens |
+| Sampling flags | `rustml-infer --safetensors openai-community/gpt2 --prompt "Once upon" --temperature 0.7 --top-k 50 --top-p 0.9 --repetition-penalty 1.1 --max-tokens 32` | All flags accepted; generates text |
+| Streaming | `rustml-infer --safetensors openai-community/gpt2 --prompt "The quick brown fox" --stream --max-tokens 20` | Tokens printed incrementally |
+| Chat warning | `rustml-infer --safetensors openai-community/gpt2 --prompt "Hi" --chat --max-tokens 10` | Stderr: `--chat is not supported for SafeTensors GPT-2`; generates text anyway |
+| Stdin prompt | `echo "Hello world" \| rustml-infer --safetensors openai-community/gpt2 --max-tokens 10` | Reads prompt from stdin |
+| Batch file | `rustml-infer --safetensors openai-community/gpt2 --batch-file /tmp/prompts.txt --max-tokens 32` | Outputs `[0] ...`, `[1] ...` per prompt |
+| Timeout | `rustml-infer --safetensors openai-community/gpt2 --prompt "Tell me a story" --max-tokens 4096 --timeout 5` | Generation stops after ~5s |
+| Conflicts with GGUF | `rustml-infer model.gguf --safetensors openai-community/gpt2 --prompt "Hi"` | Error: cannot use both GGUF path and `--safetensors` |
+
+## 11. SafeTensors Diagnostics
+
+> **Note:** SafeTensors models (e.g., GPT-2) now use `LlmModel` with a real KV cache — the same unified model path as GGUF models. This gives ~15x faster decoding compared to the previous `GptModel` path. See [ADR-001](../3-design/adr/adr-001-unified-llmmodel-for-gpt2.md) for details.
+
+| Test | What to check | Expected |
+|------|---------------|----------|
+| Cache hit | stderr when model is cached | `Using cached model: openai-community/gpt2` |
+| Cache miss | stderr when model is not cached | `Downloading model: openai-community/gpt2` |
+| Config summary | stderr | `Config: dim=768, layers=12, heads=12, vocab=50257` |
+| Weight loading | stderr | `Loading SafeTensors weights...` then `<N> tensors loaded` |
+| Model build | stderr | `Building model (LlmModel with KV cache)...` |
+| Model ready | stderr | `Model ready: <N>M params` |
+| KV cache memory | stderr | `KV cache: <N> MB (<layers>layers x <heads>heads x <seq>seq x <dim>dim x f32 x 2)` |
+| Tokenizer info | stderr | `Tokenizer: <N> tokens` |
+| Metrics (stream) | stderr after streaming | `<N> tokens in <T>s (<R> tokens/sec)` |
+| Metrics (non-stream) | stderr after generation | `Generated in <T>s` |
+
+## 12. Error Cases
+
+| Test | Command | Expected |
+|------|---------|----------|
+| No model provided | `rustml-infer --prompt "Hello"` | Error: `Provide a GGUF model path or --safetensors <MODEL_ID>` |
 | Nonexistent file | `rustml-infer /nonexistent.gguf --prompt "Hello"` | Error: `Failed to parse GGUF` |
 | Invalid GGUF | `rustml-infer /tmp/not_a_gguf.bin --prompt "Hello"` | Error: invalid GGUF |
 | Bad temperature type | `rustml-infer model.gguf --temperature abc` | Error: invalid value for `--temperature` |
@@ -138,6 +175,7 @@
 | Top-k zero | `rustml-infer model.gguf --prompt "Hi" --top-k 0` | Error: `--top-k must be > 0` |
 | Top-p out of range | `rustml-infer model.gguf --prompt "Hi" --top-p 1.5` | Error: `--top-p must be in (0.0, 1.0]` |
 | Repetition penalty zero | `rustml-infer model.gguf --prompt "Hi" --repetition-penalty 0` | Error: `--repetition-penalty must be > 0.0` |
+| SafeTensors bad model | `rustml-infer --safetensors nonexistent/model-xyz --prompt "Hi"` | Error: `Failed to download model` |
 
 ---
 

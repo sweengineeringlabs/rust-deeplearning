@@ -188,6 +188,36 @@ const VERIFICATION_CASES: &[(&str, &[u32], &[u32])] = &[
 
 **When to run:** After any change to the forward pass, attention, FFN, normalization, RoPE, KV cache, weight loading, or quantized matmul.
 
+## 4. SafeTensors / GPT-2 Verification
+
+The same three approaches apply to SafeTensors models loaded through `LlmModel::from_pretrained_gpt2()`. Key differences from GGUF:
+
+- **Tokenizer**: BPE tokenizer loaded from `vocab.json` + `merges.txt` (not embedded in the model file)
+- **Weight mapping**: HuggingFace names are remapped via `map_gpt2_weights()` to LlmModel internal names (e.g., `transformer.h.0.attn.c_attn.weight` becomes `layers.0.attention.c_attn.weight`)
+- **Conv1D transpose**: GPT-2 stores linear weights as `[in, out]`; `from_pretrained_gpt2()` transposes them to `[out, in]`
+- **Fused QKV**: The single `c_attn.weight` is split into separate Q, K, V projections
+- **No quantization**: SafeTensors weights are F32, so logit comparison tolerances should be tighter (< 0.001)
+
+### Generating Reference Logits (Python, GPT-2)
+
+```python
+from transformers import GPT2LMHeadModel, GPT2Tokenizer
+import torch
+
+model = GPT2LMHeadModel.from_pretrained("openai-community/gpt2")
+tokenizer = GPT2Tokenizer.from_pretrained("openai-community/gpt2")
+
+inputs = tokenizer("The capital of France is", return_tensors="pt")
+with torch.no_grad():
+    logits = model(**inputs).logits[0, -1]  # last position
+
+top5 = torch.topk(logits, 5)
+for idx, val in zip(top5.indices, top5.values):
+    print(f"  id={idx:<6} logit={val:>8.3f}")
+```
+
+> **Note:** Both `rustml-infer --safetensors` and `sweai infer --safetensors` now use `LlmModel` with KV cache (not `GptModel`). The `GptModel` implementation is retained as a teaching reference only. See [ADR-001](../../3-design/adr/adr-001-unified-llmmodel-for-gpt2.md).
+
 ## Summary
 
 | Approach | Coverage | Dependencies | Speed |

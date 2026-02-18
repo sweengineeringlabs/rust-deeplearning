@@ -33,7 +33,7 @@
 | Top-level help | `sweai --help` | Lists `infer`, `gguf`, `hub`, `tokenizer` subcommands with descriptions |
 | Version flag | `sweai --version` | Prints version string matching workspace version |
 | No args | `sweai` | Shows error and usage listing all subcommands |
-| Infer help | `sweai infer --help` | Lists `GGUF_PATH` positional, `--prompt`, `--batch-file`, `--max-tokens`, `--temperature`, `--top-k`, `--top-p`, `--repetition-penalty`, `--stream`, `--chat`, `--timeout` |
+| Infer help | `sweai infer --help` | Lists `GGUF_PATH` positional, `--safetensors`, `--prompt`, `--batch-file`, `--max-tokens`, `--temperature`, `--top-k`, `--top-p`, `--repetition-penalty`, `--stream`, `--chat`, `--timeout` |
 | GGUF help | `sweai gguf --help` | Lists `info`, `meta`, `tensors`, `verify` subcommands |
 | Hub help | `sweai hub --help` | Lists `download`, `list`, `info` subcommands and `--cache-dir`, `--token` flags |
 | Tokenizer help | `sweai tokenizer --help` | Lists `--gguf`, `--hf`, `--bpe`, `--byte` backends and `encode`, `decode`, `info` subcommands |
@@ -53,6 +53,11 @@
 | Batch file | `sweai infer model.gguf --batch-file /tmp/prompts.txt --max-tokens 64` | Outputs `[0] ...`, `[1] ...` per prompt |
 | Timeout | `sweai infer model.gguf --prompt "Tell me a long story" --max-tokens 4096 --timeout 5` | Generation stops after ~5s |
 | Stdin prompt | `echo "Hello world" \| sweai infer model.gguf` | Reads prompt from stdin; stderr shows `Reading prompt from stdin...` |
+| SafeTensors basic | `sweai infer --safetensors openai-community/gpt2 --prompt "Hello" --max-tokens 10` | Loads GPT-2 via `LlmModel` with KV cache; generates text; stderr shows `Building model (LlmModel with KV cache)...` and `KV cache: <N> MB` |
+| SafeTensors streaming | `sweai infer --safetensors openai-community/gpt2 --prompt "The quick brown fox" --stream --max-tokens 20` | Tokens printed incrementally |
+| SafeTensors greedy | `sweai infer --safetensors openai-community/gpt2 --prompt "The capital of France is" --temperature 0 --max-tokens 20` | Deterministic output |
+| SafeTensors sampling | `sweai infer --safetensors openai-community/gpt2 --prompt "Once upon" --temperature 0.7 --top-k 50 --top-p 0.9 --max-tokens 32` | All flags accepted; generates text |
+| SafeTensors chat warn | `sweai infer --safetensors openai-community/gpt2 --prompt "Hi" --chat --max-tokens 10` | Stderr: `--chat is not supported for SafeTensors GPT-2`, generates text anyway |
 
 ## 3. GGUF Subcommand
 
@@ -109,6 +114,7 @@
 | GGUF verify parity | `rustml-gguf-inspect verify model.gguf` | `sweai gguf verify model.gguf` | stdout identical, same exit code |
 | Hub list parity | `rustml-hub-cli list` | `sweai hub list` | stdout identical |
 | Tokenizer parity | `rustml-tokenizer --byte encode "Hello"` | `sweai tokenizer --byte encode "Hello"` | stdout identical: `72 101 108 108 111` |
+| SafeTensors infer parity | `rustml-infer --safetensors openai-community/gpt2 --prompt "Hi" --temperature 0 --max-tokens 10` | `sweai infer --safetensors openai-community/gpt2 --prompt "Hi" --temperature 0 --max-tokens 10` | stdout identical (deterministic with temp 0) |
 | Version match | `rustml-infer --version` vs `sweai --version` | Both print same workspace version | version strings match |
 
 ## 7. Error Cases
@@ -121,6 +127,7 @@
 | Infer bad temperature | `sweai infer model.gguf --prompt "Hi" --temperature -1` | Error: `--temperature must be >= 0.0` |
 | Infer top-k zero | `sweai infer model.gguf --prompt "Hi" --top-k 0` | Error: `--top-k must be > 0` |
 | Infer top-p range | `sweai infer model.gguf --prompt "Hi" --top-p 1.5` | Error: `--top-p must be in (0.0, 1.0]` |
+| Infer no model | `sweai infer --prompt "Hi"` | Error: `Provide a GGUF model path or --safetensors <MODEL_ID>` |
 | Infer bad file | `sweai infer /nonexistent.gguf --prompt "Hi"` | Error: `Failed to parse GGUF` |
 | Infer stream + batch | `sweai infer model.gguf --batch-file f.txt --stream` | Error: `--stream is not supported with --batch-file` |
 | Infer timeout zero | `sweai infer model.gguf --prompt "Hi" --timeout 0` | Error: `--timeout must be > 0.0` |

@@ -66,14 +66,29 @@ Types belong to the interface they define (`api/` or `spi/`), not a shared `comm
 rust-deeplearning/
 ├── Cargo.toml                  # Root workspace
 ├── docs/                       # Project-level docs
-├── rustml/                     # Umbrella (4 sub-crates)
-│   ├── core/                   # rustml-core
-│   ├── nn/                     # rustml-nn
-│   ├── hub/                    # rustml-hub
-│   └── nlp/                    # rustml-nlp
+│   └── 3-design/adr/           # Architecture Decision Records
+├── rustml/                     # Umbrella (4 sub-crates + CLI + extras)
+│   ├── core/                   # rustml-core (tensors, dtypes)
+│   ├── nn/                     # rustml-nn (layers, KVCache, attention)
+│   ├── hub/                    # rustml-hub (HuggingFace downloads, SafeTensors)
+│   ├── nlp/                    # rustml-nlp (models, generation, tokenizer bridge)
+│   ├── gguf/                   # rustml-gguf (GGUF parsing, weight loading)
+│   ├── tokenizer/              # rustml-tokenizer (BPE, GGUF, byte tokenizers)
+│   └── cli/                    # rustml-cli (sweai unified binary)
 ├── audiolearn/                 # Umbrella (2 sub-crates)
 │   ├── app/                    # audiolearn-app
 │   └── tauri/                  # audiolearn-tauri
 ├── components/                 # Single-crate
 └── tutorial-app/               # Single-crate
 ```
+
+### Model Architecture
+
+The `rustml-nlp` crate has two model implementations:
+
+| Model | Location | Purpose | KV Cache | Used by CLI |
+|-------|----------|---------|----------|-------------|
+| **`LlmModel`** | `nlp/main/src/core/model.rs` | Unified production model — supports GPT-2, Llama, Gemma, Falcon, Mixtral via config | Yes | Yes (GGUF + SafeTensors) |
+| **`GptModel`** | `nlp/main/src/core/gpt.rs` | Standalone GPT-2 reference implementation for learning | No (O(n^2)) | No (teaching only) |
+
+Both GGUF and SafeTensors inference routes use `LlmModel`. See [ADR-001](adr/adr-001-unified-llmmodel-for-gpt2.md).
