@@ -48,6 +48,19 @@ impl RMSNorm {
             Ok(x.rms_norm(&w, self.eps)?)
         }
     }
+
+    /// In-place RMSNorm: overwrites `x` with `rms_norm(x, weight, eps)`.
+    ///
+    /// Avoids an output allocation when the caller owns the tensor uniquely
+    /// (Arc refcount == 1). Falls back to a copy otherwise.
+    pub fn forward_inplace(&self, x: &mut Tensor) -> NnResult<()> {
+        if self.offset == 0.0 {
+            Ok(x.rms_norm_inplace(&self.weight, self.eps)?)
+        } else {
+            let w = self.weight.add_scalar(self.offset);
+            Ok(x.rms_norm_inplace(&w, self.eps)?)
+        }
+    }
 }
 
 impl Freezable for RMSNorm {
@@ -103,5 +116,70 @@ mod tests {
         assert_eq!(frozen, 64);
         rn.unfreeze();
         assert!(!rn.is_frozen());
+    }
+
+    // ==================== forward_inplace tests ====================
+
+    #[test]
+    fn test_rms_norm_inplace_matches_forward() {
+        let rn = RMSNorm::new(64, 1e-5);
+        let x = Tensor::randn(vec![2, 10, 64]);
+
+        let y_alloc = rn.forward(&x).unwrap();
+
+        let mut y_inplace = x.clone();
+        rn.forward_inplace(&mut y_inplace).unwrap();
+
+        let d_alloc = y_alloc.as_slice_f32().unwrap();
+        let d_inplace = y_inplace.as_slice_f32().unwrap();
+        assert_eq!(d_alloc.len(), d_inplace.len());
+        for i in 0..d_alloc.len() {
+            assert!((d_alloc[i] - d_inplace[i]).abs() < 1e-5,
+                "mismatch at index {}: alloc={}, inplace={}", i, d_alloc[i], d_inplace[i]);
+        }
+    }
+
+    #[test]
+    fn test_rms_norm_inplace_shape_preserved() {
+        let rn = RMSNorm::new(32, 1e-6);
+        let mut x = Tensor::randn(vec![1, 4, 32]);
+        rn.forward_inplace(&mut x).unwrap();
+        assert_eq!(x.shape(), &[1, 4, 32]);
+    }
+
+    #[test]
+    fn test_rms_norm_inplace_with_offset_matches_forward() {
+        let rn = RMSNorm::from_weight_with_offset(Tensor::randn(vec![32]), 1e-5, 1.0);
+        let x = Tensor::randn(vec![1, 4, 32]);
+
+        let y_alloc = rn.forward(&x).unwrap();
+
+        let mut y_inplace = x.clone();
+        rn.forward_inplace(&mut y_inplace).unwrap();
+
+        let d_alloc = y_alloc.as_slice_f32().unwrap();
+        let d_inplace = y_inplace.as_slice_f32().unwrap();
+        assert_eq!(d_alloc.len(), d_inplace.len());
+        for i in 0..d_alloc.len() {
+            assert!((d_alloc[i] - d_inplace[i]).abs() < 1e-5,
+                "mismatch at index {}: alloc={}, inplace={}", i, d_alloc[i], d_inplace[i]);
+        }
+    }
+
+    #[test]
+    fn test_rms_norm_inplace_does_not_modify_original() {
+        let rn = RMSNorm::new(16, 1e-5);
+        let x = Tensor::randn(vec![1, 2, 16]);
+        let x_data_before = x.as_slice_f32().unwrap().to_vec();
+
+        let mut y = x.clone();
+        rn.forward_inplace(&mut y).unwrap();
+
+        // Original should be unchanged (clone should not have aliased)
+        let x_data_after = x.as_slice_f32().unwrap();
+        for i in 0..x_data_before.len() {
+            assert_eq!(x_data_before[i], x_data_after[i],
+                "original modified at index {}", i);
+        }
     }
 }

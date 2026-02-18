@@ -1,0 +1,333 @@
+   Compiling serde_core v1.0.228
+   Compiling serde v1.0.228
+   Compiling faer v0.20.2
+   Compiling rustml-core v0.1.0 (/mnt/c/phd-systems/swe-labs/rust-deeplearning/rustml/core)
+warning: unused import: `TensorShape`
+ --> rustml/core/main/src/core/tensor/ops.rs:6:47
+  |
+6 | use super::tensor::{Tensor, f32_vec_to_bytes, TensorShape};
+  |                                               ^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_loadu_ps` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:23:18
+   |
+23 |         let v0 = _mm256_loadu_ps(row.as_ptr().add(i));
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+  --> rustml/core/main/src/core/tensor/ops.rs:14:1
+   |
+14 | unsafe fn rms_norm_row_avx2(row: &[f32], gamma: &[f32], out: &mut [f32], eps: f32) {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: `#[warn(unsafe_op_in_unsafe_fn)]` (part of `#[warn(rust_2024_compatibility)]`) on by default
+
+warning[E0133]: call to unsafe function `std::ptr::const_ptr::<impl *const T>::add` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:23:34
+   |
+23 |         let v0 = _mm256_loadu_ps(row.as_ptr().add(i));
+   |                                  ^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_loadu_ps` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:24:18
+   |
+24 |         let v1 = _mm256_loadu_ps(row.as_ptr().add(i + 8));
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::ptr::const_ptr::<impl *const T>::add` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:24:34
+   |
+24 |         let v1 = _mm256_loadu_ps(row.as_ptr().add(i + 8));
+   |                                  ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_loadu_ps` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:30:17
+   |
+30 |         let v = _mm256_loadu_ps(row.as_ptr().add(i));
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::ptr::const_ptr::<impl *const T>::add` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:30:33
+   |
+30 |         let v = _mm256_loadu_ps(row.as_ptr().add(i));
+   |                                 ^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_loadu_ps` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:57:17
+   |
+57 |         let v = _mm256_loadu_ps(row.as_ptr().add(i));
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::ptr::const_ptr::<impl *const T>::add` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:57:33
+   |
+57 |         let v = _mm256_loadu_ps(row.as_ptr().add(i));
+   |                                 ^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_loadu_ps` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:58:17
+   |
+58 |         let g = _mm256_loadu_ps(gamma.as_ptr().add(i));
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::ptr::const_ptr::<impl *const T>::add` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:58:33
+   |
+58 |         let g = _mm256_loadu_ps(gamma.as_ptr().add(i));
+   |                                 ^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_storeu_ps` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:61:9
+   |
+61 |         _mm256_storeu_ps(out.as_mut_ptr().add(i), scaled);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::ptr::mut_ptr::<impl *mut T>::add` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:61:26
+   |
+61 |         _mm256_storeu_ps(out.as_mut_ptr().add(i), scaled);
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning: associated function `compute_strides` is never used
+   --> rustml/core/main/src/core/tensor/tensor.rs:705:8
+    |
+ 75 | impl Tensor {
+    | ----------- associated function in this implementation
+...
+705 |     fn compute_strides(shape: &Shape) -> Vec<usize> {
+    |        ^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling rustml-nn v0.1.0 (/mnt/c/phd-systems/swe-labs/rust-deeplearning/rustml/nn)
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_loadu_ps` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:21:20
+   |
+21 |         let v_x1 = _mm256_loadu_ps(x1.as_ptr().add(i));
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+  --> rustml/nn/main/src/core/rope.rs:10:1
+   |
+10 | / unsafe fn rope_apply_avx2(
+11 | |     x1: &[f32],       // [half_dim] — first half of head
+12 | |     x2: &[f32],       // [half_dim] — second half of head
+13 | |     cos: &[f32],      // [half_dim]
+...  |
+16 | |     half_dim: usize,
+17 | | ) {
+   | |_^
+   = note: `#[warn(unsafe_op_in_unsafe_fn)]` (part of `#[warn(rust_2024_compatibility)]`) on by default
+
+warning[E0133]: call to unsafe function `std::ptr::const_ptr::<impl *const T>::add` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:21:36
+   |
+21 |         let v_x1 = _mm256_loadu_ps(x1.as_ptr().add(i));
+   |                                    ^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_loadu_ps` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:22:20
+   |
+22 |         let v_x2 = _mm256_loadu_ps(x2.as_ptr().add(i));
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::ptr::const_ptr::<impl *const T>::add` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:22:36
+   |
+22 |         let v_x2 = _mm256_loadu_ps(x2.as_ptr().add(i));
+   |                                    ^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_loadu_ps` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:23:21
+   |
+23 |         let v_cos = _mm256_loadu_ps(cos.as_ptr().add(i));
+   |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::ptr::const_ptr::<impl *const T>::add` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:23:37
+   |
+23 |         let v_cos = _mm256_loadu_ps(cos.as_ptr().add(i));
+   |                                     ^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_loadu_ps` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:24:21
+   |
+24 |         let v_sin = _mm256_loadu_ps(sin.as_ptr().add(i));
+   |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::ptr::const_ptr::<impl *const T>::add` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:24:37
+   |
+24 |         let v_sin = _mm256_loadu_ps(sin.as_ptr().add(i));
+   |                                     ^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_storeu_ps` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:37:9
+   |
+37 |         _mm256_storeu_ps(out.as_mut_ptr().add(i), first);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::ptr::mut_ptr::<impl *mut T>::add` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:37:26
+   |
+37 |         _mm256_storeu_ps(out.as_mut_ptr().add(i), first);
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_storeu_ps` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:38:9
+   |
+38 |         _mm256_storeu_ps(out.as_mut_ptr().add(half_dim + i), second);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::ptr::mut_ptr::<impl *mut T>::add` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:38:26
+   |
+38 |         _mm256_storeu_ps(out.as_mut_ptr().add(half_dim + i), second);
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning: fields `d_model` and `position_encoding` are never read
+  --> rustml/nn/main/src/core/attention.rs:24:5
+   |
+20 | pub struct MultiHeadAttention {
+   |            ------------------ fields in this struct
+...
+24 |     d_model: usize,
+   |     ^^^^^^^
+25 |     causal: bool,
+26 |     position_encoding: PositionEncoding,
+   |     ^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `encoder_dim` is never read
+  --> rustml/nn/main/src/core/cross_attention.rs:15:5
+   |
+10 | pub struct CrossAttention {
+   |            -------------- field in this struct
+...
+15 |     encoder_dim: usize,
+   |     ^^^^^^^^^^^
+
+For more information about this error, try `rustc --explain E0133`.
+warning: `rustml-core` (lib) generated 14 warnings (run `cargo fix --lib -p rustml-core` to apply 2 suggestions)
+warning: `rustml-nn` (lib) generated 14 warnings (run `cargo fix --lib -p rustml-nn` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 1m 00s
+     Running tests/bench_optimizations.rs (target/release/deps/bench_optimizations-2dabfad458197703)
+
+running 1 test
+
+=== Optimization Micro-Benchmarks (--release) ===
+
+--- 1. Q4_1 x Q8_0 SIMD Kernel ---
+  dot_q4_1_q8_block: 4.9 ns/block
+  dot_q4q8_block (Q4_0 ref): 4.5 ns/block
+  Q4_1 overhead vs Q4_0: 9% (returns 2 values vs 1)
+
+--- 2. SIMD RMSNorm (Gemma 3: dim=1152) ---
+  rms_norm [1,1,1152]: 0.41 us/call
+  Per-token overhead (26 layers × 4 norms): 43 us = 0.04 ms
+
+--- 3. SIMD RoPE (Gemma 3: head_dim=256, 4 heads, decode) ---
+  rope.apply [1,4,1,256]: 0.46 us/call
+  Per-token overhead (26 layers × 2 calls): 24 us = 0.02 ms
+
+--- 4. In-place vs Allocating Add (dim=1152) ---
+  Allocating add:  1546 ns/call
+  In-place add:    150 ns/call
+  Speedup: 10.3x
+  Per-token savings (26 layers × 4 adds): 145 us = 0.15 ms
+
+--- 5. Softmax Rayon Threshold (decode attention: [1,H,1,T]) ---
+  Sequential [1,32,1,64]  (2048 elem): 11.70 us/call
+  Parallel   [1,32,1,256] (8192 elem): 223.25 us/call
+  Per-token decode overhead (26 layers × 2 softmax): 608 us = 0.61 ms
+
+--- 6. Batched Matmul Rayon Threshold (decode: Q@K^T) ---
+  Q@K^T [32,1,64]×[32,64,128]:   214.60 us/call
+  attn@V [32,1,128]×[32,128,64]:  120.30 us/call
+  Per-token decode (26 layers × 2 matmuls): 8708 us = 8.71 ms
+
+--- 7. In-place Score Scaling (mul_scalar_inplace vs div_scalar) ---
+test bench_all_optimizations has been running for over 60 seconds
+  div_scalar (alloc):        75149 ns/call
+  mul_scalar_inplace:        786 ns/call
+  Speedup: 95.6x
+  Per-token savings (26 layers × 1 scale): 1933 us = 1.93 ms
+
+=== Done ===
+
+test bench_all_optimizations ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 96.69s
+

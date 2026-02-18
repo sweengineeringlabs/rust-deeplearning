@@ -4,6 +4,23 @@
 
 use rand::Rng;
 
+/// Pre-allocated buffers for the sampling pipeline, reused across decode steps
+/// to avoid per-token heap allocations.
+pub struct SamplingBuffer {
+    pub logits: Vec<f32>,
+    pub sort_buf: Vec<(f32, usize)>,
+}
+
+impl SamplingBuffer {
+    /// Create a new sampling buffer sized for the given vocabulary.
+    pub fn new(vocab_size: usize) -> Self {
+        Self {
+            logits: Vec::with_capacity(vocab_size),
+            sort_buf: Vec::with_capacity(vocab_size),
+        }
+    }
+}
+
 /// Return the index of the maximum value in the logit slice.
 pub fn argmax(logits: &[f32]) -> u32 {
     let mut best = 0u32;
@@ -113,6 +130,41 @@ pub fn apply_top_p(logits: &mut [f32], p: f32) {
 
     // Mask tokens beyond the cutoff directly
     for &(_, idx) in &prob_idx[cutoff..] {
+        logits[idx] = f32::NEG_INFINITY;
+    }
+}
+
+/// Like `apply_top_p` but reuses a caller-provided sort buffer to avoid
+/// per-token allocation of the `(prob, index)` pairs.
+pub fn apply_top_p_buffered(logits: &mut [f32], p: f32, sort_buf: &mut Vec<(f32, usize)>) {
+    if p >= 1.0 {
+        return;
+    }
+
+    let max_val = logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let sum: f32 = logits.iter().map(|&v| (v - max_val).exp()).sum();
+
+    sort_buf.clear();
+    sort_buf.extend(
+        logits
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| ((v - max_val).exp() / sum, i)),
+    );
+
+    sort_buf.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
+
+    let mut cumsum = 0.0f32;
+    let mut cutoff = sort_buf.len();
+    for (i, &(prob, _)) in sort_buf.iter().enumerate() {
+        cumsum += prob;
+        if cumsum >= p {
+            cutoff = i + 1;
+            break;
+        }
+    }
+
+    for &(_, idx) in &sort_buf[cutoff..] {
         logits[idx] = f32::NEG_INFINITY;
     }
 }
@@ -263,5 +315,89 @@ mod tests {
         let vals = vec![1.0, 5.0, 3.0, 4.0, 2.0];
         let top2 = top_n_indices(&vals, 2);
         assert_eq!(top2, vec![1, 3]); // indices of 5.0 and 4.0
+    }
+
+    // ==================== SamplingBuffer / buffered sampling tests ====================
+
+    #[test]
+    fn test_sampling_buffer_creation() {
+        let buf = SamplingBuffer::new(32000);
+        assert_eq!(buf.logits.len(), 0);
+        assert!(buf.logits.capacity() >= 32000);
+        assert_eq!(buf.sort_buf.len(), 0);
+        assert!(buf.sort_buf.capacity() >= 32000);
+    }
+
+    #[test]
+    fn test_top_p_buffered_matches_original() {
+        // apply_top_p_buffered should produce the same result as apply_top_p
+        let original = vec![3.0, 1.0, 0.5, -1.0, 2.0, -5.0, 0.0, 1.5];
+        for p in &[0.5, 0.8, 0.9, 0.95] {
+            let mut logits_orig = original.clone();
+            let mut logits_buf = original.clone();
+            let mut sort_buf = Vec::new();
+
+            apply_top_p(&mut logits_orig, *p);
+            apply_top_p_buffered(&mut logits_buf, *p, &mut sort_buf);
+
+            for (i, (a, b)) in logits_orig.iter().zip(logits_buf.iter()).enumerate() {
+                assert_eq!(*a, *b,
+                    "mismatch at index {} for p={}: orig={}, buffered={}", i, p, a, b);
+            }
+        }
+    }
+
+    #[test]
+    fn test_top_p_buffered_p_one_keeps_all() {
+        let mut logits = vec![1.0, 2.0, 3.0, 4.0];
+        let original = logits.clone();
+        let mut sort_buf = Vec::new();
+        apply_top_p_buffered(&mut logits, 1.0, &mut sort_buf);
+        assert_eq!(logits, original);
+    }
+
+    #[test]
+    fn test_top_p_buffered_dominant_token() {
+        // One token dominates — only it should survive
+        let mut logits = vec![10.0, -10.0, -10.0, -10.0];
+        let mut sort_buf = Vec::new();
+        apply_top_p_buffered(&mut logits, 0.9, &mut sort_buf);
+        assert!(logits[0].is_finite());
+        for &v in &logits[1..] {
+            assert_eq!(v, f32::NEG_INFINITY);
+        }
+    }
+
+    #[test]
+    fn test_top_p_buffered_reuses_buffer() {
+        // Call multiple times — the sort_buf should be reused without growing
+        let mut sort_buf: Vec<(f32, usize)> = Vec::with_capacity(8);
+
+        let mut logits1 = vec![3.0, 1.0, 0.5, -1.0, 2.0, -5.0, 0.0, 1.5];
+        apply_top_p_buffered(&mut logits1, 0.9, &mut sort_buf);
+        let cap_after_first = sort_buf.capacity();
+
+        let mut logits2 = vec![0.0, 2.0, -1.0, 3.0, 1.0, -2.0, 0.5, -0.5];
+        apply_top_p_buffered(&mut logits2, 0.9, &mut sort_buf);
+        // Capacity should not have grown (buffer reused)
+        assert_eq!(sort_buf.capacity(), cap_after_first);
+    }
+
+    #[test]
+    fn test_sampling_buffer_logits_reuse() {
+        // Verify the logits buffer is reused across calls
+        let mut buf = SamplingBuffer::new(4);
+        // First use
+        buf.logits.clear();
+        buf.logits.extend_from_slice(&[1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(buf.logits.len(), 4);
+        let cap = buf.logits.capacity();
+
+        // Second use with same size — no reallocation
+        buf.logits.clear();
+        buf.logits.extend_from_slice(&[5.0, 6.0, 7.0, 8.0]);
+        assert_eq!(buf.logits.len(), 4);
+        assert_eq!(buf.logits.capacity(), cap);
+        assert_eq!(buf.logits, vec![5.0, 6.0, 7.0, 8.0]);
     }
 }

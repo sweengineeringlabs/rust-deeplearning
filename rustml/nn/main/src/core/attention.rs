@@ -312,9 +312,10 @@ impl MultiHeadAttention {
 
         // Attention scores: Q @ K^T / scale
         let k_t = k.transpose(2, 3)?;
-        let scores = q.matmul(&k_t)?;
+        let mut scores = q.matmul(&k_t)?;
         let scale = self.attn_scale.unwrap_or_else(|| (self.head_dim as f32).sqrt());
-        let scores = scores.div_scalar(scale);
+        // In-place scaling avoids allocating a new tensor (matmul result has refcount 1)
+        scores.mul_scalar_inplace(1.0 / scale)?;
 
         // Logit soft-capping
         let scores = if let Some(cap) = self.attn_logit_cap {
@@ -411,9 +412,10 @@ impl MultiHeadAttention {
 
         // Attention scores
         let k_t = k_full.transpose(2, 3)?;
-        let scores = q.matmul(&k_t)?;
+        let mut scores = q.matmul(&k_t)?;
         let scale = self.attn_scale.unwrap_or_else(|| (self.head_dim as f32).sqrt());
-        let scores = scores.div_scalar(scale);
+        // In-place scaling avoids allocating a new tensor (matmul result has refcount 1)
+        scores.mul_scalar_inplace(1.0 / scale)?;
 
         // Logit soft-capping
         let scores = if let Some(cap) = self.attn_logit_cap {
@@ -806,5 +808,110 @@ mod tests {
         let mut cache = KVCache::new(1, 128, head_dim, num_heads);
         let y2 = mha.forward_with_cache(&x, &mut cache, 0).unwrap();
         assert_eq!(y2.shape(), &[1, 8, d_model]);
+    }
+
+    // ==================== In-place score scaling tests ====================
+
+    #[test]
+    fn test_attention_inplace_scale_forward() {
+        // Verifies that mul_scalar_inplace(1/scale) produces finite, valid output
+        let mha = MultiHeadAttention::new(
+            64, 4, None, false, true,
+            PositionEncoding::None, 128, 10000.0,
+        ).unwrap();
+        let x = Tensor::randn(vec![1, 8, 64]);
+        let y = mha.forward(&x).unwrap();
+        assert_eq!(y.shape(), &[1, 8, 64]);
+        let flat = y.as_slice_f32().unwrap();
+        assert!(flat.iter().all(|v| v.is_finite()), "forward output contains NaN/Inf");
+    }
+
+    #[test]
+    fn test_attention_inplace_scale_with_cache_decode() {
+        // Exercises the in-place scaling path during decode (seq_len=1)
+        let mha = MultiHeadAttention::new(
+            64, 4, None, false, true,
+            PositionEncoding::RoPE, 128, 10000.0,
+        ).unwrap();
+
+        let mut cache = KVCache::new(1, 128, 16, 4);
+
+        // Prefill
+        let x = Tensor::randn(vec![1, 8, 64]);
+        let y = mha.forward_with_cache(&x, &mut cache, 0).unwrap();
+        assert_eq!(y.shape(), &[1, 8, 64]);
+        cache.advance(8);
+
+        // Decode — in-place mul_scalar_inplace(1/scale) on fresh matmul result
+        let x2 = Tensor::randn(vec![1, 1, 64]);
+        let y2 = mha.forward_with_cache(&x2, &mut cache, 0).unwrap();
+        assert_eq!(y2.shape(), &[1, 1, 64]);
+        let flat = y2.as_slice_f32().unwrap();
+        assert!(flat.iter().all(|v| v.is_finite()), "decode output contains NaN/Inf");
+    }
+
+    #[test]
+    fn test_attention_inplace_scale_gqa_with_cache() {
+        // GQA with in-place scaling (8 Q heads, 2 KV heads)
+        let mha = MultiHeadAttention::new(
+            64, 8, Some(2), false, true,
+            PositionEncoding::RoPE, 128, 10000.0,
+        ).unwrap();
+
+        let mut cache = KVCache::new(1, 128, 8, 2);
+
+        let x = Tensor::randn(vec![1, 6, 64]);
+        let y = mha.forward_with_cache(&x, &mut cache, 0).unwrap();
+        assert_eq!(y.shape(), &[1, 6, 64]);
+        cache.advance(6);
+
+        let x2 = Tensor::randn(vec![1, 1, 64]);
+        let y2 = mha.forward_with_cache(&x2, &mut cache, 0).unwrap();
+        assert_eq!(y2.shape(), &[1, 1, 64]);
+        let flat = y2.as_slice_f32().unwrap();
+        assert!(flat.iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn test_attention_inplace_scale_with_logit_cap() {
+        // Logit capping still uses div_scalar (allocating) — verify it still works
+        let mut mha = MultiHeadAttention::new(
+            64, 4, None, false, true,
+            PositionEncoding::None, 128, 10000.0,
+        ).unwrap();
+        mha.set_attn_logit_cap(50.0);
+
+        let mut cache = KVCache::new(1, 128, 16, 4);
+        let x = Tensor::randn(vec![1, 4, 64]);
+        let y = mha.forward_with_cache(&x, &mut cache, 0).unwrap();
+        assert_eq!(y.shape(), &[1, 4, 64]);
+        let flat = y.as_slice_f32().unwrap();
+        assert!(flat.iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn test_attention_inplace_scale_custom_attn_scale() {
+        // Custom attn_scale (Gemma 3 style) — still uses inplace scaling
+        let d_model = 64;
+        let num_heads = 4;
+        let head_dim = d_model / num_heads;
+
+        let q_proj = Linear::new_no_bias(d_model, d_model);
+        let k_proj = Linear::new_no_bias(d_model, d_model);
+        let v_proj = Linear::new_no_bias(d_model, d_model);
+        let out_proj = Linear::new_no_bias(d_model, d_model);
+
+        let mha = MultiHeadAttention::from_weights_with_head_dim(
+            d_model, num_heads, None, head_dim,
+            q_proj, k_proj, v_proj, out_proj,
+            true, None, Some(16.0),
+        ).unwrap();
+
+        let mut cache = KVCache::new(1, 64, head_dim, num_heads);
+        let x = Tensor::randn(vec![1, 4, d_model]);
+        let y = mha.forward_with_cache(&x, &mut cache, 0).unwrap();
+        assert_eq!(y.shape(), &[1, 4, d_model]);
+        let flat = y.as_slice_f32().unwrap();
+        assert!(flat.iter().all(|v| v.is_finite()));
     }
 }

@@ -1,0 +1,448 @@
+    Blocking waiting for file lock on artifact directory
+warning: unused import: `TensorShape`
+ --> rustml/core/main/src/core/tensor/ops.rs:6:47
+  |
+6 | use super::tensor::{Tensor, f32_vec_to_bytes, TensorShape};
+  |                                               ^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_loadu_ps` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:23:18
+   |
+23 |         let v0 = _mm256_loadu_ps(row.as_ptr().add(i));
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+  --> rustml/core/main/src/core/tensor/ops.rs:14:1
+   |
+14 | unsafe fn rms_norm_row_avx2(row: &[f32], gamma: &[f32], out: &mut [f32], eps: f32) {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: `#[warn(unsafe_op_in_unsafe_fn)]` (part of `#[warn(rust_2024_compatibility)]`) on by default
+
+warning[E0133]: call to unsafe function `std::ptr::const_ptr::<impl *const T>::add` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:23:34
+   |
+23 |         let v0 = _mm256_loadu_ps(row.as_ptr().add(i));
+   |                                  ^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_loadu_ps` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:24:18
+   |
+24 |         let v1 = _mm256_loadu_ps(row.as_ptr().add(i + 8));
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::ptr::const_ptr::<impl *const T>::add` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:24:34
+   |
+24 |         let v1 = _mm256_loadu_ps(row.as_ptr().add(i + 8));
+   |                                  ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_loadu_ps` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:30:17
+   |
+30 |         let v = _mm256_loadu_ps(row.as_ptr().add(i));
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::ptr::const_ptr::<impl *const T>::add` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:30:33
+   |
+30 |         let v = _mm256_loadu_ps(row.as_ptr().add(i));
+   |                                 ^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_loadu_ps` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:57:17
+   |
+57 |         let v = _mm256_loadu_ps(row.as_ptr().add(i));
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::ptr::const_ptr::<impl *const T>::add` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:57:33
+   |
+57 |         let v = _mm256_loadu_ps(row.as_ptr().add(i));
+   |                                 ^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_loadu_ps` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:58:17
+   |
+58 |         let g = _mm256_loadu_ps(gamma.as_ptr().add(i));
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::ptr::const_ptr::<impl *const T>::add` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:58:33
+   |
+58 |         let g = _mm256_loadu_ps(gamma.as_ptr().add(i));
+   |                                 ^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_storeu_ps` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:61:9
+   |
+61 |         _mm256_storeu_ps(out.as_mut_ptr().add(i), scaled);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::ptr::mut_ptr::<impl *mut T>::add` is unsafe and requires unsafe block
+  --> rustml/core/main/src/core/tensor/ops.rs:61:26
+   |
+61 |         _mm256_storeu_ps(out.as_mut_ptr().add(i), scaled);
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning: associated function `compute_strides` is never used
+   --> rustml/core/main/src/core/tensor/tensor.rs:705:8
+    |
+ 75 | impl Tensor {
+    | ----------- associated function in this implementation
+...
+705 |     fn compute_strides(shape: &Shape) -> Vec<usize> {
+    |        ^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+For more information about this error, try `rustc --explain E0133`.
+warning: `rustml-core` (lib) generated 14 warnings (run `cargo fix --lib -p rustml-core` to apply 2 suggestions)
+warning: field `convert_to_f32` is never read
+  --> rustml/hub/main/src/core/safetensors.rs:42:5
+   |
+40 | pub struct SafeTensorLoader {
+   |            ---------------- field in this struct
+41 |     /// Whether to convert all tensors to f32
+42 |     convert_to_f32: bool,
+   |     ^^^^^^^^^^^^^^
+   |
+   = note: `SafeTensorLoader` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `validate_weights` is never used
+   --> rustml/hub/main/src/core/weight_mapper.rs:130:8
+    |
+130 | pub fn validate_weights(
+    |        ^^^^^^^^^^^^^^^^
+
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_loadu_ps` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:21:20
+   |
+21 |         let v_x1 = _mm256_loadu_ps(x1.as_ptr().add(i));
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+  --> rustml/nn/main/src/core/rope.rs:10:1
+   |
+10 | / unsafe fn rope_apply_avx2(
+11 | |     x1: &[f32],       // [half_dim] — first half of head
+12 | |     x2: &[f32],       // [half_dim] — second half of head
+13 | |     cos: &[f32],      // [half_dim]
+...  |
+16 | |     half_dim: usize,
+17 | | ) {
+   | |_^
+   = note: `#[warn(unsafe_op_in_unsafe_fn)]` (part of `#[warn(rust_2024_compatibility)]`) on by default
+
+warning[E0133]: call to unsafe function `std::ptr::const_ptr::<impl *const T>::add` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:21:36
+   |
+21 |         let v_x1 = _mm256_loadu_ps(x1.as_ptr().add(i));
+   |                                    ^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_loadu_ps` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:22:20
+   |
+22 |         let v_x2 = _mm256_loadu_ps(x2.as_ptr().add(i));
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::ptr::const_ptr::<impl *const T>::add` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:22:36
+   |
+22 |         let v_x2 = _mm256_loadu_ps(x2.as_ptr().add(i));
+   |                                    ^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_loadu_ps` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:23:21
+   |
+23 |         let v_cos = _mm256_loadu_ps(cos.as_ptr().add(i));
+   |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::ptr::const_ptr::<impl *const T>::add` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:23:37
+   |
+23 |         let v_cos = _mm256_loadu_ps(cos.as_ptr().add(i));
+   |                                     ^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_loadu_ps` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:24:21
+   |
+24 |         let v_sin = _mm256_loadu_ps(sin.as_ptr().add(i));
+   |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::ptr::const_ptr::<impl *const T>::add` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:24:37
+   |
+24 |         let v_sin = _mm256_loadu_ps(sin.as_ptr().add(i));
+   |                                     ^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_storeu_ps` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:37:9
+   |
+37 |         _mm256_storeu_ps(out.as_mut_ptr().add(i), first);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::ptr::mut_ptr::<impl *mut T>::add` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:37:26
+   |
+37 |         _mm256_storeu_ps(out.as_mut_ptr().add(i), first);
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::arch::x86_64::_mm256_storeu_ps` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:38:9
+   |
+38 |         _mm256_storeu_ps(out.as_mut_ptr().add(half_dim + i), second);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::ptr::mut_ptr::<impl *mut T>::add` is unsafe and requires unsafe block
+  --> rustml/nn/main/src/core/rope.rs:38:26
+   |
+38 |         _mm256_storeu_ps(out.as_mut_ptr().add(half_dim + i), second);
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning: fields `d_model` and `position_encoding` are never read
+  --> rustml/nn/main/src/core/attention.rs:24:5
+   |
+20 | pub struct MultiHeadAttention {
+   |            ------------------ fields in this struct
+...
+24 |     d_model: usize,
+   |     ^^^^^^^
+25 |     causal: bool,
+26 |     position_encoding: PositionEncoding,
+   |     ^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `encoder_dim` is never read
+  --> rustml/nn/main/src/core/cross_attention.rs:15:5
+   |
+10 | pub struct CrossAttention {
+   |            -------------- field in this struct
+...
+15 |     encoder_dim: usize,
+   |     ^^^^^^^^^^^
+
+warning: `rustml-hub` (lib) generated 2 warnings
+warning: `rustml-nn` (lib) generated 14 warnings (run `cargo fix --lib -p rustml-nn` to apply 1 suggestion)
+    Finished `bench` profile [optimized] target(s) in 1m 09s
+     Running benches/sampling.rs (target/release/deps/sampling-4c3d32be81dda10d)
+Gnuplot not found, using plotters backend
+Benchmarking argmax_32k
+Benchmarking argmax_32k: Warming up for 3.0000 s
+Benchmarking argmax_32k: Collecting 100 samples in estimated 5.1041 s (157k iterations)
+Benchmarking argmax_32k: Analyzing
+argmax_32k              time:   [32.067 µs 32.265 µs 32.493 µs]
+                        change: [+20.928% +22.039% +23.271%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+
+Benchmarking argmax_128k
+Benchmarking argmax_128k: Warming up for 3.0000 s
+Benchmarking argmax_128k: Collecting 100 samples in estimated 5.3436 s (40k iterations)
+Benchmarking argmax_128k: Analyzing
+argmax_128k             time:   [130.32 µs 131.71 µs 133.47 µs]
+                        change: [+20.222% +22.118% +24.054%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 6 outliers among 100 measurements (6.00%)
+  2 (2.00%) high mild
+  4 (4.00%) high severe
+
+Benchmarking top_k/k=10_vocab=32k
+Benchmarking top_k/k=10_vocab=32k: Warming up for 3.0000 s
+Benchmarking top_k/k=10_vocab=32k: Collecting 100 samples in estimated 6.4318 s (15k iterations)
+Benchmarking top_k/k=10_vocab=32k: Analyzing
+top_k/k=10_vocab=32k    time:   [255.88 µs 263.81 µs 271.23 µs]
+                        change: [+18.706% +23.607% +28.960%] (p = 0.02 < 0.05)
+                        Performance has regressed.
+Found 5 outliers among 100 measurements (5.00%)
+  2 (2.00%) low mild
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+Benchmarking top_k/k=50_vocab=32k
+Benchmarking top_k/k=50_vocab=32k: Warming up for 3.0000 s
+Benchmarking top_k/k=50_vocab=32k: Collecting 100 samples in estimated 5.8195 s (15k iterations)
+Benchmarking top_k/k=50_vocab=32k: Analyzing
+top_k/k=50_vocab=32k    time:   [263.65 µs 269.81 µs 276.26 µs]
+                        change: [-1.4721% +2.4906% +6.4275%] (p = 0.60 > 0.05)
+                        No change in performance detected.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Benchmarking top_k/k=100_vocab=32k
+Benchmarking top_k/k=100_vocab=32k: Warming up for 3.0000 s
+Benchmarking top_k/k=100_vocab=32k: Collecting 100 samples in estimated 7.0952 s (15k iterations)
+Benchmarking top_k/k=100_vocab=32k: Analyzing
+top_k/k=100_vocab=32k   time:   [354.95 µs 358.24 µs 361.46 µs]
+                        change: [+17.358% +19.808% +22.210%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+
+Benchmarking top_p/p=0.9_vocab=32k
+Benchmarking top_p/p=0.9_vocab=32k: Warming up for 3.0000 s
+Benchmarking top_p/p=0.9_vocab=32k: Collecting 100 samples in estimated 5.0670 s (2400 iterations)
+Benchmarking top_p/p=0.9_vocab=32k: Analyzing
+top_p/p=0.9_vocab=32k   time:   [1.7736 ms 1.8137 ms 1.8561 ms]
+                        change: [-25.427% -22.341% -18.983%] (p = 0.02 < 0.05)
+                        Performance has improved.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+Benchmarking top_p/p=0.95_vocab=32k
+Benchmarking top_p/p=0.95_vocab=32k: Warming up for 3.0000 s
+Benchmarking top_p/p=0.95_vocab=32k: Collecting 100 samples in estimated 5.0707 s (2100 iterations)
+Benchmarking top_p/p=0.95_vocab=32k: Analyzing
+top_p/p=0.95_vocab=32k  time:   [1.9420 ms 2.0030 ms 2.0661 ms]
+                        change: [-32.325% -29.927% -27.591%] (p = 0.01 < 0.05)
+                        Performance has improved.
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+Benchmarking top_p/p=0.99_vocab=32k
+Benchmarking top_p/p=0.99_vocab=32k: Warming up for 3.0000 s
+Benchmarking top_p/p=0.99_vocab=32k: Collecting 100 samples in estimated 5.0105 s (2200 iterations)
+Benchmarking top_p/p=0.99_vocab=32k: Analyzing
+top_p/p=0.99_vocab=32k  time:   [1.8713 ms 1.9332 ms 1.9965 ms]
+                        change: [-33.692% -30.823% -28.004%] (p = 0.01 < 0.05)
+                        Performance has improved.
+
+Benchmarking rep_penalty_100tok_32k
+Benchmarking rep_penalty_100tok_32k: Warming up for 3.0000 s
+Benchmarking rep_penalty_100tok_32k: Collecting 100 samples in estimated 5.6811 s (40k iterations)
+Benchmarking rep_penalty_100tok_32k: Analyzing
+rep_penalty_100tok_32k  time:   [25.428 µs 26.115 µs 26.714 µs]
+                        change: [-38.423% -31.484% -23.872%] (p = 0.03 < 0.05)
+                        Performance has improved.
+Found 20 outliers among 100 measurements (20.00%)
+  20 (20.00%) low mild
+
+Benchmarking sample_categorical_32k
+Benchmarking sample_categorical_32k: Warming up for 3.0000 s
+Benchmarking sample_categorical_32k: Collecting 100 samples in estimated 5.3825 s (10k iterations)
+Benchmarking sample_categorical_32k: Analyzing
+sample_categorical_32k  time:   [407.67 µs 440.68 µs 477.14 µs]
+                        change: [-8.7091% -1.5009% +6.0264%] (p = 0.64 > 0.05)
+                        No change in performance detected.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+
+Benchmarking top_p_buffered_vs_alloc/top_p_alloc_p=0.9_32k
+Benchmarking top_p_buffered_vs_alloc/top_p_alloc_p=0.9_32k: Warming up for 3.0000 s
+Benchmarking top_p_buffered_vs_alloc/top_p_alloc_p=0.9_32k: Collecting 100 samples in estimated 5.0439 s (2200 iterations)
+Benchmarking top_p_buffered_vs_alloc/top_p_alloc_p=0.9_32k: Analyzing
+top_p_buffered_vs_alloc/top_p_alloc_p=0.9_32k
+                        time:   [1.9792 ms 2.0496 ms 2.1218 ms]
+                        change: [-7.1033% -4.0668% -0.4860%] (p = 0.20 > 0.05)
+                        No change in performance detected.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking top_p_buffered_vs_alloc/top_p_buffered_p=0.9_32k
+Benchmarking top_p_buffered_vs_alloc/top_p_buffered_p=0.9_32k: Warming up for 3.0000 s
+Benchmarking top_p_buffered_vs_alloc/top_p_buffered_p=0.9_32k: Collecting 100 samples in estimated 5.0060 s (2200 iterations)
+Benchmarking top_p_buffered_vs_alloc/top_p_buffered_p=0.9_32k: Analyzing
+top_p_buffered_vs_alloc/top_p_buffered_p=0.9_32k
+                        time:   [1.8749 ms 1.9242 ms 1.9737 ms]
+                        change: [-32.955% -30.304% -27.546%] (p = 0.00 < 0.05)
+                        Performance has improved.
+
+Benchmarking sampling_pipeline/pipeline_alloc_32k
+Benchmarking sampling_pipeline/pipeline_alloc_32k: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 5.9s, enable flat sampling, or reduce sample count to 60.
+Benchmarking sampling_pipeline/pipeline_alloc_32k: Collecting 100 samples in estimated 5.8915 s (5050 iterations)
+Benchmarking sampling_pipeline/pipeline_alloc_32k: Analyzing
+sampling_pipeline/pipeline_alloc_32k
+                        time:   [1.1615 ms 1.1915 ms 1.2223 ms]
+                        change: [-6.0651% -2.2484% +1.7951%] (p = 0.56 > 0.05)
+                        No change in performance detected.
+Found 8 outliers among 100 measurements (8.00%)
+  4 (4.00%) low mild
+  4 (4.00%) high mild
+Benchmarking sampling_pipeline/pipeline_buffered_32k
+Benchmarking sampling_pipeline/pipeline_buffered_32k: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 6.3s, enable flat sampling, or reduce sample count to 60.
+Benchmarking sampling_pipeline/pipeline_buffered_32k: Collecting 100 samples in estimated 6.3232 s (5050 iterations)
+Benchmarking sampling_pipeline/pipeline_buffered_32k: Analyzing
+sampling_pipeline/pipeline_buffered_32k
+                        time:   [1.1779 ms 1.2119 ms 1.2481 ms]
+                        change: [-0.3101% +4.3796% +10.033%] (p = 0.46 > 0.05)
+                        No change in performance detected.
+Found 4 outliers among 100 measurements (4.00%)
+  1 (1.00%) low mild
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+

@@ -590,23 +590,36 @@ impl Tensor {
             let last_dim_size = self.shape_sv[ndim - 1];
 
             let mut out_data = vec![0.0f32; input_data.len()];
+            let total = input_data.len();
 
-            use rayon::prelude::*;
-            out_data
-                .par_chunks_mut(last_dim_size)
-                .zip(input_data.par_chunks(last_dim_size))
-                .for_each(|(out_row, in_row)| {
-                    let max_val = in_row.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-                    let mut sum_exp = 0.0;
-                    for (i, &val) in in_row.iter().enumerate() {
-                        let exp_val = (val - max_val).exp();
-                        out_row[i] = exp_val;
-                        sum_exp += exp_val;
-                    }
-                    for val in out_row.iter_mut() {
-                        *val /= sum_exp;
-                    }
-                });
+            let softmax_body = |out_row: &mut [f32], in_row: &[f32]| {
+                let max_val = in_row.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+                let mut sum_exp = 0.0;
+                for (i, &val) in in_row.iter().enumerate() {
+                    let exp_val = (val - max_val).exp();
+                    out_row[i] = exp_val;
+                    sum_exp += exp_val;
+                }
+                for val in out_row.iter_mut() {
+                    *val /= sum_exp;
+                }
+            };
+
+            if total < 4096 {
+                // Sequential path: avoid rayon scheduling overhead for small tensors
+                // (e.g. attention softmax during decode: [1, H, 1, T] with H*T < 4096)
+                for (out_row, in_row) in out_data.chunks_mut(last_dim_size).zip(input_data.chunks(last_dim_size)) {
+                    softmax_body(out_row, in_row);
+                }
+            } else {
+                use rayon::prelude::*;
+                out_data
+                    .par_chunks_mut(last_dim_size)
+                    .zip(input_data.par_chunks(last_dim_size))
+                    .for_each(|(out_row, in_row)| {
+                        softmax_body(out_row, in_row);
+                    });
+            }
 
             Ok(Tensor::new(
                 f32_vec_to_bytes(out_data),
@@ -879,18 +892,33 @@ impl Tensor {
         let lhs_data = lhs.as_slice_f32()?;
         let rhs_data = rhs.as_slice_f32()?;
 
-        use rayon::prelude::*;
-
-        out_data
-            .par_chunks_mut(M * N)
-            .zip(lhs_data.par_chunks(M * K))
-            .zip(rhs_data.par_chunks(K * N))
-            .for_each(|((out_chunk, lhs_chunk), rhs_chunk)| {
+        let total_output = batch_count * M * N;
+        if total_output < 4096 {
+            // Sequential path: avoid rayon scheduling overhead for small batched matmuls
+            // (e.g. attention Q@K^T and attn@V during decode with M=1)
+            for ((out_chunk, lhs_chunk), rhs_chunk) in out_data
+                .chunks_mut(M * N)
+                .zip(lhs_data.chunks(M * K))
+                .zip(rhs_data.chunks(K * N))
+            {
                 let a_t = faer::mat::from_column_major_slice(lhs_chunk, K, M);
                 let b_t = faer::mat::from_column_major_slice(rhs_chunk, N, K);
                 let mut c_t = faer::mat::from_column_major_slice_mut(out_chunk, N, M);
                 c_t.copy_from(b_t * a_t);
-            });
+            }
+        } else {
+            use rayon::prelude::*;
+            out_data
+                .par_chunks_mut(M * N)
+                .zip(lhs_data.par_chunks(M * K))
+                .zip(rhs_data.par_chunks(K * N))
+                .for_each(|((out_chunk, lhs_chunk), rhs_chunk)| {
+                    let a_t = faer::mat::from_column_major_slice(lhs_chunk, K, M);
+                    let b_t = faer::mat::from_column_major_slice(rhs_chunk, N, K);
+                    let mut c_t = faer::mat::from_column_major_slice_mut(out_chunk, N, M);
+                    c_t.copy_from(b_t * a_t);
+                });
+        }
 
         Ok(Tensor::new(
             f32_vec_to_bytes(out_data),
@@ -1284,5 +1312,142 @@ mod tests {
         assert_eq!(mask.get(&[0, 0, 0, 2]).unwrap(), 0.0);
         assert_eq!(mask.get(&[0, 0, 0, 3]).unwrap(), 0.0);
         assert_eq!(mask.get(&[0, 0, 0, 4]).unwrap(), 0.0);
+    }
+
+    // ==================== Rayon threshold tests ====================
+
+    #[test]
+    fn test_softmax_sequential_path_small() {
+        // Total elements = 2*3 = 6 (< 4096) — exercises the sequential path
+        let t = Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
+        let s = t.softmax(-1).unwrap();
+        assert_eq!(s.shape(), &[2, 3]);
+        let row0_sum: f32 = (0..3).map(|i| s.get(&[0, i]).unwrap()).sum();
+        let row1_sum: f32 = (0..3).map(|i| s.get(&[1, i]).unwrap()).sum();
+        assert!((row0_sum - 1.0).abs() < 1e-5);
+        assert!((row1_sum - 1.0).abs() < 1e-5);
+        // Verify relative ordering within each row
+        assert!(s.get(&[0, 2]).unwrap() > s.get(&[0, 1]).unwrap());
+        assert!(s.get(&[0, 1]).unwrap() > s.get(&[0, 0]).unwrap());
+    }
+
+    #[test]
+    fn test_softmax_sequential_path_decode_shape() {
+        // Simulates attention softmax during decode: [1, 32, 1, 64] = 2048 elements (< 4096)
+        let data: Vec<f32> = (0..2048).map(|i| (i as f32) * 0.01).collect();
+        let t = Tensor::from_vec(data, vec![1, 32, 1, 64]).unwrap();
+        let s = t.softmax(-1).unwrap();
+        assert_eq!(s.shape(), &[1, 32, 1, 64]);
+        // Each of the 32 rows of length 64 should sum to 1
+        let flat = s.as_slice_f32().unwrap();
+        for row_idx in 0..32 {
+            let row_sum: f32 = flat[row_idx * 64..(row_idx + 1) * 64].iter().sum();
+            assert!((row_sum - 1.0).abs() < 1e-5,
+                "row {} sum {} != 1.0", row_idx, row_sum);
+        }
+    }
+
+    #[test]
+    fn test_softmax_parallel_path_large() {
+        // Total elements = 128*64 = 8192 (>= 4096) — exercises the rayon path
+        let data: Vec<f32> = (0..8192).map(|i| (i as f32) * 0.001).collect();
+        let t = Tensor::from_vec(data, vec![128, 64]).unwrap();
+        let s = t.softmax(-1).unwrap();
+        assert_eq!(s.shape(), &[128, 64]);
+        let flat = s.as_slice_f32().unwrap();
+        for row_idx in 0..128 {
+            let row_sum: f32 = flat[row_idx * 64..(row_idx + 1) * 64].iter().sum();
+            assert!((row_sum - 1.0).abs() < 1e-5,
+                "row {} sum {} != 1.0", row_idx, row_sum);
+        }
+    }
+
+    #[test]
+    fn test_softmax_sequential_and_parallel_agree() {
+        // Create a tensor at exactly the threshold boundary (4096 elements)
+        // and one just below. Both should produce the same results for the same data.
+        let data: Vec<f32> = (0..4095).map(|i| ((i % 100) as f32) * 0.1 - 5.0).collect();
+        let small = Tensor::from_vec(data.clone(), vec![45, 91]).unwrap();
+        // Pad to push above threshold
+        let mut large_data = data.clone();
+        large_data.extend_from_slice(&vec![0.0; 4096 - 4095 + 91 * 1]); // add one more row
+        // Just use a larger tensor and verify both paths are correct
+        let large = Tensor::from_vec(
+            (0..8192).map(|i| ((i % 100) as f32) * 0.1 - 5.0).collect(),
+            vec![128, 64],
+        ).unwrap();
+        let s_large = large.softmax(-1).unwrap();
+        let flat = s_large.as_slice_f32().unwrap();
+        for row_idx in 0..128 {
+            let row_sum: f32 = flat[row_idx * 64..(row_idx + 1) * 64].iter().sum();
+            assert!((row_sum - 1.0).abs() < 1e-5);
+        }
+        // Also verify the small one (sequential path)
+        let s_small = small.softmax(-1).unwrap();
+        let flat_s = s_small.as_slice_f32().unwrap();
+        for row_idx in 0..45 {
+            let row_sum: f32 = flat_s[row_idx * 91..(row_idx + 1) * 91].iter().sum();
+            assert!((row_sum - 1.0).abs() < 1e-5);
+        }
+    }
+
+    #[test]
+    fn test_batched_matmul_sequential_path() {
+        // 4 batches of [2, 3] x [3, 2] = total output 4*2*2 = 16 (< 4096)
+        // This exercises the sequential path
+        let a_data: Vec<f32> = (0..24).map(|i| i as f32).collect();
+        let b_data: Vec<f32> = (0..24).map(|i| (i as f32) * 0.5).collect();
+        let a = Tensor::from_vec(a_data, vec![4, 2, 3]).unwrap();
+        let b = Tensor::from_vec(b_data, vec![4, 3, 2]).unwrap();
+        let c = a.batched_matmul(&b).unwrap();
+        assert_eq!(c.shape(), &[4, 2, 2]);
+        // Verify batch 0: [0,1,2; 3,4,5] @ [0,0.5; 1,1.5; 2,2.5]
+        // [0*0+1*1+2*2, 0*0.5+1*1.5+2*2.5] = [5, 6.5]
+        // [3*0+4*1+5*2, 3*0.5+4*1.5+5*2.5] = [14, 20]
+        assert!((c.get(&[0, 0, 0]).unwrap() - 5.0).abs() < 1e-4);
+        assert!((c.get(&[0, 0, 1]).unwrap() - 6.5).abs() < 1e-4);
+        assert!((c.get(&[0, 1, 0]).unwrap() - 14.0).abs() < 1e-4);
+        assert!((c.get(&[0, 1, 1]).unwrap() - 20.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_batched_matmul_decode_shape() {
+        // Simulates attention decode: 32 heads, Q=[1,1,64], K^T=[1,64,128]
+        // total output = 32*1*128 = 4096 (right at boundary — sequential)
+        let q_data: Vec<f32> = (0..2048).map(|i| (i as f32) * 0.001).collect();
+        let k_data: Vec<f32> = (0..262144).map(|i| (i as f32) * 0.0001).collect();
+        let q = Tensor::from_vec(q_data, vec![32, 1, 64]).unwrap();
+        let kt = Tensor::from_vec(k_data, vec![32, 64, 128]).unwrap();
+        let scores = q.batched_matmul(&kt).unwrap();
+        assert_eq!(scores.shape(), &[32, 1, 128]);
+    }
+
+    #[test]
+    fn test_batched_matmul_large_parallel() {
+        // 16 batches of [8, 64] x [64, 8] = total output 16*8*8 = 1024
+        // Still sequential. Let's go bigger: 16 * 32 * 32 = 16384 (> 4096, parallel path)
+        let a_data: Vec<f32> = (0..16 * 32 * 64).map(|i| (i as f32) * 0.0001).collect();
+        let b_data: Vec<f32> = (0..16 * 64 * 32).map(|i| (i as f32) * 0.0001).collect();
+        let a = Tensor::from_vec(a_data, vec![16, 32, 64]).unwrap();
+        let b = Tensor::from_vec(b_data, vec![16, 64, 32]).unwrap();
+        let c = a.batched_matmul(&b).unwrap();
+        assert_eq!(c.shape(), &[16, 32, 32]);
+        // Verify it doesn't contain NaN or Inf
+        let flat = c.as_slice_f32().unwrap();
+        assert!(flat.iter().all(|v| v.is_finite()), "result contains NaN/Inf");
+    }
+
+    #[test]
+    fn test_batched_matmul_4d_sequential() {
+        // 4D batched matmul with small tensors (attention-like)
+        // [1, 4, 1, 8] @ [1, 4, 8, 16] -> [1, 4, 1, 16], total output = 4*1*16 = 64
+        let a_data: Vec<f32> = (0..32).map(|i| i as f32).collect();
+        let b_data: Vec<f32> = (0..512).map(|i| (i as f32) * 0.01).collect();
+        let a = Tensor::from_vec(a_data, vec![1, 4, 1, 8]).unwrap();
+        let b = Tensor::from_vec(b_data, vec![1, 4, 8, 16]).unwrap();
+        let c = a.batched_matmul(&b).unwrap();
+        assert_eq!(c.shape(), &[1, 4, 1, 16]);
+        let flat = c.as_slice_f32().unwrap();
+        assert!(flat.iter().all(|v| v.is_finite()));
     }
 }

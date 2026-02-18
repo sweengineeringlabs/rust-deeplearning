@@ -25,6 +25,19 @@ impl NormLayer {
         }
     }
 
+    /// In-place normalization: for RMSNorm, overwrites the tensor in place
+    /// (avoids allocating a separate output tensor when the input is uniquely owned).
+    /// For LayerNorm, falls back to allocating since no in-place variant exists.
+    pub fn forward_inplace(&self, input: &mut Tensor) -> NnResult<()> {
+        match self {
+            NormLayer::RMSNorm(rn) => rn.forward_inplace(input),
+            NormLayer::LayerNorm(ln) => {
+                *input = ln.forward(input)?;
+                Ok(())
+            }
+        }
+    }
+
     pub fn parameter_count(&self) -> (usize, usize) {
         match self {
             NormLayer::LayerNorm(ln) => {
@@ -292,8 +305,8 @@ impl TransformerBlock {
 
     /// Forward pass with KV cache for autoregressive decoding.
     ///
-    /// Uses in-place operations for residual connections to minimize allocation
-    /// overhead in the decode loop.
+    /// Uses in-place operations for residual connections and normalization
+    /// to minimize allocation overhead in the decode loop.
     pub fn forward_with_cache(
         &self,
         input: &Tensor,
@@ -303,9 +316,11 @@ impl TransformerBlock {
     ) -> NnResult<Tensor> {
         if self.parallel_residual {
             // Falcon: x = input + attn(norm1(input)) + ffn(norm2(input))
-            let norm_1 = self.attention_norm.forward(input)?;
+            let mut norm_1 = input.clone();
+            self.attention_norm.forward_inplace(&mut norm_1)?;
             let mut attn_out = self.attention.forward_with_cache(&norm_1, cache, layer_idx)?;
-            let norm_2 = self.ffn_norm.forward(input)?;
+            let mut norm_2 = input.clone();
+            self.ffn_norm.forward_inplace(&mut norm_2)?;
             let ffn_out = self.feed_forward.forward(&norm_2)?;
             // attn_out += input (in-place, attn_out is fresh with refcount 1)
             attn_out.add_inplace(input)?;
@@ -314,16 +329,19 @@ impl TransformerBlock {
             Ok(attn_out)
         } else if let Some(ref moe) = self.moe {
             // Mixtral: MoE replaces FFN
-            let norm_1 = self.attention_norm.forward(input)?;
+            let mut norm_1 = input.clone();
+            self.attention_norm.forward_inplace(&mut norm_1)?;
             let mut attn_out = self.attention.forward_with_cache(&norm_1, cache, layer_idx)?;
             attn_out.add_inplace(input)?;
-            let norm_2 = self.ffn_norm.forward(&attn_out)?;
+            let mut norm_2 = attn_out.clone();
+            self.ffn_norm.forward_inplace(&mut norm_2)?;
             let moe_out = moe.forward(&norm_2)?;
             attn_out.add_inplace(&moe_out)?;
             Ok(attn_out)
         } else {
             // Standard pre-norm (with optional sandwich norms for Gemma 3)
-            let norm_1 = self.attention_norm.forward(input)?;
+            let mut norm_1 = input.clone();
+            self.attention_norm.forward_inplace(&mut norm_1)?;
             let mut attn_out = self.attention.forward_with_cache(&norm_1, cache, layer_idx)?;
             if let Some(ref pan) = self.post_attention_norm {
                 attn_out = pan.forward(&attn_out)?;
@@ -343,7 +361,8 @@ impl TransformerBlock {
             }
 
             // FFN
-            let norm_2 = self.ffn_norm.forward(&x)?;
+            let mut norm_2 = x.clone();
+            self.ffn_norm.forward_inplace(&mut norm_2)?;
             let mut ffn_out = self.feed_forward.forward(&norm_2)?;
             if let Some(ref pfn) = self.post_ffn_norm {
                 ffn_out = pfn.forward(&ffn_out)?;
@@ -465,5 +484,130 @@ mod tests {
         let mut cache = KVCache::new(1, 128, 16, 4);
         let y = block.forward_with_cache(&x, None, &mut cache, 0).unwrap();
         assert_eq!(y.shape(), &[1, 8, 64]);
+    }
+
+    // ==================== NormLayer::forward_inplace tests ====================
+
+    #[test]
+    fn test_norm_layer_inplace_rms_matches_forward() {
+        let norm = NormLayer::RMSNorm(RMSNorm::new(64, 1e-6));
+        let x = Tensor::randn(vec![1, 4, 64]);
+
+        let y_alloc = norm.forward(&x).unwrap();
+
+        let mut y_inplace = x.clone();
+        norm.forward_inplace(&mut y_inplace).unwrap();
+
+        let d_alloc = y_alloc.as_slice_f32().unwrap();
+        let d_inplace = y_inplace.as_slice_f32().unwrap();
+        assert_eq!(d_alloc.len(), d_inplace.len());
+        for i in 0..d_alloc.len() {
+            assert!((d_alloc[i] - d_inplace[i]).abs() < 1e-5,
+                "rms norm_layer inplace mismatch at index {}: {} vs {}", i, d_alloc[i], d_inplace[i]);
+        }
+    }
+
+    #[test]
+    fn test_norm_layer_inplace_layernorm_matches_forward() {
+        let norm = NormLayer::LayerNorm(LayerNorm::with_eps(64, 1e-5));
+        let x = Tensor::randn(vec![1, 4, 64]);
+
+        let y_alloc = norm.forward(&x).unwrap();
+
+        let mut y_inplace = x.clone();
+        norm.forward_inplace(&mut y_inplace).unwrap();
+
+        let d_alloc = y_alloc.as_slice_f32().unwrap();
+        let d_inplace = y_inplace.as_slice_f32().unwrap();
+        assert_eq!(d_alloc.len(), d_inplace.len());
+        for i in 0..d_alloc.len() {
+            assert!((d_alloc[i] - d_inplace[i]).abs() < 1e-5,
+                "layernorm norm_layer inplace mismatch at {}: {} vs {}", i, d_alloc[i], d_inplace[i]);
+        }
+    }
+
+    #[test]
+    fn test_transformer_block_forward_with_cache_rms_inplace() {
+        // Build a block with RMSNorm (exercises the inplace path in forward_with_cache)
+        let block = TransformerBlock::from_weights_rms(
+            MultiHeadAttention::new(
+                64, 4, None, false, true,
+                PositionEncoding::RoPE, 128, 10000.0,
+            ).unwrap(),
+            FeedForward::new(64, 256, false),
+            RMSNorm::new(64, 1e-6),
+            RMSNorm::new(64, 1e-6),
+        );
+
+        let mut cache = KVCache::new(1, 128, 16, 4);
+
+        // Prefill
+        let x = Tensor::randn(vec![1, 8, 64]);
+        let y = block.forward_with_cache(&x, None, &mut cache, 0).unwrap();
+        assert_eq!(y.shape(), &[1, 8, 64]);
+        cache.advance(8);
+
+        // Decode step — this is the hot path exercising inplace norms
+        let x2 = Tensor::randn(vec![1, 1, 64]);
+        let y2 = block.forward_with_cache(&x2, None, &mut cache, 0).unwrap();
+        assert_eq!(y2.shape(), &[1, 1, 64]);
+        // Ensure output is finite
+        let flat = y2.as_slice_f32().unwrap();
+        assert!(flat.iter().all(|v| v.is_finite()), "decode output contains NaN/Inf");
+    }
+
+    #[test]
+    fn test_transformer_block_forward_with_cache_layernorm_inplace() {
+        // Build a block with LayerNorm (NormLayer::forward_inplace falls back to allocating)
+        let block = TransformerBlock::new(
+            64, 4, None, 256, true, 1e-5, true,
+            PositionEncoding::None, 128, 10000.0,
+        ).unwrap();
+
+        let mut cache = KVCache::new(1, 128, 16, 4);
+
+        let x = Tensor::randn(vec![1, 6, 64]);
+        let y = block.forward_with_cache(&x, None, &mut cache, 0).unwrap();
+        assert_eq!(y.shape(), &[1, 6, 64]);
+        cache.advance(6);
+
+        let x2 = Tensor::randn(vec![1, 1, 64]);
+        let y2 = block.forward_with_cache(&x2, None, &mut cache, 0).unwrap();
+        assert_eq!(y2.shape(), &[1, 1, 64]);
+        let flat = y2.as_slice_f32().unwrap();
+        assert!(flat.iter().all(|v| v.is_finite()), "decode output contains NaN/Inf");
+    }
+
+    #[test]
+    fn test_transformer_block_4norm_inplace_with_cache() {
+        // 4-norm (Gemma 3) block with RMSNorm — exercises inplace for attention_norm + ffn_norm
+        let attention = MultiHeadAttention::new(
+            64, 4, None, false, true,
+            PositionEncoding::RoPE, 128, 10000.0,
+        ).unwrap();
+        let feed_forward = FeedForward::new(64, 256, false);
+        let block = TransformerBlock::from_weights_rms_4norm(
+            attention,
+            feed_forward,
+            RMSNorm::new(64, 1e-6),
+            RMSNorm::new(64, 1e-6),
+            RMSNorm::new(64, 1e-6),
+            RMSNorm::new(64, 1e-6),
+        );
+
+        let mut cache = KVCache::new(1, 128, 16, 4);
+
+        // Prefill
+        let x = Tensor::randn(vec![1, 4, 64]);
+        let y = block.forward_with_cache(&x, None, &mut cache, 0).unwrap();
+        assert_eq!(y.shape(), &[1, 4, 64]);
+        cache.advance(4);
+
+        // Decode
+        let x2 = Tensor::randn(vec![1, 1, 64]);
+        let y2 = block.forward_with_cache(&x2, None, &mut cache, 0).unwrap();
+        assert_eq!(y2.shape(), &[1, 1, 64]);
+        let flat = y2.as_slice_f32().unwrap();
+        assert!(flat.iter().all(|v| v.is_finite()));
     }
 }

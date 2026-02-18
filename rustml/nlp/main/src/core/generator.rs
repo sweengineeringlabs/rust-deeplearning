@@ -195,32 +195,37 @@ impl<'a> Generator<'a> {
         Ok(self.tokenizer.encode(&formatted)?)
     }
 
-    /// Full sampling pipeline: rep_penalty → temperature → top_k → top_p → categorical/argmax
-    fn sample_token(&self, logits: &[f32], past_tokens: &[u32]) -> u32 {
+    /// Full sampling pipeline: rep_penalty → temperature → top_k → top_p → categorical/argmax.
+    ///
+    /// Uses a pre-allocated `SamplingBuffer` to avoid per-token heap allocations
+    /// for the logits copy and top-p sort buffer.
+    fn sample_token(&self, logits: &[f32], past_tokens: &[u32], buf: &mut sampling::SamplingBuffer) -> u32 {
         if self.temperature < 1e-7 {
             return sampling::argmax(logits);
         }
 
-        let mut logits = logits.to_vec();
+        // Reuse pre-allocated logits buffer instead of allocating a new Vec each token
+        buf.logits.clear();
+        buf.logits.extend_from_slice(logits);
 
         if let Some(penalty) = self.repetition_penalty {
-            sampling::apply_repetition_penalty(&mut logits, past_tokens, penalty);
+            sampling::apply_repetition_penalty(&mut buf.logits, past_tokens, penalty);
         }
 
-        for v in logits.iter_mut() {
+        for v in buf.logits.iter_mut() {
             *v /= self.temperature;
         }
 
         if let Some(k) = self.top_k {
-            sampling::apply_top_k(&mut logits, k);
+            sampling::apply_top_k(&mut buf.logits, k);
         }
 
         if let Some(p) = self.top_p {
-            sampling::apply_top_p(&mut logits, p);
+            sampling::apply_top_p_buffered(&mut buf.logits, p, &mut buf.sort_buf);
         }
 
         let mut rng = rand::thread_rng();
-        sampling::sample_categorical(&logits, &mut rng)
+        sampling::sample_categorical(&buf.logits, &mut rng)
     }
 
     fn make_cache(&self) -> KVCache {
@@ -314,9 +319,10 @@ impl<'a> Generator<'a> {
             tokens.insert(0, bos);
         }
         let mut cache = self.make_cache();
+        let mut sampling_buf = sampling::SamplingBuffer::new(self.model.vocab_size());
 
         let last_logits = self.prefill(&tokens, &mut cache)?;
-        let mut next_token = self.sample_token(&last_logits, &tokens);
+        let mut next_token = self.sample_token(&last_logits, &tokens, &mut sampling_buf);
 
         if let Some(eos) = self.eos_token_id {
             if next_token == eos {
@@ -328,7 +334,7 @@ impl<'a> Generator<'a> {
         for _ in 1..max_tokens {
             self.check_deadline()?;
             let logits = self.decode_step(next_token, &mut cache)?;
-            next_token = self.sample_token(&logits, &tokens);
+            next_token = self.sample_token(&logits, &tokens, &mut sampling_buf);
 
             if let Some(eos) = self.eos_token_id {
                 if next_token == eos {
@@ -355,9 +361,10 @@ impl<'a> Generator<'a> {
             tokens.insert(0, bos);
         }
         let mut cache = self.make_cache();
+        let mut sampling_buf = sampling::SamplingBuffer::new(self.model.vocab_size());
 
         let last_logits = self.prefill(&tokens, &mut cache)?;
-        let mut next_token = self.sample_token(&last_logits, &tokens);
+        let mut next_token = self.sample_token(&last_logits, &tokens, &mut sampling_buf);
 
         if let Some(eos) = self.eos_token_id {
             if next_token == eos {
@@ -372,7 +379,7 @@ impl<'a> Generator<'a> {
         for _ in 1..max_tokens {
             self.check_deadline()?;
             let logits = self.decode_step(next_token, &mut cache)?;
-            next_token = self.sample_token(&logits, &tokens);
+            next_token = self.sample_token(&logits, &tokens, &mut sampling_buf);
 
             if let Some(eos) = self.eos_token_id {
                 if next_token == eos {
