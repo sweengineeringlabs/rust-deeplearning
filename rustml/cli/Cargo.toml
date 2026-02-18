@@ -1,0 +1,21 @@
+[package]
+name = "rustml-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Unified CLI facade for RustML — sweai binary with infer, hub, gguf, tokenizer subcommands"
+
+[[bin]]
+name = "sweai"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+rayon.workspace = true
+rustml-nlp.workspace = true
+rustml-gguf.workspace = true
+rustml-hub.workspace = true
+rustml-tokenizer.workspace = true

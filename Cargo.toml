@@ -9,6 +9,7 @@ members = [
     "rustml/tokenizer",
     "rustml/quant",
     "rustml/gguf",
+    "rustml/cli",
     # AudioLearn (umbrella: audiolearn/)
     "audiolearn/app",
     "audiolearn/tauri",

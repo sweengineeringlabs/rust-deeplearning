@@ -6372,6 +6372,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustml-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "rayon",
+ "rustml-gguf",
+ "rustml-hub",
+ "rustml-nlp",
+ "rustml-tokenizer",
+ "serde_json",
+]
+
+[[package]]
 name = "rustml-core"
 version = "0.1.0"
 dependencies = [
