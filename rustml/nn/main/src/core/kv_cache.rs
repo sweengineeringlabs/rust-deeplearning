@@ -14,6 +14,10 @@ pub struct KVCache {
     pub current_len: usize,
     head_dim: usize,
     num_kv_heads: usize,
+    /// Raw token history for models without native KV cache support.
+    /// Models that don't use the K/V buffers (e.g. GptModel) accumulate
+    /// tokens here so they can re-run full-context forward each step.
+    pub token_history: Vec<u32>,
 }
 
 impl KVCache {
@@ -43,6 +47,7 @@ impl KVCache {
             current_len: 0,
             head_dim,
             num_kv_heads,
+            token_history: Vec::new(),
         }
     }
 
@@ -71,6 +76,7 @@ impl KVCache {
             current_len: 0,
             head_dim,
             num_kv_heads,
+            token_history: Vec::new(),
         }
     }
 
@@ -187,6 +193,7 @@ impl KVCache {
             current_len: self.current_len,
             head_dim: self.head_dim,
             num_kv_heads: self.num_kv_heads,
+            token_history: self.token_history.clone(),
         })
     }
 }
