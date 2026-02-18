@@ -30,7 +30,7 @@ struct Cli {
     max_tokens: usize,
 
     /// Sampling temperature (0.0 = greedy).
-    #[arg(long, default_value_t = 0.8)]
+    #[arg(long, default_value_t = 0.8, allow_negative_numbers = true)]
     temperature: f32,
 
     /// Top-k sampling.
@@ -54,7 +54,7 @@ struct Cli {
     chat: bool,
 
     /// Generation timeout in seconds. Stops generation if exceeded.
-    #[arg(long)]
+    #[arg(long, allow_negative_numbers = true)]
     timeout: Option<f64>,
 }
 
@@ -77,7 +77,45 @@ fn read_prompt(cli: &Cli) -> Result<String> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // 1. Parse GGUF header
+    // 1. Validate parameters (fail fast before loading model)
+    if cli.temperature < 0.0 {
+        bail!("--temperature must be >= 0.0, got {}", cli.temperature);
+    }
+    if let Some(k) = cli.top_k {
+        if k == 0 {
+            bail!("--top-k must be > 0");
+        }
+    }
+    if let Some(p) = cli.top_p {
+        if p <= 0.0 || p > 1.0 {
+            bail!("--top-p must be in (0.0, 1.0], got {}", p);
+        }
+    }
+    if let Some(rp) = cli.repetition_penalty {
+        if rp <= 0.0 {
+            bail!("--repetition-penalty must be > 0.0, got {}", rp);
+        }
+    }
+    if let Some(secs) = cli.timeout {
+        if secs <= 0.0 {
+            bail!("--timeout must be > 0.0, got {}", secs);
+        }
+    }
+    if cli.stream && cli.batch_file.is_some() {
+        bail!("--stream is not supported with --batch-file");
+    }
+    let batch_contents = if let Some(ref batch_path) = cli.batch_file {
+        let contents = fs::read_to_string(batch_path)
+            .with_context(|| format!("Failed to read batch file: {}", batch_path.display()))?;
+        if contents.lines().all(|l| l.trim().is_empty()) {
+            bail!("Batch file is empty: {}", batch_path.display());
+        }
+        Some(contents)
+    } else {
+        None
+    };
+
+    // 2. Parse GGUF header
     eprintln!("Loading GGUF: {}", cli.gguf_path.display());
     let gguf = GGUFFile::parse_header(&cli.gguf_path)
         .with_context(|| format!("Failed to parse GGUF: {}", cli.gguf_path.display()))?;
@@ -158,44 +196,13 @@ fn main() -> Result<()> {
         generator = generator.with_chat_template(config.chat_template.clone());
     }
     if let Some(secs) = cli.timeout {
-        if secs <= 0.0 {
-            bail!("--timeout must be > 0.0, got {}", secs);
-        }
         generator = generator.with_timeout(Duration::from_secs_f64(secs));
         eprintln!("  Timeout: {:.1}s", secs);
     }
 
-    // 7. Validate sampling parameters
-    if cli.temperature < 0.0 {
-        bail!("--temperature must be >= 0.0, got {}", cli.temperature);
-    }
-    if let Some(k) = cli.top_k {
-        if k == 0 {
-            bail!("--top-k must be > 0");
-        }
-    }
-    if let Some(p) = cli.top_p {
-        if p <= 0.0 || p > 1.0 {
-            bail!("--top-p must be in (0.0, 1.0], got {}", p);
-        }
-    }
-    if let Some(rp) = cli.repetition_penalty {
-        if rp <= 0.0 {
-            bail!("--repetition-penalty must be > 0.0, got {}", rp);
-        }
-    }
-
     // 8. Read prompt(s) and generate
-    if let Some(ref batch_path) = cli.batch_file {
-        if cli.stream {
-            bail!("--stream is not supported with --batch-file");
-        }
-        let contents = fs::read_to_string(batch_path)
-            .with_context(|| format!("Failed to read batch file: {}", batch_path.display()))?;
+    if let Some(ref contents) = batch_contents {
         let prompts: Vec<&str> = contents.lines().filter(|l| !l.trim().is_empty()).collect();
-        if prompts.is_empty() {
-            bail!("Batch file is empty: {}", batch_path.display());
-        }
         eprintln!("  Batch: {} prompts", prompts.len());
         eprintln!("---");
 
