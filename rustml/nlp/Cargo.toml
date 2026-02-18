@@ -9,7 +9,13 @@ description = "NLP models for RustML including GPT-2 and text generation"
 [lib]
 path = "main/src/lib.rs"
 
+[[bin]]
+name = "rustml-infer"
+path = "main/src/bin/infer.rs"
+
 [dependencies]
+clap.workspace = true
+anyhow.workspace = true
 rustml-core.workspace = true
 rustml-nn.workspace = true
 rustml-hub.workspace = true

@@ -9,9 +9,15 @@ description = "Tokenizer implementations for RustML — BPE, SentencePiece, Hugg
 [lib]
 path = "main/src/lib.rs"
 
+[[bin]]
+name = "rustml-tokenizer"
+path = "main/src/bin/tokenizer_cli.rs"
+
 [dependencies]
 rustml-gguf.workspace = true
 thiserror.workspace = true
 regex.workspace = true
 serde_json.workspace = true
 tokenizers.workspace = true
+clap.workspace = true
+anyhow.workspace = true

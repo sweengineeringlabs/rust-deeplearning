@@ -9,7 +9,13 @@ description = "GGUF format parser for RustML - loads quantized models from the l
 [lib]
 path = "main/src/lib.rs"
 
+[[bin]]
+name = "rustml-gguf-inspect"
+path = "main/src/bin/gguf_inspect.rs"
+
 [dependencies]
+clap.workspace = true
+anyhow.workspace = true
 rustml-quant.workspace = true
 thiserror.workspace = true
 memmap2.workspace = true

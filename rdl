@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# rdl — rust-deeplearning quickstart entrypoint
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+
+usage() {
+  echo "Usage: ./rdl <command> [options]"
+  echo ""
+  echo "Commands:"
+  echo "  setup          One-time environment setup"
+  echo "  build          Build workspace or a specific crate"
+  echo "    --release      Build in release mode (default: debug)"
+  echo "    -p <CRATE>     Build a specific crate"
+  echo "  run            Build if needed and run a binary"
+  echo "    <BINARY>       Binary name (e.g. rustml-tokenizer)"
+  echo "    --release      Run release build"
+  echo "  test [suite]   Build and run tests"
+  echo "    core|nn|nlp|tokenizer|gguf|quant|hub|scripts|all (default: all)"
+  echo "  fmt            Run cargo fmt"
+  echo "  clippy         Run cargo clippy"
+}
+
+CMD="${1:-}"
+[ -n "$CMD" ] && shift
+
+case "$CMD" in
+  setup)   exec "$REPO_ROOT/bin/setup.sh"  "$@" ;;
+  build)   exec "$REPO_ROOT/bin/build.sh"  "$@" ;;
+  run)     exec "$REPO_ROOT/bin/run.sh"    "$@" ;;
+  test)    exec "$REPO_ROOT/bin/test.sh"   "$@" ;;
+  fmt)     exec "$REPO_ROOT/bin/fmt.sh"    "$@" ;;
+  clippy)  exec "$REPO_ROOT/bin/clippy.sh" "$@" ;;
+  -h|--help|help|"") usage ;;
+  *)
+    usage
+    exit 1
+    ;;
+esac
