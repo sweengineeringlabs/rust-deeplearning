@@ -26,6 +26,26 @@
 3. (Optional) A GGUF model file for inference and inspection tests (e.g., Gemma 3 1B Q4_0)
 4. (Optional) A cached SafeTensors model for SafeTensors inference tests (e.g., `sweai hub download openai-community/gpt2`)
 5. (Optional) Internet access for Hub download tests
+6. (Optional) A HuggingFace API token for gated model tests (e.g., `google/gemma-3-1b-it`)
+
+### HuggingFace Token Setup
+
+A token is required to download gated models (e.g., Gemma 3). Token precedence (highest to lowest):
+
+| Priority | Source | Example |
+|----------|--------|---------|
+| 1 | `--token` CLI flag | `sweai hub --token hf_xxx download google/gemma-3-1b-it` |
+| 2 | `HF_TOKEN` environment variable | `export HF_TOKEN=hf_xxx` |
+| 3 | Token file | `~/.cache/huggingface/token` (written by `huggingface-cli login`) |
+
+For inference with gated models, set the environment variable before running:
+
+```bash
+export HF_TOKEN=hf_xxx
+sweai infer --safetensors google/gemma-3-1b-it --prompt "Hello" --max-tokens 20
+```
+
+> **Note:** The `--token` flag is available on `sweai hub` and `rustml-hub-cli` but not on `sweai infer` / `rustml-infer`. For inference, use `HF_TOKEN` env var or `~/.cache/huggingface/token`.
 
 ## Building the CLIs
 
@@ -73,7 +93,7 @@ The `sweai` binary is a single facade over all four standalone CLIs. Every stand
 | [SweAI Unified CLI Tests](manual_sweai_tests.md) | Top-level help, subcommand dispatch, parity, error handling | 70 |
 | [Tokenizer Tests](manual_tokenizer_tests.md) | Tokenizer encode/decode, backends, vocab info | 28 |
 | [GGUF Inspector Tests](manual_gguf_inspect_tests.md) | GGUF metadata, tensor listing, model info | 25 |
-| [Hub CLI Tests](manual_hub_cli_tests.md) | Model download, cache listing, config display, SafeTensors inference | 29 |
+| [Hub CLI Tests](manual_hub_cli_tests.md) | Model download, cache listing, config display, SafeTensors inference | 30 |
 | [Inference Tests](manual_infer_tests.md) | GGUF and SafeTensors model loading, multi-arch dispatch, text generation, streaming, batch, timeout | 83 |
 
 > **Note:** Each test document lists standalone binary commands. All commands can also be run via the unified `sweai` binary — see the equivalence table above.

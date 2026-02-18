@@ -92,3 +92,23 @@ The `rustml-nlp` crate has two model implementations:
 | **`GptModel`** | `nlp/main/src/core/gpt.rs` | Standalone GPT-2 reference implementation for learning | No (O(n^2)) | No (teaching only) |
 
 Both GGUF and SafeTensors inference routes use `LlmModel`. See [ADR-001](adr/adr-001-unified-llmmodel-for-gpt2.md).
+
+### Hub Authentication
+
+The `rustml-hub` crate (`HubApi`) resolves HuggingFace API tokens with the following precedence:
+
+| Priority | Source | How to set |
+|----------|--------|------------|
+| 1 (highest) | `--token` CLI flag | `sweai hub --token hf_xxx download ...` or `rustml-hub-cli --token hf_xxx download ...` |
+| 2 | `HF_TOKEN` environment variable | `export HF_TOKEN=hf_xxx` |
+| 3 (lowest) | Token file | `~/.cache/huggingface/token` (written by `huggingface-cli login`) |
+
+**How it works:**
+
+- `HubApi::new()` reads `HF_TOKEN` from the environment (priority 2)
+- `HubApi::with_token()` overrides with an explicit token (priority 1, used by `--token` flag)
+- The `hf-hub` crate (v0.4.x) reads the token file automatically when no programmatic token is supplied (priority 3)
+- The async download path (`download_model`) sends the token via `Authorization: Bearer` header
+- The sync download path (`download_model_sync`, `download_gguf_sync`) passes the token to `hf_hub::api::sync::ApiBuilder::with_token()`
+
+**Note:** The `hf-hub` crate v0.4.x does **not** read `HF_TOKEN` from the environment on its own — `HubApi` bridges that gap. Gated models (e.g., `google/gemma-3-1b-it`) require a token with accepted license terms on HuggingFace.

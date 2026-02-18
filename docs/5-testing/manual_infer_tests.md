@@ -30,6 +30,8 @@
 
 > **Prerequisite**: A GGUF model file (e.g., Gemma 3 1B IT Q4_0) for GGUF tests, or a cached SafeTensors model (e.g., `openai-community/gpt2`) for SafeTensors tests. Release build recommended for inference speed: `cargo build --release -p rustml-nlp`.
 >
+> **Gated models**: Gated models (e.g., `google/gemma-3-1b-it`) require a HuggingFace token. Set `export HF_TOKEN=hf_xxx` before running, or use `~/.cache/huggingface/token`. See [Manual Testing Hub](manual_testing.md#huggingface-token-setup) for full token precedence.
+>
 > **Unified CLI**: All `rustml-infer` commands below can also be run as `sweai infer` (e.g., `sweai infer model.gguf --prompt "Hello"`). Build with `cargo build --release -p rustml-cli`.
 
 ## 1. Help & Version
@@ -146,7 +148,7 @@
 
 ## 11. SafeTensors Multi-Architecture
 
-> **Prerequisite**: Download target models via `sweai hub download <model-id>`. These tests verify that `--safetensors` auto-detects architecture from `config.json` `model_type`, selects the correct weight mapping and model constructor, and uses `HFTokenizer` (from `tokenizer.json`) when available.
+> **Prerequisite**: Download target models via `sweai hub download <model-id>`. Gated models (e.g., Gemma 3) require `export HF_TOKEN=hf_xxx` or `~/.cache/huggingface/token`. These tests verify that `--safetensors` auto-detects architecture from `config.json` `model_type`, selects the correct weight mapping and model constructor, and uses `HFTokenizer` (from `tokenizer.json`) when available.
 
 | Test | Command | Expected |
 |------|---------|----------|

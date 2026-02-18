@@ -24,6 +24,8 @@
 
 > **Prerequisite**: Build the unified binary: `cargo build -p rustml-cli` (or `cargo build --release -p rustml-cli` for inference).
 >
+> **Gated models**: Gated models (e.g., `google/gemma-3-1b-it`) require a HuggingFace token. Set `export HF_TOKEN=hf_xxx` before running, or use `~/.cache/huggingface/token`. See [Manual Testing Hub](manual_testing.md#huggingface-token-setup) for full token precedence.
+>
 > **Standalone equivalents**: Each `sweai` subcommand maps 1-to-1 with a standalone binary — see [Manual Testing Hub](manual_testing.md) for the full equivalence table.
 
 ## 1. Help & Version
@@ -78,7 +80,7 @@
 
 ## 4. Hub Subcommand
 
-> **Prerequisite**: Internet access for download tests. A HuggingFace API token for private model tests (optional).
+> **Prerequisite**: Internet access for download tests. A HuggingFace token for gated/private model tests (see [token setup](manual_testing.md#huggingface-token-setup)).
 
 | Test | Command | Expected |
 |------|---------|----------|
@@ -88,7 +90,7 @@
 | List cached | `sweai hub list` | Shows model IDs from cache directories |
 | Show config | `sweai hub info openai-community/gpt2` | Pretty-printed JSON with model config |
 | Custom cache dir | `sweai hub --cache-dir /tmp/sweai-cache list` | Uses specified cache directory |
-| Token flag | `sweai hub --token hf_xxx list` | Accepts token (used for private repos) |
+| Token flag | `sweai hub --token hf_xxx list` | Accepts token (overrides `HF_TOKEN` env var and `~/.cache/huggingface/token`) |
 
 ## 5. Tokenizer Subcommand
 

@@ -29,10 +29,13 @@ impl HubApi {
             .join("rustml")
             .join("hub");
 
+        // Auto-detect HF_TOKEN from environment
+        let token = std::env::var("HF_TOKEN").ok();
+
         Self {
             base_url: "https://huggingface.co".to_string(),
             cache_dir,
-            token: None,
+            token,
         }
     }
 
@@ -138,14 +141,25 @@ impl HubApi {
 
     // ======================== Sync API (hf-hub) ========================
 
+    /// Build the hf-hub sync API, passing through any token from self.token.
+    /// The hf-hub crate (0.4.x) does NOT read HF_TOKEN from the environment;
+    /// it only reads a token file in the cache dir.  We bridge that gap here.
+    fn hf_sync_api(&self) -> HubResult<hf_hub::api::sync::Api> {
+        match self.token {
+            Some(ref t) => hf_hub::api::sync::ApiBuilder::new()
+                .with_token(Some(t.clone()))
+                .build(),
+            None => hf_hub::api::sync::Api::new(),
+        }
+        .map_err(|e| HubError::NetworkError(format!("Failed to create hf-hub API: {}", e)))
+    }
+
     /// Download a model from HuggingFace Hub (synchronous, via hf-hub crate)
     ///
     /// Uses the `hf-hub` crate for synchronous downloads with automatic caching.
     /// This is the preferred path when async is not needed (e.g., CLI tools).
     pub fn download_model_sync(&self, model_id: &str) -> HubResult<ModelBundle> {
-        let api = hf_hub::api::sync::Api::new().map_err(|e| {
-            HubError::NetworkError(format!("Failed to create hf-hub API: {}", e))
-        })?;
+        let api = self.hf_sync_api()?;
 
         let repo = api.model(model_id.to_string());
 
@@ -177,9 +191,7 @@ impl HubApi {
         model_id: &str,
         filename: &str,
     ) -> HubResult<GgufBundle> {
-        let api = hf_hub::api::sync::Api::new().map_err(|e| {
-            HubError::NetworkError(format!("Failed to create hf-hub API: {}", e))
-        })?;
+        let api = self.hf_sync_api()?;
 
         let repo = api.model(model_id.to_string());
         let gguf_path = repo.get(filename).map_err(|e| {

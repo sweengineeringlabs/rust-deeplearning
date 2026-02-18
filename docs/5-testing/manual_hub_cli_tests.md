@@ -23,7 +23,9 @@
 
 ---
 
-> **Prerequisite**: Internet access for download tests. A HuggingFace API token for private model tests (optional).
+> **Prerequisite**: Internet access for download tests.
+>
+> **Gated/private models**: A HuggingFace token is required for gated models (e.g., `google/gemma-3-1b-it`) and private repos. Token precedence (highest to lowest): `--token` CLI flag > `HF_TOKEN` env var > `~/.cache/huggingface/token` file. See [Manual Testing Hub](manual_testing.md#huggingface-token-setup) for setup details.
 >
 > **Unified CLI**: All `rustml-hub-cli` commands below can also be run as `sweai hub` (e.g., `sweai hub download openai-community/gpt2`). Build with `cargo build -p rustml-cli`.
 
@@ -44,7 +46,8 @@
 | Test | Command | Expected |
 |------|---------|----------|
 | Custom cache dir | `rustml-hub-cli --cache-dir /tmp/test-cache list` | Uses specified cache directory |
-| Token flag | `rustml-hub-cli --token hf_xxx list` | Accepts token (used for private repos) |
+| Token flag | `rustml-hub-cli --token hf_xxx list` | Accepts token (overrides `HF_TOKEN` env var and `~/.cache/huggingface/token`) |
+| HF_TOKEN env var | `HF_TOKEN=hf_xxx rustml-hub-cli download google/gemma-3-1b-it` | Auto-detected by `HubApi::new()`; downloads gated model |
 | Flags before subcommand | `rustml-hub-cli --cache-dir /tmp/c --token hf_xxx list` | Both flags parsed correctly |
 
 ## 3. Download — SafeTensors
