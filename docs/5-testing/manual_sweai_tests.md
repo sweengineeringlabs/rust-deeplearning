@@ -77,6 +77,7 @@
 |------|---------|----------|
 | Download SafeTensors | `sweai hub download openai-community/gpt2` | Downloads model files; prints model directory path |
 | Download GGUF | `sweai hub download <repo-id> --gguf <filename>.gguf` | Downloads single GGUF file; prints file path |
+| List shows GGUF | `sweai hub list` (after GGUF download) | Lists the GGUF repo ID alongside SafeTensors models |
 | List cached | `sweai hub list` | Shows model IDs from cache directories |
 | Show config | `sweai hub info openai-community/gpt2` | Pretty-printed JSON with model config |
 | Custom cache dir | `sweai hub --cache-dir /tmp/sweai-cache list` | Uses specified cache directory |

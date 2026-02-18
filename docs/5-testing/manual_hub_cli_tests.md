@@ -63,6 +63,7 @@
 | Test | Command | Expected |
 |------|---------|----------|
 | Download GGUF | `rustml-hub-cli download <repo-id> --gguf <filename>.gguf` | Downloads single GGUF file; prints file path |
+| GGUF in list after download | `rustml-hub-cli list` (after GGUF download) | Shows the GGUF repo ID in the cached models list |
 
 ## 5. List
 
@@ -73,6 +74,7 @@
 | List empty cache | `rustml-hub-cli --cache-dir /tmp/empty-dir list` | `No cached models found.` on stderr |
 | List nonexistent dir | `rustml-hub-cli --cache-dir /tmp/nonexistent list` | `Cache directory does not exist` on stderr |
 | Model ID format | (in list output) | IDs shown as `org/model` (not `org--model`) |
+| GGUF-only entries | (in list output) | GGUF-only cache entries (no config.json) also appear in list |
 
 ## 6. Info
 

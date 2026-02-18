@@ -186,6 +186,10 @@ impl HubApi {
             HubError::NetworkError(format!("Failed to download {}: {}", filename, e))
         })?;
 
+        // Register in the rustml cache so hub list can find GGUF downloads
+        let gguf_dir = gguf_path.parent().unwrap_or(&gguf_path).to_path_buf();
+        self.link_to_cache(model_id, &gguf_dir);
+
         Ok(GgufBundle {
             gguf_path,
             model_id: Some(model_id.to_string()),

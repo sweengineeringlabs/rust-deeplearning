@@ -160,6 +160,47 @@ fn list_reconstructs_model_id_from_directory() {
     assert!(stdout.contains("org/model-name"));
 }
 
+#[test]
+fn list_shows_gguf_cached_models() {
+    // GGUF-only entries have no config.json, just a .gguf file
+    let cache = setup_mock_cache(&[("TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF", None)]);
+    // Add a dummy .gguf file so the directory is not empty
+    let model_dir = cache.join("TheBloke--TinyLlama-1.1B-Chat-v1.0-GGUF");
+    std::fs::write(model_dir.join("tinyllama.Q4_0.gguf"), b"GGUF_DUMMY").unwrap();
+
+    let out = bin()
+        .args(["--cache-dir"])
+        .arg(&cache)
+        .args(["list"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"));
+}
+
+#[test]
+fn list_shows_mixed_safetensors_and_gguf() {
+    let cache = setup_mock_cache(&[
+        ("openai-community/gpt2", Some("{}")),
+        ("TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF", None),
+    ]);
+    // Add a dummy .gguf file to the GGUF entry
+    let gguf_dir = cache.join("TheBloke--TinyLlama-1.1B-Chat-v1.0-GGUF");
+    std::fs::write(gguf_dir.join("tinyllama.Q4_0.gguf"), b"GGUF_DUMMY").unwrap();
+
+    let out = bin()
+        .args(["--cache-dir"])
+        .arg(&cache)
+        .args(["list"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("openai-community/gpt2"));
+    assert!(stdout.contains("TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"));
+}
+
 // ── info subcommand ─────────────────────────────────────────────────
 
 #[test]
