@@ -69,6 +69,7 @@ The `sweai` binary is a single facade over all four standalone CLIs. Every stand
 
 | Document | Domain | Tests |
 |----------|--------|-------|
+| [SweAI Unified CLI Tests](manual_sweai_tests.md) | Top-level help, subcommand dispatch, parity, error handling | 56 |
 | [Tokenizer Tests](manual_tokenizer_tests.md) | Tokenizer encode/decode, backends, vocab info | 28 |
 | [GGUF Inspector Tests](manual_gguf_inspect_tests.md) | GGUF metadata, tensor listing, model info | 25 |
 | [Hub CLI Tests](manual_hub_cli_tests.md) | Model download, cache listing, config display | 18 |
