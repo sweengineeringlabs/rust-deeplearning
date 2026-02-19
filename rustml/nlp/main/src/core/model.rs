@@ -920,6 +920,21 @@ impl LlmModel {
         }
     }
 
+    /// Run a single dummy forward pass to warm up the M=1 decode code path.
+    /// Exercises rayon column-parallel matmul, SIMD kernels, and TLB entries.
+    /// Call after quantize_all_weights() and fuse_gate_up_weights().
+    pub fn warmup_decode(&self) -> NlpResult<()> {
+        let n_kv_heads = self.config.n_kv_heads.unwrap_or(self.config.n_heads);
+        let head_dim = self.config.head_dim.unwrap_or(self.config.dim / self.config.n_heads);
+        let mut cache = KVCache::new(self.config.n_layers, 4, head_dim, n_kv_heads);
+
+        let dummy_bytes = 0.0f32.to_ne_bytes().to_vec();
+        let input = Tensor::new(dummy_bytes, vec![1, 1], DType::F32);
+
+        let _ = self.forward_with_cache_pass(&input, &mut cache)?;
+        Ok(())
+    }
+
     /// Forward pass without KV cache.
     pub fn forward_pass(&self, input_ids: &Tensor) -> NlpResult<Tensor> {
         let x_emb = self.token_embedding.forward(input_ids)?;

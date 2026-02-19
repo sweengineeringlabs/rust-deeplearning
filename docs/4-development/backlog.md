@@ -27,7 +27,8 @@
 
 - [ ] **lm_head still ~30ms/step (262K vocab floor)** — The `[1,1152]×[1152,262144]` Q8_0 matmul is memory-bandwidth bound. Further reduction requires vocabulary pruning or speculative decoding to avoid the full vocab projection on every step.
 
-- [ ] **Cold-start layer-0 latency** — First transformer layer takes ~2× longer than subsequent layers due to rayon thread pool warm-up. Could be mitigated by a dummy warm-up matmul before generation starts.
+- [x] **Cold-start layer-0 latency** — First transformer layer takes ~2× longer than subsequent layers due to rayon thread pool warm-up. Mitigated by `LlmModel::warmup_decode()` which runs a single dummy forward pass at load time.
+  - Files: `rustml/nlp/main/src/core/model.rs`, `rustml/nlp/main/src/bin/infer.rs`, `rustml/cli/src/cmd/infer.rs`
 
 ## Model Format Support
 

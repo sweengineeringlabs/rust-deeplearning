@@ -363,6 +363,13 @@ fn run_safetensors(
         eprintln!("  Fused {} gate+up projection pairs", fused);
     }
 
+    // Warm up M=1 decode path (rayon, SIMD, branch prediction, TLB)
+    let warmup_start = Instant::now();
+    if let Err(e) = model.warmup_decode() {
+        eprintln!("  [warn] decode warmup failed: {}", e);
+    }
+    eprintln!("  Warmup: {:.0}ms", warmup_start.elapsed().as_secs_f64() * 1000.0);
+
     let (total_params, _) = model.parameter_count();
     eprintln!("  Model ready: {:.1}M params", total_params as f64 / 1e6);
 
@@ -451,6 +458,14 @@ fn run_gguf(
             .with_context(|| "Failed to build model")?
     };
     model.set_optimization_profile(profile);
+
+    // Warm up M=1 decode path (rayon, SIMD, branch prediction, TLB)
+    let warmup_start = Instant::now();
+    if let Err(e) = model.warmup_decode() {
+        eprintln!("  [warn] decode warmup failed: {}", e);
+    }
+    eprintln!("  Warmup: {:.0}ms", warmup_start.elapsed().as_secs_f64() * 1000.0);
+
     let (total_params, _) = model.parameter_count();
     eprintln!("  Model ready: {:.1}M params", total_params as f64 / 1e6);
 
