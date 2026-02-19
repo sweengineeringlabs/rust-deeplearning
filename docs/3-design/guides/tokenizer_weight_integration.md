@@ -353,6 +353,7 @@ What happens when the tokenizer–weight contract is broken:
 
 ## See Also
 
+- [Inference Dataflow](../inference_dataflow.md) — full tensor-level data flow through the transformer layers, KV cache, and sampling pipeline
 - [Architecture](../architecture.md) — project structure and crate layout
 - [ADR-001: Unified LlmModel for GPT-2](../adr/adr-001-unified-llmmodel-for-gpt2.md) — why SafeTensors models use LlmModel
 - [Manual Testing Guide](../../5-testing/manual_testing.md) — CLI test procedures

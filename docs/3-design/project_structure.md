@@ -91,7 +91,7 @@ The `rustml-nlp` crate has two model implementations:
 | **`LlmModel`** | `nlp/main/src/core/model.rs` | Unified production model — supports GPT-2, Llama, Gemma, Falcon, Mixtral via config | Yes | Yes (GGUF + SafeTensors) |
 | **`GptModel`** | `nlp/main/src/core/gpt.rs` | Standalone GPT-2 reference implementation for learning | No (O(n^2)) | No (teaching only) |
 
-Both GGUF and SafeTensors inference routes use `LlmModel`. See [ADR-001](adr/adr-001-unified-llmmodel-for-gpt2.md).
+Both GGUF and SafeTensors inference routes use `LlmModel`. See [ADR-001](adr/adr-001-unified-llmmodel-for-gpt2.md) and [Inference Dataflow](inference_dataflow.md) for the full tensor-level pipeline.
 
 ### Hub Authentication
 
