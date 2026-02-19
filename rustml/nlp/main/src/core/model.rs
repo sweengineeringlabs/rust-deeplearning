@@ -1801,4 +1801,123 @@ mod tests {
                 "profile mismatch at {}: opt={} base={}", i, d1[i], d2[i]);
         }
     }
+
+    // Tests for quantize_all_weights with dynamic threshold
+
+    fn config_768() -> ModelConfig {
+        ModelConfig {
+            dim: 768,
+            hidden_dim: 3072,
+            n_layers: 2,
+            n_heads: 12,
+            n_kv_heads: None,
+            vocab_size: 1000,
+            norm_eps: 1e-5,
+            max_seq_len: 128,
+            use_bias: Some(false),
+            position_encoding: PositionEncoding::Learned,
+            causal: true,
+            rope_theta: 10000.0,
+            bos_token_id: None,
+            eos_token_id: None,
+            chat_template: None,
+            sliding_window: None,
+            attn_logit_cap: None,
+            embedding_scale: None,
+            rms_norm_offset: None,
+            attention_bias: None,
+            parallel_residual: None,
+            num_local_experts: None,
+            num_experts_per_tok: None,
+            head_dim: None,
+            sliding_window_pattern: None,
+            query_pre_attn_scalar: None,
+            rope_local_base_freq: None,
+            rope_scaling_factor: None,
+        }
+    }
+
+    #[test]
+    fn test_quantize_all_weights_default_uses_model_dim() {
+        // Model with dim=768 should quantize all layers when min_dim=None
+        let config = config_768();
+        let mut model = LlmModel::new(&config).unwrap();
+
+        // Before quantization, weights are F32
+        assert!(!model.layers[0].attention.q_proj.is_quantized());
+        assert!(!model.layers[0].feed_forward.up_proj.is_quantized());
+
+        // Quantize with default (uses model's dim=768)
+        let count = model.quantize_all_weights(None).unwrap();
+
+        // All attention (4 per layer) + FFN (2 per layer) + output = 2*(4+2)+1 = 13
+        assert_eq!(count, 13, "expected 13 layers quantized for 2-layer model");
+
+        // After quantization, weights should be Q8_0
+        assert!(model.layers[0].attention.q_proj.is_quantized());
+        assert!(model.layers[0].feed_forward.up_proj.is_quantized());
+    }
+
+    #[test]
+    fn test_quantize_all_weights_override_higher_threshold() {
+        // Model with dim=768, but use higher threshold to skip attention
+        let config = config_768();
+        let mut model = LlmModel::new(&config).unwrap();
+
+        // Use threshold=1024, which should skip 768x768 attention projections
+        // but still quantize 768x3072 and 3072x768 FFN projections
+        let count = model.quantize_all_weights(Some(1024)).unwrap();
+
+        // Only FFN up (768->3072) and down (3072->768) per layer
+        // Output (768->1000) is skipped since max(768,1000)=1000 < 1024
+        // 2 layers * 2 FFN = 4
+        assert_eq!(count, 4, "expected 4 layers quantized with threshold=1024");
+
+        // Attention should NOT be quantized (768 < 1024)
+        assert!(!model.layers[0].attention.q_proj.is_quantized());
+        // FFN should be quantized (3072 >= 1024)
+        assert!(model.layers[0].feed_forward.up_proj.is_quantized());
+    }
+
+    #[test]
+    fn test_quantize_all_weights_override_lower_threshold() {
+        // Use very low threshold to ensure everything is quantized
+        let config = tiny_config(); // dim=64
+        let mut model = LlmModel::new(&config).unwrap();
+
+        // With default (dim=64), small layers would normally be skipped
+        // Override with min_dim=32 to force quantization
+        let count = model.quantize_all_weights(Some(32)).unwrap();
+
+        // 2 layers * (4 attn + 2 FFN) + 1 output = 13
+        assert_eq!(count, 13, "expected 13 layers quantized with threshold=32");
+        assert!(model.layers[0].attention.q_proj.is_quantized());
+    }
+
+    #[test]
+    fn test_quantize_all_weights_skip_small_layers() {
+        // Tiny model with dim=64, default threshold should skip all
+        let config = tiny_config();
+        let mut model = LlmModel::new(&config).unwrap();
+
+        // Default uses dim=64 as threshold, so nothing smaller is skipped
+        // But 64x256 FFN should be quantized (256 >= 64)
+        let count = model.quantize_all_weights(None).unwrap();
+
+        // All layers should be quantized since max(in, out) >= 64
+        assert!(count > 0, "expected some layers to be quantized");
+    }
+
+    #[test]
+    fn test_quantize_all_weights_idempotent() {
+        // Calling quantize twice should not double-count
+        let config = config_768();
+        let mut model = LlmModel::new(&config).unwrap();
+
+        let count1 = model.quantize_all_weights(None).unwrap();
+        let count2 = model.quantize_all_weights(None).unwrap();
+
+        assert_eq!(count1, 13, "first quantization should quantize 13 layers");
+        assert_eq!(count2, 0, "second quantization should be no-op");
+    }
 }
