@@ -48,3 +48,10 @@ pub use crate::core::training::trainer::Trainer;
 
 // Serialization
 pub use crate::core::serde::{save_checkpoint, load_checkpoint, Checkpoint};
+
+// Data pipeline
+pub use crate::core::data::candle::OHLCVCandle;
+pub use crate::core::data::dataset::{TimeSeriesDataset, TargetColumn};
+pub use crate::core::data::dataloader::DataLoader;
+pub use crate::core::data::features::{Feature, FeatureEngineer, Returns, MovingAverage, Volatility, RSI};
+pub use crate::core::data::scaler::{Scaler, ScalerType};

@@ -1,3 +1,4 @@
+pub mod data;
 pub mod loss;
 pub mod models;
 pub mod nn;
