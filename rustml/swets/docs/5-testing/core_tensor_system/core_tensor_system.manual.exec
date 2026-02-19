@@ -1,0 +1,50 @@
+# Manual Test Execution: Core Tensor System
+
+> **TLDR:** Manual test checklist for Core Tensor System — step-by-step procedures with expected outcomes.
+
+**Version:** 1.0
+**Status:** Pending
+**Test Plan:** [Test Plan](core_tensor_system.test)
+
+---
+
+## Test Cases
+
+| TC | Test | Steps | Expected |
+|----|------|-------|----------|
+| TC-001 | FR-100: Tensor struct with unique `TensorId`, `Arc<Storage>` data, shape, strides, dtype, device (Test) | _TODO_ | To be defined |
+| TC-002 | FR-101: `TensorId` generated via atomic counter for tape tracking (Test) | _TODO_ | To be defined |
+| TC-003 | FR-102: `Storage` enum: `Owned(Vec<u8>)`, `View { parent, offset, len }`, `MMap` (Test) | _TODO_ | To be defined |
+| TC-004 | FR-103: `DType` enum matching rustml-core: F32, F16, BF16, I8, U8, Q8_0, Q4_0, Q4_1 (Test) | _TODO_ | To be defined |
+| TC-005 | FR-104: Thread-local `TensorPool` for buffer recycling during backward pass (Test) | _TODO_ | To be defined |
+| TC-006 | FR-105: Creation ops: `zeros`, `ones`, `randn`, `uniform`, `from_vec`, `arange` (Test) | _TODO_ | To be defined |
+| TC-007 | FR-106: Shape ops: `reshape`, `transpose`, `permute`, `squeeze`, `unsqueeze`, `flatten`, `view` (Test) | _TODO_ | To be defined |
+| TC-008 | FR-107: Indexing ops: `slice`, `index_select`, `gather`, `masked_select` (Test) | _TODO_ | To be defined |
+| TC-009 | FR-108: Element-wise math: add, sub, mul, div, pow, sqrt, exp, log, abs, neg (Test) | _TODO_ | To be defined |
+| TC-010 | FR-109: Reductions: sum, mean, max, min, std, var (Test) | _TODO_ | To be defined |
+| TC-011 | FR-110: `matmul` and `dot` with broadcasting (Test) | _TODO_ | To be defined |
+| TC-012 | FR-111: `conv1d` with stride, padding, and dilation parameters (Test) | _TODO_ | To be defined |
+| TC-013 | FR-112: `concat`, `stack`, `split` tensor joining/splitting (Test) | _TODO_ | To be defined |
+| TC-014 | FR-113: Row-major strides computation and flat offset indexing (Test) | _TODO_ | To be defined |
+
+---
+
+## Execution Log
+
+| TC | Tester | Date | Pass/Fail | Notes |
+|----|--------|------|-----------|-------|
+| TC-001 | | | | |
+| TC-002 | | | | |
+| TC-003 | | | | |
+| TC-004 | | | | |
+| TC-005 | | | | |
+| TC-006 | | | | |
+| TC-007 | | | | |
+| TC-008 | | | | |
+| TC-009 | | | | |
+| TC-010 | | | | |
+| TC-011 | | | | |
+| TC-012 | | | | |
+| TC-013 | | | | |
+| TC-014 | | | | |
+

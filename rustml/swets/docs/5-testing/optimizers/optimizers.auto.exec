@@ -1,0 +1,21 @@
+# Automated Test Execution: Optimizers
+
+> **TLDR:** CI/automated test tracker for Optimizers — maps each test case to a CI job and build.
+
+**Version:** 1.0
+**Status:** Pending
+**Test Plan:** [Test Plan](optimizers.test)
+
+---
+
+## Test Cases
+
+| TC | Test | Verifies | CI Job | Build | Status | Last Run |
+|----|------|----------|--------|-------|--------|----------|
+| TC-001 | FR-400: `Optimizer` trait: `step(params, tape)`, `lr()`, `set_lr()` — reads gradients from tape (Test) | REQ-001 | | | Pending | |
+| TC-002 | FR-401: `SGD` with momentum, dampening, weight decay, Nesterov (Test) | REQ-002 | | | Pending | |
+| TC-003 | FR-402: `Adam` with configurable betas, epsilon, L2 regularization (Test) | REQ-003 | | | Pending | |
+| TC-004 | FR-403: `AdamW` with decoupled weight decay (applied before Adam update) (Test) | REQ-004 | | | Pending | |
+| TC-005 | FR-404: Gradient clipping by global L2 norm (`clip_grad_norm`) (Test) | REQ-005 | | | Pending | |
+| TC-006 | FR-405: Gradient clipping by value (`clip_grad_value`) (Test) | REQ-006 | | | Pending | |
+

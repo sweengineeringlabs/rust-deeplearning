@@ -1,0 +1,19 @@
+# Test Plan: Training Infrastructure
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/training_infrastructure/training_infrastructure.spec)
+
+## Test Cases
+
+| ID | Test | Verifies | Priority |
+|----|------|----------|----------|
+| TC-001 | FR-900: `Trainer` struct: owns model, optimizer, loss function (Test) | REQ-001 | Must |
+| TC-002 | FR-901: `train_epoch()`: forward pass, backward pass, gradient clipping, optimizer step — fresh tape per batch (Test) | REQ-002 | Must |
+| TC-003 | FR-902: `validate()`: forward pass with no tape (no gradient computation) (Test) | REQ-003 | Must |
+| TC-004 | FR-903: `fit()`: epoch loop with train/validate, logging, scheduler step, early stopping check (Test) | REQ-004 | Must |
+| TC-005 | FR-904: `predict()`: switches model to eval mode, runs forward with no tape (Test) | REQ-005 | Must |
+| TC-006 | FR-905: Early stopping with configurable patience (Test) | REQ-006 | Must |
+| TC-007 | FR-906: Best-model checkpointing on validation loss improvement (Test) | REQ-007 | Must |
+| TC-008 | FR-907: Builder pattern: `with_scheduler()`, `with_early_stopping()`, `with_grad_clip()`, `with_checkpoint_dir()` (Test) | REQ-008 | Should |
+

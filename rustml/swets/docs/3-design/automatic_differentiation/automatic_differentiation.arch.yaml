@@ -1,0 +1,5 @@
+kind: architecture
+domain: Automatic Differentiation
+section: '2.2'
+specRef: docs/1-requirements/automatic_differentiation/automatic_differentiation.spec.yaml
+components: []

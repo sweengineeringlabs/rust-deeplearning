@@ -1,0 +1,5 @@
+kind: architecture
+domain: Loss Functions
+section: '2.6'
+specRef: docs/1-requirements/loss_functions/loss_functions.spec.yaml
+components: []

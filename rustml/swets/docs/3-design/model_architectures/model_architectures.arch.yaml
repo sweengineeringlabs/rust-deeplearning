@@ -1,0 +1,5 @@
+kind: architecture
+domain: Model Architectures
+section: '2.8'
+specRef: docs/1-requirements/model_architectures/model_architectures.spec.yaml
+components: []

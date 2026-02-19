@@ -1,0 +1,9 @@
+kind: deployment
+domain: Neural Network Layers
+section: '2.3'
+specRef: docs/1-requirements/neural_network_layers/neural_network_layers.spec.yaml
+environments:
+- name: staging
+  description: Staging environment for Neural Network Layers validation
+- name: production
+  description: Production environment for Neural Network Layers

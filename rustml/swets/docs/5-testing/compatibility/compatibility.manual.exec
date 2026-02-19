@@ -1,0 +1,30 @@
+# Manual Test Execution: Compatibility
+
+> **TLDR:** Manual test checklist for Compatibility — step-by-step procedures with expected outcomes.
+
+**Version:** 1.0
+**Status:** Pending
+**Test Plan:** [Test Plan](compatibility.test)
+
+---
+
+## Test Cases
+
+| TC | Test | Steps | Expected |
+|----|------|-------|----------|
+| TC-001 | NFR-400: `DType` enum identical to rustml-core for weight interop (Analysis) | _TODO_ | To be defined |
+| TC-002 | NFR-401: `Shape` type alias matches rustml-core (`SmallVec<[usize; 4]>`) (Analysis) | _TODO_ | To be defined |
+| TC-003 | NFR-402: Project follows rustml workspace conventions: `main/src/` layout, SEA layering, umbrella pattern (Analysis) | _TODO_ | To be defined |
+| TC-004 | NFR-403: Minimum supported Rust version: stable (no nightly-only features outside optional SIMD) (Analysis) | _TODO_ | To be defined |
+
+---
+
+## Execution Log
+
+| TC | Tester | Date | Pass/Fail | Notes |
+|----|--------|------|-----------|-------|
+| TC-001 | | | | |
+| TC-002 | | | | |
+| TC-003 | | | | |
+| TC-004 | | | | |
+

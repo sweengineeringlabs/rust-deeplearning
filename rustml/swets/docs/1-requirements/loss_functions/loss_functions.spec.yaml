@@ -1,0 +1,46 @@
+kind: feature_request
+domain: Loss Functions
+section: '2.6'
+requirements:
+- id: REQ-001
+  sourceId: FR-600
+  title: '`Loss` trait: `forward(predictions, targets, tape)`'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-002
+  sourceId: FR-601
+  title: '`MSELoss` — mean squared error'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-003
+  sourceId: FR-602
+  title: '`MAELoss` — mean absolute error'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-004
+  sourceId: FR-603
+  title: '`HuberLoss` — quadratic near zero, linear far from zero, configurable delta'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-005
+  sourceId: FR-604
+  title: '`CrossEntropyLoss` — numerically stable log-softmax + NLL'
+  priority: Should
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-006
+  sourceId: FR-605
+  title: '`QuantileLoss` — asymmetric loss for quantile regression'
+  priority: Should
+  status: Proposed
+  verification: Test
+  acceptance: ''

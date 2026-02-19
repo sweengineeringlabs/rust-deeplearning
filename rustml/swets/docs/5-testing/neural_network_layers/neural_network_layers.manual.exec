@@ -1,0 +1,42 @@
+# Manual Test Execution: Neural Network Layers
+
+> **TLDR:** Manual test checklist for Neural Network Layers — step-by-step procedures with expected outcomes.
+
+**Version:** 1.0
+**Status:** Pending
+**Test Plan:** [Test Plan](neural_network_layers.test)
+
+---
+
+## Test Cases
+
+| TC | Test | Steps | Expected |
+|----|------|-------|----------|
+| TC-001 | FR-300: `Layer` trait: `forward(&mut self, input, tape)`, `parameters()`, `parameters_mut()`, `train()`, `eval()`, `parameter_count()` (Test) | _TODO_ | To be defined |
+| TC-002 | FR-301: `Sequential` container chaining arbitrary layers (Test) | _TODO_ | To be defined |
+| TC-003 | FR-302: `Linear` layer with Xavier (default) and He initialization (Test) | _TODO_ | To be defined |
+| TC-004 | FR-303: `LSTM` layer: multi-layer, configurable hidden size, optional bidirectional, dropout between layers (Test) | _TODO_ | To be defined |
+| TC-005 | FR-304: `Conv1d` layer with stride, padding, dilation (Test) | _TODO_ | To be defined |
+| TC-006 | FR-305: Activation layers: `ReLU`, `Tanh`, `Sigmoid`, `GELU`, `SiLU` (Test) | _TODO_ | To be defined |
+| TC-007 | FR-306: `LayerNorm` with configurable epsilon (Test) | _TODO_ | To be defined |
+| TC-008 | FR-307: `BatchNorm1d` with running statistics (updated via `&mut self` in training mode) (Test) | _TODO_ | To be defined |
+| TC-009 | FR-308: `Dropout` layer: active in training, identity in eval (Test) | _TODO_ | To be defined |
+| TC-010 | FR-309: `model_summary()` prints total/trainable/frozen parameter counts (Test) | _TODO_ | To be defined |
+
+---
+
+## Execution Log
+
+| TC | Tester | Date | Pass/Fail | Notes |
+|----|--------|------|-----------|-------|
+| TC-001 | | | | |
+| TC-002 | | | | |
+| TC-003 | | | | |
+| TC-004 | | | | |
+| TC-005 | | | | |
+| TC-006 | | | | |
+| TC-007 | | | | |
+| TC-008 | | | | |
+| TC-009 | | | | |
+| TC-010 | | | | |
+

@@ -1,0 +1,30 @@
+# Manual Test Execution: Extensibility
+
+> **TLDR:** Manual test checklist for Extensibility — step-by-step procedures with expected outcomes.
+
+**Version:** 1.0
+**Status:** Pending
+**Test Plan:** [Test Plan](extensibility.test)
+
+---
+
+## Test Cases
+
+| TC | Test | Steps | Expected |
+|----|------|-------|----------|
+| TC-001 | NFR-500: New `BackwardOp` implementations can be added without modifying the tape (Analysis) | _TODO_ | To be defined |
+| TC-002 | NFR-501: New `Layer` implementations can be used with existing `Sequential`, `Trainer`, `Optimizer` (Analysis) | _TODO_ | To be defined |
+| TC-003 | NFR-502: New `Feature` implementations can be plugged into `FeatureEngineer` (Analysis) | _TODO_ | To be defined |
+| TC-004 | NFR-503: New `Loss`, `Optimizer`, `LRScheduler` implementations via traits (Analysis) | Analyze: --- | To be defined |
+
+---
+
+## Execution Log
+
+| TC | Tester | Date | Pass/Fail | Notes |
+|----|--------|------|-----------|-------|
+| TC-001 | | | | |
+| TC-002 | | | | |
+| TC-003 | | | | |
+| TC-004 | | | | |
+

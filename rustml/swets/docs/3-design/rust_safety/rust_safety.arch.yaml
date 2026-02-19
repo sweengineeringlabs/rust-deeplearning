@@ -1,0 +1,5 @@
+kind: architecture
+domain: Rust Safety
+section: '3.3'
+specRef: docs/1-requirements/rust_safety/rust_safety.spec.yaml
+components: []

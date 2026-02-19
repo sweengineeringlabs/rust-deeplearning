@@ -1,0 +1,9 @@
+kind: deployment
+domain: Correctness
+section: '3.2'
+specRef: docs/1-requirements/correctness/correctness.spec.yaml
+environments:
+- name: staging
+  description: Staging environment for Correctness validation
+- name: production
+  description: Production environment for Correctness

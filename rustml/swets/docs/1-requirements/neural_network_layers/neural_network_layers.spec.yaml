@@ -1,0 +1,74 @@
+kind: feature_request
+domain: Neural Network Layers
+section: '2.3'
+requirements:
+- id: REQ-001
+  sourceId: FR-300
+  title: '`Layer` trait: `forward(&mut self, input, tape)`, `parameters()`, `parameters_mut()`, `train()`, `eval()`, `parameter_count()`'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-002
+  sourceId: FR-301
+  title: '`Sequential` container chaining arbitrary layers'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-003
+  sourceId: FR-302
+  title: '`Linear` layer with Xavier (default) and He initialization'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-004
+  sourceId: FR-303
+  title: '`LSTM` layer: multi-layer, configurable hidden size, optional bidirectional, dropout between layers'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-005
+  sourceId: FR-304
+  title: '`Conv1d` layer with stride, padding, dilation'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-006
+  sourceId: FR-305
+  title: 'Activation layers: `ReLU`, `Tanh`, `Sigmoid`, `GELU`, `SiLU`'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-007
+  sourceId: FR-306
+  title: '`LayerNorm` with configurable epsilon'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-008
+  sourceId: FR-307
+  title: '`BatchNorm1d` with running statistics (updated via `&mut self` in training mode)'
+  priority: Should
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-009
+  sourceId: FR-308
+  title: '`Dropout` layer: active in training, identity in eval'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-010
+  sourceId: FR-309
+  title: '`model_summary()` prints total/trainable/frozen parameter counts'
+  priority: Should
+  status: Proposed
+  verification: Test
+  acceptance: ''

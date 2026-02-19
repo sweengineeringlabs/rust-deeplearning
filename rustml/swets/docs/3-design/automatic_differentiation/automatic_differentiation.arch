@@ -1,0 +1,17 @@
+# Architecture: Automatic Differentiation
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/automatic_differentiation/automatic_differentiation.spec)
+
+## Components
+
+| Component | Traces To | Description |
+|-----------|-----------|-------------|
+
+## Related Documents
+
+- [Feature Spec](../1-requirements/automatic_differentiation/automatic_differentiation.spec)
+- [Test Plan](../5-testing/automatic_differentiation/automatic_differentiation.test)
+- [Deployment](../6-deployment/automatic_differentiation/automatic_differentiation.deploy)
+

@@ -1,0 +1,5 @@
+kind: architecture
+domain: Performance
+section: '3.1'
+specRef: docs/1-requirements/performance/performance.spec.yaml
+components: []

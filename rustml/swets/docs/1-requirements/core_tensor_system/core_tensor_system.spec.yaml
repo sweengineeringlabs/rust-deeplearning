@@ -1,0 +1,102 @@
+kind: feature_request
+domain: Core Tensor System
+section: '2.1'
+requirements:
+- id: REQ-001
+  sourceId: FR-100
+  title: Tensor struct with unique `TensorId`, `Arc<Storage>` data, shape, strides, dtype, device
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-002
+  sourceId: FR-101
+  title: '`TensorId` generated via atomic counter for tape tracking'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-003
+  sourceId: FR-102
+  title: '`Storage` enum: `Owned(Vec<u8>)`, `View { parent, offset, len }`, `MMap`'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-004
+  sourceId: FR-103
+  title: '`DType` enum matching rustml-core: F32, F16, BF16, I8, U8, Q8_0, Q4_0, Q4_1'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-005
+  sourceId: FR-104
+  title: Thread-local `TensorPool` for buffer recycling during backward pass
+  priority: Should
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-006
+  sourceId: FR-105
+  title: 'Creation ops: `zeros`, `ones`, `randn`, `uniform`, `from_vec`, `arange`'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-007
+  sourceId: FR-106
+  title: 'Shape ops: `reshape`, `transpose`, `permute`, `squeeze`, `unsqueeze`, `flatten`, `view`'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-008
+  sourceId: FR-107
+  title: 'Indexing ops: `slice`, `index_select`, `gather`, `masked_select`'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-009
+  sourceId: FR-108
+  title: 'Element-wise math: add, sub, mul, div, pow, sqrt, exp, log, abs, neg'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-010
+  sourceId: FR-109
+  title: 'Reductions: sum, mean, max, min, std, var'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-011
+  sourceId: FR-110
+  title: '`matmul` and `dot` with broadcasting'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-012
+  sourceId: FR-111
+  title: '`conv1d` with stride, padding, and dilation parameters'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-013
+  sourceId: FR-112
+  title: '`concat`, `stack`, `split` tensor joining/splitting'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-014
+  sourceId: FR-113
+  title: Row-major strides computation and flat offset indexing
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''

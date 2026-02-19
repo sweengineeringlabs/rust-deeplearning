@@ -1,0 +1,17 @@
+# Architecture: Correctness
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/correctness/correctness.spec)
+
+## Components
+
+| Component | Traces To | Description |
+|-----------|-----------|-------------|
+
+## Related Documents
+
+- [Feature Spec](../1-requirements/correctness/correctness.spec)
+- [Test Plan](../5-testing/correctness/correctness.test)
+- [Deployment](../6-deployment/correctness/correctness.deploy)
+

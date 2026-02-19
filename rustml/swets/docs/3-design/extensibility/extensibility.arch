@@ -1,0 +1,17 @@
+# Architecture: Extensibility
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/extensibility/extensibility.spec)
+
+## Components
+
+| Component | Traces To | Description |
+|-----------|-----------|-------------|
+
+## Related Documents
+
+- [Feature Spec](../1-requirements/extensibility/extensibility.spec)
+- [Test Plan](../5-testing/extensibility/extensibility.test)
+- [Deployment](../6-deployment/extensibility/extensibility.deploy)
+

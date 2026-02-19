@@ -1,0 +1,9 @@
+kind: deployment
+domain: Automatic Differentiation
+section: '2.2'
+specRef: docs/1-requirements/automatic_differentiation/automatic_differentiation.spec.yaml
+environments:
+- name: staging
+  description: Staging environment for Automatic Differentiation validation
+- name: production
+  description: Production environment for Automatic Differentiation

@@ -1,0 +1,18 @@
+# Automated Test Execution: Serialization
+
+> **TLDR:** CI/automated test tracker for Serialization — maps each test case to a CI job and build.
+
+**Version:** 1.0
+**Status:** Pending
+**Test Plan:** [Test Plan](serialization.test)
+
+---
+
+## Test Cases
+
+| TC | Test | Verifies | CI Job | Build | Status | Last Run |
+|----|------|----------|--------|-------|--------|----------|
+| TC-001 | FR-1000: `Checkpoint` struct: model parameters (name, bytes, shape, dtype), optimizer state, epoch, best_val_loss (Test) | REQ-001 | | | Pending | |
+| TC-002 | FR-1001: `save_checkpoint(model, path)` — serialize parameters via bincode (Test) | REQ-002 | | | Pending | |
+| TC-003 | FR-1002: `load_checkpoint(model, path)` — deserialize and load into model (Test) | REQ-003 | | | Pending | |
+

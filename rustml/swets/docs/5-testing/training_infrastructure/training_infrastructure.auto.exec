@@ -1,0 +1,23 @@
+# Automated Test Execution: Training Infrastructure
+
+> **TLDR:** CI/automated test tracker for Training Infrastructure — maps each test case to a CI job and build.
+
+**Version:** 1.0
+**Status:** Pending
+**Test Plan:** [Test Plan](training_infrastructure.test)
+
+---
+
+## Test Cases
+
+| TC | Test | Verifies | CI Job | Build | Status | Last Run |
+|----|------|----------|--------|-------|--------|----------|
+| TC-001 | FR-900: `Trainer` struct: owns model, optimizer, loss function (Test) | REQ-001 | | | Pending | |
+| TC-002 | FR-901: `train_epoch()`: forward pass, backward pass, gradient clipping, optimizer step — fresh tape per batch (Test) | REQ-002 | | | Pending | |
+| TC-003 | FR-902: `validate()`: forward pass with no tape (no gradient computation) (Test) | REQ-003 | | | Pending | |
+| TC-004 | FR-903: `fit()`: epoch loop with train/validate, logging, scheduler step, early stopping check (Test) | REQ-004 | | | Pending | |
+| TC-005 | FR-904: `predict()`: switches model to eval mode, runs forward with no tape (Test) | REQ-005 | | | Pending | |
+| TC-006 | FR-905: Early stopping with configurable patience (Test) | REQ-006 | | | Pending | |
+| TC-007 | FR-906: Best-model checkpointing on validation loss improvement (Test) | REQ-007 | | | Pending | |
+| TC-008 | FR-907: Builder pattern: `with_scheduler()`, `with_early_stopping()`, `with_grad_clip()`, `with_checkpoint_dir()` (Test) | REQ-008 | | | Pending | |
+

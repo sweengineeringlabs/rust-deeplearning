@@ -1,0 +1,21 @@
+kind: test_plan
+domain: Metrics
+section: '2.11'
+specRef: docs/1-requirements/metrics/metrics.spec.yaml
+testCases:
+- id: TC-001
+  test: 'FR-1100: Accumulator-based `Metrics` struct with `update(pred, target)` and `reset()` (Test)'
+  verifies: REQ-001
+  priority: Must
+- id: TC-002
+  test: 'FR-1101: MSE, MAE, RMSE (Test)'
+  verifies: REQ-002
+  priority: Must
+- id: TC-003
+  test: 'FR-1102: R-squared (coefficient of determination) (Test)'
+  verifies: REQ-003
+  priority: Must
+- id: TC-004
+  test: 'FR-1103: MAPE and SMAPE (Test)'
+  verifies: REQ-004
+  priority: Should

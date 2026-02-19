@@ -1,0 +1,30 @@
+# Manual Test Execution: Performance
+
+> **TLDR:** Manual test checklist for Performance — step-by-step procedures with expected outcomes.
+
+**Version:** 1.0
+**Status:** Pending
+**Test Plan:** [Test Plan](performance.test)
+
+---
+
+## Test Cases
+
+| TC | Test | Steps | Expected |
+|----|------|-------|----------|
+| TC-001 | NFR-100: SIMD-accelerated tensor operations (matmul, conv1d, element-wise) (Analysis) | _TODO_ | Comparable to single-threaded C |
+| TC-002 | NFR-101: Cache-friendly memory layout (row-major, contiguous where possible) (Analysis) | _TODO_ | L1/L2 utilization > 80% |
+| TC-003 | NFR-102: Buffer recycling via `TensorPool` reduces allocation pressure in backward pass (Analysis) | _TODO_ | < 10% time in alloc during training |
+| TC-004 | NFR-103: Zero-copy views for reshape/transpose/slice (Analysis) | _TODO_ | No allocation for shape-only ops |
+
+---
+
+## Execution Log
+
+| TC | Tester | Date | Pass/Fail | Notes |
+|----|--------|------|-----------|-------|
+| TC-001 | | | | |
+| TC-002 | | | | |
+| TC-003 | | | | |
+| TC-004 | | | | |
+

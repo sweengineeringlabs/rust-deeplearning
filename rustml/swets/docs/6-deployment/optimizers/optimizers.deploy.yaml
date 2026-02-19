@@ -1,0 +1,9 @@
+kind: deployment
+domain: Optimizers
+section: '2.4'
+specRef: docs/1-requirements/optimizers/optimizers.spec.yaml
+environments:
+- name: staging
+  description: Staging environment for Optimizers validation
+- name: production
+  description: Production environment for Optimizers

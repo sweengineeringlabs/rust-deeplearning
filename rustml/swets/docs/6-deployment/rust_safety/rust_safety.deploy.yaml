@@ -1,0 +1,9 @@
+kind: deployment
+domain: Rust Safety
+section: '3.3'
+specRef: docs/1-requirements/rust_safety/rust_safety.spec.yaml
+environments:
+- name: staging
+  description: Staging environment for Rust Safety validation
+- name: production
+  description: Production environment for Rust Safety

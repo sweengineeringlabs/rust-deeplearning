@@ -1,0 +1,32 @@
+kind: feature_request
+domain: Learning Rate Schedulers
+section: '2.5'
+requirements:
+- id: REQ-001
+  sourceId: FR-500
+  title: '`LRScheduler` trait: `step(optimizer)`, `get_lr()`'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-002
+  sourceId: FR-501
+  title: '`StepLR` — decay by gamma every N steps'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-003
+  sourceId: FR-502
+  title: '`CosineAnnealingLR` — cosine decay to eta_min'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-004
+  sourceId: FR-503
+  title: '`WarmupCosineScheduler` — linear warmup then cosine decay'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''

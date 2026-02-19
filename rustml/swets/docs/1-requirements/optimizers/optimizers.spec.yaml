@@ -1,0 +1,46 @@
+kind: feature_request
+domain: Optimizers
+section: '2.4'
+requirements:
+- id: REQ-001
+  sourceId: FR-400
+  title: '`Optimizer` trait: `step(params, tape)`, `lr()`, `set_lr()` — reads gradients from tape'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-002
+  sourceId: FR-401
+  title: '`SGD` with momentum, dampening, weight decay, Nesterov'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-003
+  sourceId: FR-402
+  title: '`Adam` with configurable betas, epsilon, L2 regularization'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-004
+  sourceId: FR-403
+  title: '`AdamW` with decoupled weight decay (applied before Adam update)'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-005
+  sourceId: FR-404
+  title: Gradient clipping by global L2 norm (`clip_grad_norm`)
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-006
+  sourceId: FR-405
+  title: Gradient clipping by value (`clip_grad_value`)
+  priority: Should
+  status: Proposed
+  verification: Test
+  acceptance: ''

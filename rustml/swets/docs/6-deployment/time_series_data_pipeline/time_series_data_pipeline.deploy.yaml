@@ -1,0 +1,9 @@
+kind: deployment
+domain: Time Series Data Pipeline
+section: '2.7'
+specRef: docs/1-requirements/time_series_data_pipeline/time_series_data_pipeline.spec.yaml
+environments:
+- name: staging
+  description: Staging environment for Time Series Data Pipeline validation
+- name: production
+  description: Production environment for Time Series Data Pipeline

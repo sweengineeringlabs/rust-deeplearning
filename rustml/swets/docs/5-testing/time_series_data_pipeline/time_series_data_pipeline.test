@@ -1,0 +1,21 @@
+# Test Plan: Time Series Data Pipeline
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/time_series_data_pipeline/time_series_data_pipeline.spec)
+
+## Test Cases
+
+| ID | Test | Verifies | Priority |
+|----|------|----------|----------|
+| TC-001 | FR-700: `OHLCVCandle` struct: timestamp, open, high, low, close, volume (Test) | REQ-001 | Must |
+| TC-002 | FR-701: `TimeSeriesDataset`: windowed access over candle data, configurable window size and prediction horizon (Test) | REQ-002 | Must |
+| TC-003 | FR-702: Configurable target columns: single, multi, or close (default) (Test) | REQ-003 | Must |
+| TC-004 | FR-703: `DataLoader` implementing `Iterator` — yields `(input_batch, target_batch)` (Test) | REQ-004 | Must |
+| TC-005 | FR-704: `DataLoader` shuffle support with epoch reset (Test) | REQ-005 | Must |
+| TC-006 | FR-705: `FeatureEngineer` with pluggable `Feature` trait (Test) | REQ-006 | Must |
+| TC-007 | FR-706: Built-in features: log returns, moving average, volatility (Test) | REQ-007 | Must |
+| TC-008 | FR-707: RSI feature using Wilder's exponential moving average (not SMA) (Test) | REQ-008 | Must |
+| TC-009 | FR-708: `Scaler` with MinMax, StandardScaler, RobustScaler (Test) | REQ-009 | Must |
+| TC-010 | FR-709: `Scaler::inverse_transform` for denormalization (Test) | REQ-010 | Must |
+

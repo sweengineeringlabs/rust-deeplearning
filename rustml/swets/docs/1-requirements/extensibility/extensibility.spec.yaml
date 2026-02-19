@@ -1,0 +1,32 @@
+kind: feature_request
+domain: Extensibility
+section: '3.5'
+requirements:
+- id: REQ-001
+  sourceId: NFR-500
+  title: New `BackwardOp` implementations can be added without modifying the tape
+  priority: Must
+  status: Proposed
+  verification: Analysis
+  acceptance: ''
+- id: REQ-002
+  sourceId: NFR-501
+  title: New `Layer` implementations can be used with existing `Sequential`, `Trainer`, `Optimizer`
+  priority: Must
+  status: Proposed
+  verification: Analysis
+  acceptance: ''
+- id: REQ-003
+  sourceId: NFR-502
+  title: New `Feature` implementations can be plugged into `FeatureEngineer`
+  priority: Must
+  status: Proposed
+  verification: Analysis
+  acceptance: ''
+- id: REQ-004
+  sourceId: NFR-503
+  title: New `Loss`, `Optimizer`, `LRScheduler` implementations via traits
+  priority: Must
+  status: Proposed
+  verification: Analysis
+  acceptance: ''

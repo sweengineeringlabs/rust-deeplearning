@@ -1,0 +1,32 @@
+kind: feature_request
+domain: Compatibility
+section: '3.4'
+requirements:
+- id: REQ-001
+  sourceId: NFR-400
+  title: '`DType` enum identical to rustml-core for weight interop'
+  priority: Must
+  status: Proposed
+  verification: Analysis
+  acceptance: ''
+- id: REQ-002
+  sourceId: NFR-401
+  title: '`Shape` type alias matches rustml-core (`SmallVec<[usize; 4]>`)'
+  priority: Must
+  status: Proposed
+  verification: Analysis
+  acceptance: ''
+- id: REQ-003
+  sourceId: NFR-402
+  title: 'Project follows rustml workspace conventions: `main/src/` layout, SEA layering, umbrella pattern'
+  priority: Must
+  status: Proposed
+  verification: Analysis
+  acceptance: ''
+- id: REQ-004
+  sourceId: NFR-403
+  title: 'Minimum supported Rust version: stable (no nightly-only features outside optional SIMD)'
+  priority: Must
+  status: Proposed
+  verification: Analysis
+  acceptance: ''

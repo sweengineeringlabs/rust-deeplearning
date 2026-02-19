@@ -1,0 +1,58 @@
+# Manual Test Execution: Automatic Differentiation
+
+> **TLDR:** Manual test checklist for Automatic Differentiation — step-by-step procedures with expected outcomes.
+
+**Version:** 1.0
+**Status:** Pending
+**Test Plan:** [Test Plan](automatic_differentiation.test)
+
+---
+
+## Test Cases
+
+| TC | Test | Steps | Expected |
+|----|------|-------|----------|
+| TC-001 | FR-200: `GradientTape` records forward operations as `TapeEntry` list (Test) | _TODO_ | To be defined |
+| TC-002 | FR-201: `TapeEntry` stores: `BackwardOp`, output ID, input IDs, saved tensors (Test) | _TODO_ | To be defined |
+| TC-003 | FR-202: `BackwardOp` trait with `backward(grad_output, saved) -> Vec<input_grads>` (Test) | _TODO_ | To be defined |
+| TC-004 | FR-203: `GradientTape::backward(loss_id)` replays tape in reverse, accumulates gradients in `HashMap<TensorId, Tensor>` (Test) | _TODO_ | To be defined |
+| TC-005 | FR-204: `GradientTape::grad(id)` retrieves gradient for a tensor (Test) | _TODO_ | To be defined |
+| TC-006 | FR-205: `GradientTape::clear()` resets ops and gradients between training steps (Test) | _TODO_ | To be defined |
+| TC-007 | FR-206: `tape.enabled` flag to disable recording (inference mode) (Test) | _TODO_ | To be defined |
+| TC-008 | FR-207: `Layer::forward` accepts `Option<&mut GradientTape>` — `None` means no recording (Test) | _TODO_ | To be defined |
+| TC-009 | FR-208: Scoped `no_grad` helper that temporarily disables tape (Test) | _TODO_ | To be defined |
+| TC-010 | FR-209: Non-tracking `_raw` variants of ops (e.g. `matmul_raw`) for use inside backward implementations (Test) | _TODO_ | To be defined |
+| TC-011 | FR-210: MatMul (Test) | _TODO_ | `grad_a = grad @ b^T`, `grad_b = a^T @ grad` |
+| TC-012 | FR-211: Add (Test) | _TODO_ | `unbroadcast(grad)` per input |
+| TC-013 | FR-212: Mul (element-wise) (Test) | Run `grad * other_input` | `grad * other_input` |
+| TC-014 | FR-213: Sigmoid (Test) | Run `grad * sigmoid(x) * (1 - sigmoid(x))` | `grad * sigmoid(x) * (1 - sigmoid(x))` |
+| TC-015 | FR-214: Tanh (Test) | Run `grad * (1 - tanh(x)^2)` | `grad * (1 - tanh(x)^2)` |
+| TC-016 | FR-215: ReLU (Test) | Run `grad * (input > 0)` | `grad * (input > 0)` |
+| TC-017 | FR-216: Softmax (Test) | Run `s * (g - sum(g * s, dim))` | `s * (g - sum(g * s, dim))` |
+| TC-018 | FR-217: Conv1d (Test) | _TODO_ | Transposed convolution for input grad, cross-correlation for weight grad |
+
+---
+
+## Execution Log
+
+| TC | Tester | Date | Pass/Fail | Notes |
+|----|--------|------|-----------|-------|
+| TC-001 | | | | |
+| TC-002 | | | | |
+| TC-003 | | | | |
+| TC-004 | | | | |
+| TC-005 | | | | |
+| TC-006 | | | | |
+| TC-007 | | | | |
+| TC-008 | | | | |
+| TC-009 | | | | |
+| TC-010 | | | | |
+| TC-011 | | | | |
+| TC-012 | | | | |
+| TC-013 | | | | |
+| TC-014 | | | | |
+| TC-015 | | | | |
+| TC-016 | | | | |
+| TC-017 | | | | |
+| TC-018 | | | | |
+

@@ -1,0 +1,39 @@
+kind: feature_request
+domain: Model Architectures
+section: '2.8'
+requirements:
+- id: REQ-001
+  sourceId: FR-800
+  title: '**TCN** (Temporal Convolutional Network): causal padding, exponentially increasing dilation, residual connections, global average pooling'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-002
+  sourceId: FR-801
+  title: '**TimeSeriesTransformer**: input embedding, sinusoidal positional encoding, N transformer blocks with causal masking, last-timestep projection'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-003
+  sourceId: FR-802
+  title: Multi-head attention with Q/K/V projections, scaled dot-product, causal + padding mask support
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-004
+  sourceId: FR-803
+  title: '**N-BEATS**: FC stacks with backcast subtraction (doubly-residual), forecast accumulation, configurable stacks/blocks/layers'
+  priority: Should
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-005
+  sourceId: FR-804
+  title: LSTM-based forecasting model (built from FR-303)
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''

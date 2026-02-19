@@ -1,0 +1,25 @@
+# Automated Test Execution: Neural Network Layers
+
+> **TLDR:** CI/automated test tracker for Neural Network Layers — maps each test case to a CI job and build.
+
+**Version:** 1.0
+**Status:** Pending
+**Test Plan:** [Test Plan](neural_network_layers.test)
+
+---
+
+## Test Cases
+
+| TC | Test | Verifies | CI Job | Build | Status | Last Run |
+|----|------|----------|--------|-------|--------|----------|
+| TC-001 | FR-300: `Layer` trait: `forward(&mut self, input, tape)`, `parameters()`, `parameters_mut()`, `train()`, `eval()`, `parameter_count()` (Test) | REQ-001 | | | Pending | |
+| TC-002 | FR-301: `Sequential` container chaining arbitrary layers (Test) | REQ-002 | | | Pending | |
+| TC-003 | FR-302: `Linear` layer with Xavier (default) and He initialization (Test) | REQ-003 | | | Pending | |
+| TC-004 | FR-303: `LSTM` layer: multi-layer, configurable hidden size, optional bidirectional, dropout between layers (Test) | REQ-004 | | | Pending | |
+| TC-005 | FR-304: `Conv1d` layer with stride, padding, dilation (Test) | REQ-005 | | | Pending | |
+| TC-006 | FR-305: Activation layers: `ReLU`, `Tanh`, `Sigmoid`, `GELU`, `SiLU` (Test) | REQ-006 | | | Pending | |
+| TC-007 | FR-306: `LayerNorm` with configurable epsilon (Test) | REQ-007 | | | Pending | |
+| TC-008 | FR-307: `BatchNorm1d` with running statistics (updated via `&mut self` in training mode) (Test) | REQ-008 | | | Pending | |
+| TC-009 | FR-308: `Dropout` layer: active in training, identity in eval (Test) | REQ-009 | | | Pending | |
+| TC-010 | FR-309: `model_summary()` prints total/trainable/frozen parameter counts (Test) | REQ-010 | | | Pending | |
+

@@ -1,0 +1,60 @@
+kind: feature_request
+domain: Training Infrastructure
+section: '2.9'
+requirements:
+- id: REQ-001
+  sourceId: FR-900
+  title: '`Trainer` struct: owns model, optimizer, loss function'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-002
+  sourceId: FR-901
+  title: '`train_epoch()`: forward pass, backward pass, gradient clipping, optimizer step — fresh tape per batch'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-003
+  sourceId: FR-902
+  title: '`validate()`: forward pass with no tape (no gradient computation)'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-004
+  sourceId: FR-903
+  title: '`fit()`: epoch loop with train/validate, logging, scheduler step, early stopping check'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-005
+  sourceId: FR-904
+  title: '`predict()`: switches model to eval mode, runs forward with no tape'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-006
+  sourceId: FR-905
+  title: Early stopping with configurable patience
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-007
+  sourceId: FR-906
+  title: Best-model checkpointing on validation loss improvement
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-008
+  sourceId: FR-907
+  title: 'Builder pattern: `with_scheduler()`, `with_early_stopping()`, `with_grad_clip()`, `with_checkpoint_dir()`'
+  priority: Should
+  status: Proposed
+  verification: Test
+  acceptance: ''

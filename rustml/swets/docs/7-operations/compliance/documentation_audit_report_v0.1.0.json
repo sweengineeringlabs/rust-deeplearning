@@ -1,0 +1,1170 @@
+{
+  "standard": "ISO/IEC/IEEE 15289:2019",
+  "clause": "9.2",
+  "tool": "doc-engine",
+  "tool_version": "0.1.0",
+  "timestamp": "2026-02-19T20:04:01Z",
+  "project_root": "/mnt/c/phd-systems/swe-labs/rust-deeplearning/rustml/swets",
+  "results": [
+    {
+      "id": 1,
+      "category": "structure",
+      "description": "Root docs/ folder exists (plural)",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 2,
+      "category": "structure",
+      "description": "docs/README.md hub document exists",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 3,
+      "category": "structure",
+      "description": "docs/glossary.md exists",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 4,
+      "category": "structure",
+      "description": "All module doc folders use docs/ (plural), not doc/",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 5,
+      "category": "structure",
+      "description": "No module has both doc/ and docs/",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 6,
+      "category": "structure",
+      "description": "docs/3-design/compliance/compliance_checklist.md exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 7,
+      "category": "structure",
+      "description": "Compliance checklist references architecture.md",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 8,
+      "category": "structure",
+      "description": "Every enforceable rule has a checkbox",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 9,
+      "category": "structure",
+      "description": "SDLC phase numbering correct (0-7)",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 10,
+      "category": "structure",
+      "description": "SDLC phases in correct order",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 11,
+      "category": "structure",
+      "description": "ADR directory docs/3-design/adr/ exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 12,
+      "category": "structure",
+      "description": "Developer guides in 4-development/guide/ (singular, not guides/)",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 13,
+      "category": "structure",
+      "description": "UX/UI assets in uxui/ (not uiux/)",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 14,
+      "category": "naming",
+      "description": "README.md exists (uppercase)",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 15,
+      "category": "naming",
+      "description": "CONTRIBUTING.md exists (uppercase)",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 16,
+      "category": "naming",
+      "description": "CHANGELOG.md exists (uppercase)",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 17,
+      "category": "naming",
+      "description": "SECURITY.md exists (uppercase)",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 18,
+      "category": "naming",
+      "description": "LICENSE file exists (uppercase)",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 19,
+      "category": "naming",
+      "description": ".gitignore exists",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 20,
+      "category": "naming",
+      "description": ".editorconfig exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 21,
+      "category": "naming",
+      "description": "All filenames in docs/ are lowercase",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 22,
+      "category": "naming",
+      "description": "All filenames in docs/ use underscores, not hyphens",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 23,
+      "category": "naming",
+      "description": "No spaces in docs/ filenames",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 24,
+      "category": "naming",
+      "description": "Guide files follow name_{phase}_guide.md convention",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 25,
+      "category": "naming",
+      "description": "No *_testing_* files outside 5-testing/",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 26,
+      "category": "root_files",
+      "description": "README.md exists",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 27,
+      "category": "root_files",
+      "description": "CONTRIBUTING.md exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 28,
+      "category": "root_files",
+      "description": "CHANGELOG.md exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 29,
+      "category": "root_files",
+      "description": "SECURITY.md exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 30,
+      "category": "root_files",
+      "description": "LICENSE file exists",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 31,
+      "category": "root_files",
+      "description": "CODE_OF_CONDUCT.md and SUPPORT.md exist (open-source)",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 32,
+      "category": "root_files",
+      "description": "GitHub issue/PR templates exist (open-source)",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 33,
+      "category": "content",
+      "description": "Every .md file in docs/ has **Audience**: declaration",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 34,
+      "category": "content",
+      "description": "Module README.md files have **Audience**: declaration",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 35,
+      "category": "content",
+      "description": "Docs >=200 lines should have TLDR section",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 36,
+      "category": "content",
+      "description": "Docs <200 lines should not need TLDR section",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 37,
+      "category": "content",
+      "description": "Glossary uses **Term** - Definition format",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 38,
+      "category": "content",
+      "description": "Glossary terms are alphabetized",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 39,
+      "category": "content",
+      "description": "Glossary acronyms have expansions",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 40,
+      "category": "navigation",
+      "description": "Root README links to docs/README.md",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 41,
+      "category": "navigation",
+      "description": "docs/README.md hub uses W3H structure",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 42,
+      "category": "navigation",
+      "description": "Hub links to all present SDLC phase directories",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 43,
+      "category": "navigation",
+      "description": "Root README does not deep-link into docs/ subdirectories",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 44,
+      "category": "cross_ref",
+      "description": "All internal markdown links resolve to existing files",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 45,
+      "category": "cross_ref",
+      "description": "All relative links are valid",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 46,
+      "category": "cross_ref",
+      "description": "All references use docs/ (plural), not doc/",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 47,
+      "category": "cross_ref",
+      "description": "All references use guide/ (singular), not guides/",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 48,
+      "category": "adr",
+      "description": "ADR index file exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 49,
+      "category": "adr",
+      "description": "ADR files follow NNN-title.md naming convention",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 50,
+      "category": "adr",
+      "description": "ADR index references all ADR files",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 51,
+      "category": "traceability",
+      "description": "Populated SDLC phase directories contain their expected artifact",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 52,
+      "category": "traceability",
+      "description": "Design documents reference requirements",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 53,
+      "category": "traceability",
+      "description": "Planning documents reference architecture",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 54,
+      "category": "ideation",
+      "description": "Ideation phase index exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 55,
+      "category": "requirements",
+      "description": "SRS exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 56,
+      "category": "planning",
+      "description": "Implementation plan exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 57,
+      "category": "design",
+      "description": "Architecture document exists",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 58,
+      "category": "development",
+      "description": "Setup guide exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 59,
+      "category": "testing",
+      "description": "Testing strategy exists",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 60,
+      "category": "deployment",
+      "description": "Deployment phase index exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 61,
+      "category": "deployment",
+      "description": "Deployment guide exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 62,
+      "category": "deployment",
+      "description": "CI/CD pipeline documentation exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 63,
+      "category": "operations",
+      "description": "Operations phase index exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 64,
+      "category": "operations",
+      "description": "Operations manual exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 65,
+      "category": "operations",
+      "description": "Troubleshooting guide exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 66,
+      "category": "operations",
+      "description": "Maintenance plan exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 67,
+      "category": "operations",
+      "description": "Configuration reference exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 68,
+      "category": "deployment",
+      "description": "Installation guide exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 69,
+      "category": "structure",
+      "description": "docs/4-development/developer_guide.md exists",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 70,
+      "category": "root_files",
+      "description": "INTERNAL_USAGE.md exists (internal projects)",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Internal project (detected OpenSource)"
+      }
+    },
+    {
+      "id": 71,
+      "category": "backlog",
+      "description": "docs/2-planning/backlog.md exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 72,
+      "category": "structure",
+      "description": "docs/templates/ directory exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 73,
+      "category": "structure",
+      "description": "docs/templates/ contains template files",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 74,
+      "category": "navigation",
+      "description": "Hub documents use W3H structure",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 75,
+      "category": "content",
+      "description": "Root README.md under 100 lines",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 76,
+      "category": "naming",
+      "description": "FR artifacts follow FR_NNN naming",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 77,
+      "category": "module",
+      "description": "Module READMEs follow W3H structure",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 78,
+      "category": "module",
+      "description": "Modules have examples directory",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 79,
+      "category": "module",
+      "description": "Modules have integration tests",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 80,
+      "category": "module",
+      "description": "Modules have toolchain documentation",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 81,
+      "category": "module",
+      "description": "Module deployment docs complete",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 82,
+      "category": "traceability",
+      "description": "Backlog references requirements/SRS",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 83,
+      "category": "planning",
+      "description": "docs/2-planning/risk_register.md exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 84,
+      "category": "planning",
+      "description": "docs/2-planning/estimation.md exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 85,
+      "category": "planning",
+      "description": "docs/2-planning/schedule.md exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 86,
+      "category": "planning",
+      "description": "docs/2-planning/resource_plan.md exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 87,
+      "category": "planning",
+      "description": "docs/2-planning/communication_plan.md exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 88,
+      "category": "planning",
+      "description": "docs/2-planning/quality_plan.md exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 89,
+      "category": "requirements",
+      "description": "SRS requirements have ISO/IEC/IEEE 29148:2018 attribute tables",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 90,
+      "category": "requirements",
+      "description": "Architecture documents have ISO/IEC/IEEE 42010:2022 sections",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 91,
+      "category": "requirements",
+      "description": "Testing strategies have ISO/IEC/IEEE 29119-3:2021 sections",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 92,
+      "category": "requirements",
+      "description": "Production readiness document exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 93,
+      "category": "requirements",
+      "description": "Production readiness has ISO/IEC 25010:2023 quality sections",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 94,
+      "category": "requirements",
+      "description": "Developer guide has ISO/IEC/IEEE 26514:2022 sections",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 95,
+      "category": "requirements",
+      "description": "Backlog has required sections (items, completed, blockers)",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 96,
+      "category": "requirements",
+      "description": "Production readiness has ISO/IEC/IEEE 12207:2017 lifecycle sections",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 97,
+      "category": "requirements",
+      "description": "Production readiness has supplementary ISO/IEC 25010:2023 quality sections",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 98,
+      "category": "requirements",
+      "description": "Production readiness has ISO/IEC 25040:2024 evaluation sections",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 99,
+      "category": "testing",
+      "description": "Test plan exists",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 100,
+      "category": "testing",
+      "description": "Test design specification exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 101,
+      "category": "testing",
+      "description": "Test case specification exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 102,
+      "category": "testing",
+      "description": "Verification report exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 103,
+      "category": "development",
+      "description": "Integration plan exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 104,
+      "category": "development",
+      "description": "User documentation exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 105,
+      "category": "development",
+      "description": "API documentation exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 106,
+      "category": "development",
+      "description": "Build procedures exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 107,
+      "category": "design",
+      "description": "Design description exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 108,
+      "category": "design",
+      "description": "Interface description exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 109,
+      "category": "planning",
+      "description": "Project management plan exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 110,
+      "category": "planning",
+      "description": "Configuration management plan exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 111,
+      "category": "planning",
+      "description": "Risk management plan exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 112,
+      "category": "planning",
+      "description": "Verification plan exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 113,
+      "category": "planning",
+      "description": "Test plan (project-level) exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 114,
+      "category": "deployment",
+      "description": "Transition plan exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 115,
+      "category": "deployment",
+      "description": "Release notes exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Medium scope (configured Small)"
+      }
+    },
+    {
+      "id": 116,
+      "category": "deployment",
+      "description": "User manual exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 117,
+      "category": "operations",
+      "description": "Disposal plan exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 118,
+      "category": "ideation",
+      "description": "Concept of Operations (ConOps) exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 119,
+      "category": "requirements",
+      "description": "Stakeholder requirements specification (StRS) exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 120,
+      "category": "requirements",
+      "description": "Traceability matrix exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 121,
+      "category": "traceability",
+      "description": "Progress/status reports exist",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 122,
+      "category": "traceability",
+      "description": "Decision log exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 123,
+      "category": "traceability",
+      "description": "Audit report exists",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 124,
+      "category": "traceability",
+      "description": "Audit report has IEEE 1028 sections",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 125,
+      "category": "testing",
+      "description": "Test plan has 29119-3 sections",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 126,
+      "category": "testing",
+      "description": "Test design has 29119-3 sections",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 127,
+      "category": "testing",
+      "description": "Test cases has 29119-3 sections",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 128,
+      "category": "testing",
+      "description": "Verification report has 29119-3 sections",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 129,
+      "category": "content",
+      "description": "No hardcoded absolute paths in documentation",
+      "result": {
+        "status": "pass"
+      }
+    },
+    {
+      "id": 130,
+      "category": "requirements",
+      "description": "SRS requirement attributes contain no source-code file references",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    },
+    {
+      "id": 131,
+      "category": "requirements",
+      "description": "SRS requirement attributes do not reference downstream SDLC artifacts",
+      "result": {
+        "status": "skip",
+        "reason": "Skipped: requires Large scope (configured Small)"
+      }
+    }
+  ],
+  "summary": {
+    "total": 131,
+    "passed": 27,
+    "failed": 0,
+    "skipped": 104
+  },
+  "project_type": "open_source",
+  "project_scope": "small"
+}

@@ -1,0 +1,9 @@
+kind: deployment
+domain: Serialization
+section: '2.10'
+specRef: docs/1-requirements/serialization/serialization.spec.yaml
+environments:
+- name: staging
+  description: Staging environment for Serialization validation
+- name: production
+  description: Production environment for Serialization

@@ -1,0 +1,17 @@
+# Architecture: Learning Rate Schedulers
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/learning_rate_schedulers/learning_rate_schedulers.spec)
+
+## Components
+
+| Component | Traces To | Description |
+|-----------|-----------|-------------|
+
+## Related Documents
+
+- [Feature Spec](../1-requirements/learning_rate_schedulers/learning_rate_schedulers.spec)
+- [Test Plan](../5-testing/learning_rate_schedulers/learning_rate_schedulers.test)
+- [Deployment](../6-deployment/learning_rate_schedulers/learning_rate_schedulers.deploy)
+

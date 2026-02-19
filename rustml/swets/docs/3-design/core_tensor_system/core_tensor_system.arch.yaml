@@ -1,0 +1,5 @@
+kind: architecture
+domain: Core Tensor System
+section: '2.1'
+specRef: docs/1-requirements/core_tensor_system/core_tensor_system.spec.yaml
+components: []

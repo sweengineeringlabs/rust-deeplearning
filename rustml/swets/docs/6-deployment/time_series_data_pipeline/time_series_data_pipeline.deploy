@@ -1,0 +1,20 @@
+# Deployment: Time Series Data Pipeline
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/time_series_data_pipeline/time_series_data_pipeline.spec)
+
+## Environments
+
+| Environment | Description |
+|-------------|-------------|
+| staging | Staging environment for Time Series Data Pipeline validation |
+| production | Production environment for Time Series Data Pipeline |
+
+## Build
+
+_TODO: Define build steps._
+
+## Rollback
+
+_TODO: Define rollback procedures._

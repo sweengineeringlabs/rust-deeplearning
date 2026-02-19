@@ -1,0 +1,29 @@
+kind: test_plan
+domain: Optimizers
+section: '2.4'
+specRef: docs/1-requirements/optimizers/optimizers.spec.yaml
+testCases:
+- id: TC-001
+  test: 'FR-400: `Optimizer` trait: `step(params, tape)`, `lr()`, `set_lr()` — reads gradients from tape (Test)'
+  verifies: REQ-001
+  priority: Must
+- id: TC-002
+  test: 'FR-401: `SGD` with momentum, dampening, weight decay, Nesterov (Test)'
+  verifies: REQ-002
+  priority: Must
+- id: TC-003
+  test: 'FR-402: `Adam` with configurable betas, epsilon, L2 regularization (Test)'
+  verifies: REQ-003
+  priority: Must
+- id: TC-004
+  test: 'FR-403: `AdamW` with decoupled weight decay (applied before Adam update) (Test)'
+  verifies: REQ-004
+  priority: Must
+- id: TC-005
+  test: 'FR-404: Gradient clipping by global L2 norm (`clip_grad_norm`) (Test)'
+  verifies: REQ-005
+  priority: Must
+- id: TC-006
+  test: 'FR-405: Gradient clipping by value (`clip_grad_value`) (Test)'
+  verifies: REQ-006
+  priority: Should

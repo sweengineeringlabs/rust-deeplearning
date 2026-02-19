@@ -1,0 +1,17 @@
+# Architecture: Time Series Data Pipeline
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/time_series_data_pipeline/time_series_data_pipeline.spec)
+
+## Components
+
+| Component | Traces To | Description |
+|-----------|-----------|-------------|
+
+## Related Documents
+
+- [Feature Spec](../1-requirements/time_series_data_pipeline/time_series_data_pipeline.spec)
+- [Test Plan](../5-testing/time_series_data_pipeline/time_series_data_pipeline.test)
+- [Deployment](../6-deployment/time_series_data_pipeline/time_series_data_pipeline.deploy)
+

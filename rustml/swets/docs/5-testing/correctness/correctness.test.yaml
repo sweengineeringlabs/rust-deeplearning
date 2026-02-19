@@ -1,0 +1,25 @@
+kind: test_plan
+domain: Correctness
+section: '3.2'
+specRef: docs/1-requirements/correctness/correctness.spec.yaml
+testCases:
+- id: TC-001
+  test: 'NFR-200: Gradient correctness validated via finite-difference numerical checks for all BackwardOp implementations (Analysis)'
+  verifies: REQ-001
+  priority: Must
+- id: TC-002
+  test: 'NFR-201: Scaler handles constant features (zero variance/range) without producing NaN/Inf (Analysis)'
+  verifies: REQ-002
+  priority: Must
+- id: TC-003
+  test: 'NFR-202: CrossEntropyLoss uses numerically stable log-softmax (subtract max before exp) (Analysis)'
+  verifies: REQ-003
+  priority: Must
+- id: TC-004
+  test: 'NFR-203: Causal masking prevents information leakage from future timesteps (Analysis)'
+  verifies: REQ-004
+  priority: Must
+- id: TC-005
+  test: 'NFR-204: RSI uses Wilder''s EMA (smoothing factor 1/period), not simple moving average (Analysis)'
+  verifies: REQ-005
+  priority: Must

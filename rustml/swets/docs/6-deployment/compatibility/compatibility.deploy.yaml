@@ -1,0 +1,9 @@
+kind: deployment
+domain: Compatibility
+section: '3.4'
+specRef: docs/1-requirements/compatibility/compatibility.spec.yaml
+environments:
+- name: staging
+  description: Staging environment for Compatibility validation
+- name: production
+  description: Production environment for Compatibility

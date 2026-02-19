@@ -1,0 +1,5 @@
+kind: architecture
+domain: Training Infrastructure
+section: '2.9'
+specRef: docs/1-requirements/training_infrastructure/training_infrastructure.spec.yaml
+components: []

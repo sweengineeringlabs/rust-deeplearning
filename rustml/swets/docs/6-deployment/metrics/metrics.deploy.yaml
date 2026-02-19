@@ -1,0 +1,9 @@
+kind: deployment
+domain: Metrics
+section: '2.11'
+specRef: docs/1-requirements/metrics/metrics.spec.yaml
+environments:
+- name: staging
+  description: Staging environment for Metrics validation
+- name: production
+  description: Production environment for Metrics

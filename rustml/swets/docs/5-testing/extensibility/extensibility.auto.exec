@@ -1,0 +1,19 @@
+# Automated Test Execution: Extensibility
+
+> **TLDR:** CI/automated test tracker for Extensibility — maps each test case to a CI job and build.
+
+**Version:** 1.0
+**Status:** Pending
+**Test Plan:** [Test Plan](extensibility.test)
+
+---
+
+## Test Cases
+
+| TC | Test | Verifies | CI Job | Build | Status | Last Run |
+|----|------|----------|--------|-------|--------|----------|
+| TC-001 | NFR-500: New `BackwardOp` implementations can be added without modifying the tape (Analysis) | REQ-001 | | | Pending | |
+| TC-002 | NFR-501: New `Layer` implementations can be used with existing `Sequential`, `Trainer`, `Optimizer` (Analysis) | REQ-002 | | | Pending | |
+| TC-003 | NFR-502: New `Feature` implementations can be plugged into `FeatureEngineer` (Analysis) | REQ-003 | | | Pending | |
+| TC-004 | NFR-503: New `Loss`, `Optimizer`, `LRScheduler` implementations via traits (Analysis) | REQ-004 | | | Pending | |
+

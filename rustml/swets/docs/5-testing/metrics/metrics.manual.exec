@@ -1,0 +1,30 @@
+# Manual Test Execution: Metrics
+
+> **TLDR:** Manual test checklist for Metrics — step-by-step procedures with expected outcomes.
+
+**Version:** 1.0
+**Status:** Pending
+**Test Plan:** [Test Plan](metrics.test)
+
+---
+
+## Test Cases
+
+| TC | Test | Steps | Expected |
+|----|------|-------|----------|
+| TC-001 | FR-1100: Accumulator-based `Metrics` struct with `update(pred, target)` and `reset()` (Test) | _TODO_ | To be defined |
+| TC-002 | FR-1101: MSE, MAE, RMSE (Test) | _TODO_ | To be defined |
+| TC-003 | FR-1102: R-squared (coefficient of determination) (Test) | _TODO_ | To be defined |
+| TC-004 | FR-1103: MAPE and SMAPE (Test) | _TODO_ | To be defined |
+
+---
+
+## Execution Log
+
+| TC | Tester | Date | Pass/Fail | Notes |
+|----|--------|------|-----------|-------|
+| TC-001 | | | | |
+| TC-002 | | | | |
+| TC-003 | | | | |
+| TC-004 | | | | |
+

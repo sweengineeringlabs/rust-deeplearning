@@ -1,0 +1,17 @@
+# Architecture: Training Infrastructure
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/training_infrastructure/training_infrastructure.spec)
+
+## Components
+
+| Component | Traces To | Description |
+|-----------|-----------|-------------|
+
+## Related Documents
+
+- [Feature Spec](../1-requirements/training_infrastructure/training_infrastructure.spec)
+- [Test Plan](../5-testing/training_infrastructure/training_infrastructure.test)
+- [Deployment](../6-deployment/training_infrastructure/training_infrastructure.deploy)
+

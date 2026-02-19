@@ -1,0 +1,21 @@
+kind: test_plan
+domain: Compatibility
+section: '3.4'
+specRef: docs/1-requirements/compatibility/compatibility.spec.yaml
+testCases:
+- id: TC-001
+  test: 'NFR-400: `DType` enum identical to rustml-core for weight interop (Analysis)'
+  verifies: REQ-001
+  priority: Must
+- id: TC-002
+  test: 'NFR-401: `Shape` type alias matches rustml-core (`SmallVec<[usize; 4]>`) (Analysis)'
+  verifies: REQ-002
+  priority: Must
+- id: TC-003
+  test: 'NFR-402: Project follows rustml workspace conventions: `main/src/` layout, SEA layering, umbrella pattern (Analysis)'
+  verifies: REQ-003
+  priority: Must
+- id: TC-004
+  test: 'NFR-403: Minimum supported Rust version: stable (no nightly-only features outside optional SIMD) (Analysis)'
+  verifies: REQ-004
+  priority: Must

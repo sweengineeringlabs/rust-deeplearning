@@ -1,0 +1,32 @@
+kind: feature_request
+domain: Performance
+section: '3.1'
+requirements:
+- id: REQ-001
+  sourceId: NFR-100
+  title: SIMD-accelerated tensor operations (matmul, conv1d, element-wise)
+  priority: Must
+  status: Proposed
+  verification: Analysis
+  acceptance: Comparable to single-threaded C
+- id: REQ-002
+  sourceId: NFR-101
+  title: Cache-friendly memory layout (row-major, contiguous where possible)
+  priority: Must
+  status: Proposed
+  verification: Analysis
+  acceptance: L1/L2 utilization > 80%
+- id: REQ-003
+  sourceId: NFR-102
+  title: Buffer recycling via `TensorPool` reduces allocation pressure in backward pass
+  priority: Must
+  status: Proposed
+  verification: Analysis
+  acceptance: < 10% time in alloc during training
+- id: REQ-004
+  sourceId: NFR-103
+  title: Zero-copy views for reshape/transpose/slice
+  priority: Must
+  status: Proposed
+  verification: Analysis
+  acceptance: No allocation for shape-only ops

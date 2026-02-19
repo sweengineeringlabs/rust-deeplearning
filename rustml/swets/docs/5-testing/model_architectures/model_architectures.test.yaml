@@ -1,0 +1,25 @@
+kind: test_plan
+domain: Model Architectures
+section: '2.8'
+specRef: docs/1-requirements/model_architectures/model_architectures.spec.yaml
+testCases:
+- id: TC-001
+  test: 'FR-800: **TCN** (Temporal Convolutional Network): causal padding, exponentially increasing dilation, residual connections, global average pooling (Test)'
+  verifies: REQ-001
+  priority: Must
+- id: TC-002
+  test: 'FR-801: **TimeSeriesTransformer**: input embedding, sinusoidal positional encoding, N transformer blocks with causal masking, last-timestep projection (Test)'
+  verifies: REQ-002
+  priority: Must
+- id: TC-003
+  test: 'FR-802: Multi-head attention with Q/K/V projections, scaled dot-product, causal + padding mask support (Test)'
+  verifies: REQ-003
+  priority: Must
+- id: TC-004
+  test: 'FR-803: **N-BEATS**: FC stacks with backcast subtraction (doubly-residual), forecast accumulation, configurable stacks/blocks/layers (Test)'
+  verifies: REQ-004
+  priority: Should
+- id: TC-005
+  test: 'FR-804: LSTM-based forecasting model (built from FR-303) (Test)'
+  verifies: REQ-005
+  priority: Must

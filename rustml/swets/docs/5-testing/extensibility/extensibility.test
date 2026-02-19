@@ -1,0 +1,15 @@
+# Test Plan: Extensibility
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/extensibility/extensibility.spec)
+
+## Test Cases
+
+| ID | Test | Verifies | Priority |
+|----|------|----------|----------|
+| TC-001 | NFR-500: New `BackwardOp` implementations can be added without modifying the tape (Analysis) | REQ-001 | Must |
+| TC-002 | NFR-501: New `Layer` implementations can be used with existing `Sequential`, `Trainer`, `Optimizer` (Analysis) | REQ-002 | Must |
+| TC-003 | NFR-502: New `Feature` implementations can be plugged into `FeatureEngineer` (Analysis) | REQ-003 | Must |
+| TC-004 | NFR-503: New `Loss`, `Optimizer`, `LRScheduler` implementations via traits (Analysis) | REQ-004 | Must |
+

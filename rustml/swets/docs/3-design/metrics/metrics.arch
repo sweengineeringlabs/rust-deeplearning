@@ -1,0 +1,17 @@
+# Architecture: Metrics
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/metrics/metrics.spec)
+
+## Components
+
+| Component | Traces To | Description |
+|-----------|-----------|-------------|
+
+## Related Documents
+
+- [Feature Spec](../1-requirements/metrics/metrics.spec)
+- [Test Plan](../5-testing/metrics/metrics.test)
+- [Deployment](../6-deployment/metrics/metrics.deploy)
+

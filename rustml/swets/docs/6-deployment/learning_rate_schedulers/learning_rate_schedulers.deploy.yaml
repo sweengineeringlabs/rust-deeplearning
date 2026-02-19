@@ -1,0 +1,9 @@
+kind: deployment
+domain: Learning Rate Schedulers
+section: '2.5'
+specRef: docs/1-requirements/learning_rate_schedulers/learning_rate_schedulers.spec.yaml
+environments:
+- name: staging
+  description: Staging environment for Learning Rate Schedulers validation
+- name: production
+  description: Production environment for Learning Rate Schedulers

@@ -1,0 +1,17 @@
+# Architecture: Core Tensor System
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/core_tensor_system/core_tensor_system.spec)
+
+## Components
+
+| Component | Traces To | Description |
+|-----------|-----------|-------------|
+
+## Related Documents
+
+- [Feature Spec](../1-requirements/core_tensor_system/core_tensor_system.spec)
+- [Test Plan](../5-testing/core_tensor_system/core_tensor_system.test)
+- [Deployment](../6-deployment/core_tensor_system/core_tensor_system.deploy)
+

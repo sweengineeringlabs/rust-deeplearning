@@ -1,0 +1,17 @@
+# Architecture: Performance
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/performance/performance.spec)
+
+## Components
+
+| Component | Traces To | Description |
+|-----------|-----------|-------------|
+
+## Related Documents
+
+- [Feature Spec](../1-requirements/performance/performance.spec)
+- [Test Plan](../5-testing/performance/performance.test)
+- [Deployment](../6-deployment/performance/performance.deploy)
+

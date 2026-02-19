@@ -1,0 +1,130 @@
+kind: feature_request
+domain: Automatic Differentiation
+section: '2.2'
+requirements:
+- id: REQ-001
+  sourceId: FR-200
+  title: '`GradientTape` records forward operations as `TapeEntry` list'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-002
+  sourceId: FR-201
+  title: '`TapeEntry` stores: `BackwardOp`, output ID, input IDs, saved tensors'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-003
+  sourceId: FR-202
+  title: '`BackwardOp` trait with `backward(grad_output, saved) -> Vec<input_grads>`'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-004
+  sourceId: FR-203
+  title: '`GradientTape::backward(loss_id)` replays tape in reverse, accumulates gradients in `HashMap<TensorId, Tensor>`'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-005
+  sourceId: FR-204
+  title: '`GradientTape::grad(id)` retrieves gradient for a tensor'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-006
+  sourceId: FR-205
+  title: '`GradientTape::clear()` resets ops and gradients between training steps'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-007
+  sourceId: FR-206
+  title: '`tape.enabled` flag to disable recording (inference mode)'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-008
+  sourceId: FR-207
+  title: '`Layer::forward` accepts `Option<&mut GradientTape>` — `None` means no recording'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-009
+  sourceId: FR-208
+  title: Scoped `no_grad` helper that temporarily disables tape
+  priority: Should
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-010
+  sourceId: FR-209
+  title: Non-tracking `_raw` variants of ops (e.g. `matmul_raw`) for use inside backward implementations
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-011
+  sourceId: FR-210
+  title: MatMul
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: '`grad_a = grad @ b^T`, `grad_b = a^T @ grad`'
+- id: REQ-012
+  sourceId: FR-211
+  title: Add
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: '`unbroadcast(grad)` per input'
+- id: REQ-013
+  sourceId: FR-212
+  title: Mul (element-wise)
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: '`grad * other_input`'
+- id: REQ-014
+  sourceId: FR-213
+  title: Sigmoid
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: '`grad * sigmoid(x) * (1 - sigmoid(x))`'
+- id: REQ-015
+  sourceId: FR-214
+  title: Tanh
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: '`grad * (1 - tanh(x)^2)`'
+- id: REQ-016
+  sourceId: FR-215
+  title: ReLU
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: '`grad * (input > 0)`'
+- id: REQ-017
+  sourceId: FR-216
+  title: Softmax
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: '`s * (g - sum(g * s, dim))`'
+- id: REQ-018
+  sourceId: FR-217
+  title: Conv1d
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: Transposed convolution for input grad, cross-correlation for weight grad

@@ -1,0 +1,34 @@
+# Manual Test Execution: Optimizers
+
+> **TLDR:** Manual test checklist for Optimizers — step-by-step procedures with expected outcomes.
+
+**Version:** 1.0
+**Status:** Pending
+**Test Plan:** [Test Plan](optimizers.test)
+
+---
+
+## Test Cases
+
+| TC | Test | Steps | Expected |
+|----|------|-------|----------|
+| TC-001 | FR-400: `Optimizer` trait: `step(params, tape)`, `lr()`, `set_lr()` — reads gradients from tape (Test) | _TODO_ | To be defined |
+| TC-002 | FR-401: `SGD` with momentum, dampening, weight decay, Nesterov (Test) | _TODO_ | To be defined |
+| TC-003 | FR-402: `Adam` with configurable betas, epsilon, L2 regularization (Test) | _TODO_ | To be defined |
+| TC-004 | FR-403: `AdamW` with decoupled weight decay (applied before Adam update) (Test) | _TODO_ | To be defined |
+| TC-005 | FR-404: Gradient clipping by global L2 norm (`clip_grad_norm`) (Test) | _TODO_ | To be defined |
+| TC-006 | FR-405: Gradient clipping by value (`clip_grad_value`) (Test) | _TODO_ | To be defined |
+
+---
+
+## Execution Log
+
+| TC | Tester | Date | Pass/Fail | Notes |
+|----|--------|------|-----------|-------|
+| TC-001 | | | | |
+| TC-002 | | | | |
+| TC-003 | | | | |
+| TC-004 | | | | |
+| TC-005 | | | | |
+| TC-006 | | | | |
+

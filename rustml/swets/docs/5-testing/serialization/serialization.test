@@ -1,0 +1,14 @@
+# Test Plan: Serialization
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/serialization/serialization.spec)
+
+## Test Cases
+
+| ID | Test | Verifies | Priority |
+|----|------|----------|----------|
+| TC-001 | FR-1000: `Checkpoint` struct: model parameters (name, bytes, shape, dtype), optimizer state, epoch, best_val_loss (Test) | REQ-001 | Must |
+| TC-002 | FR-1001: `save_checkpoint(model, path)` — serialize parameters via bincode (Test) | REQ-002 | Must |
+| TC-003 | FR-1002: `load_checkpoint(model, path)` — deserialize and load into model (Test) | REQ-003 | Must |
+

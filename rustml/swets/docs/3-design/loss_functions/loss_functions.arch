@@ -1,0 +1,17 @@
+# Architecture: Loss Functions
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/loss_functions/loss_functions.spec)
+
+## Components
+
+| Component | Traces To | Description |
+|-----------|-----------|-------------|
+
+## Related Documents
+
+- [Feature Spec](../1-requirements/loss_functions/loss_functions.spec)
+- [Test Plan](../5-testing/loss_functions/loss_functions.test)
+- [Deployment](../6-deployment/loss_functions/loss_functions.deploy)
+

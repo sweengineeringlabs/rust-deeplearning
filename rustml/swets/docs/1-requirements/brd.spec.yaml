@@ -1,0 +1,131 @@
+kind: brd
+title: Business Requirements Document
+domains:
+- section: '2.1'
+  domain: Core Tensor System
+  slug: core_tensor_system
+  specCount: 14
+  specFile: docs/1-requirements/core_tensor_system/core_tensor_system.spec.yaml
+  archFile: docs/3-design/core_tensor_system/core_tensor_system.arch.yaml
+  testFile: docs/5-testing/core_tensor_system/core_tensor_system.test.yaml
+  deployFile: docs/6-deployment/core_tensor_system/core_tensor_system.deploy.yaml
+- section: '2.2'
+  domain: Automatic Differentiation
+  slug: automatic_differentiation
+  specCount: 18
+  specFile: docs/1-requirements/automatic_differentiation/automatic_differentiation.spec.yaml
+  archFile: docs/3-design/automatic_differentiation/automatic_differentiation.arch.yaml
+  testFile: docs/5-testing/automatic_differentiation/automatic_differentiation.test.yaml
+  deployFile: docs/6-deployment/automatic_differentiation/automatic_differentiation.deploy.yaml
+- section: '2.3'
+  domain: Neural Network Layers
+  slug: neural_network_layers
+  specCount: 10
+  specFile: docs/1-requirements/neural_network_layers/neural_network_layers.spec.yaml
+  archFile: docs/3-design/neural_network_layers/neural_network_layers.arch.yaml
+  testFile: docs/5-testing/neural_network_layers/neural_network_layers.test.yaml
+  deployFile: docs/6-deployment/neural_network_layers/neural_network_layers.deploy.yaml
+- section: '2.4'
+  domain: Optimizers
+  slug: optimizers
+  specCount: 6
+  specFile: docs/1-requirements/optimizers/optimizers.spec.yaml
+  archFile: docs/3-design/optimizers/optimizers.arch.yaml
+  testFile: docs/5-testing/optimizers/optimizers.test.yaml
+  deployFile: docs/6-deployment/optimizers/optimizers.deploy.yaml
+- section: '2.5'
+  domain: Learning Rate Schedulers
+  slug: learning_rate_schedulers
+  specCount: 4
+  specFile: docs/1-requirements/learning_rate_schedulers/learning_rate_schedulers.spec.yaml
+  archFile: docs/3-design/learning_rate_schedulers/learning_rate_schedulers.arch.yaml
+  testFile: docs/5-testing/learning_rate_schedulers/learning_rate_schedulers.test.yaml
+  deployFile: docs/6-deployment/learning_rate_schedulers/learning_rate_schedulers.deploy.yaml
+- section: '2.6'
+  domain: Loss Functions
+  slug: loss_functions
+  specCount: 6
+  specFile: docs/1-requirements/loss_functions/loss_functions.spec.yaml
+  archFile: docs/3-design/loss_functions/loss_functions.arch.yaml
+  testFile: docs/5-testing/loss_functions/loss_functions.test.yaml
+  deployFile: docs/6-deployment/loss_functions/loss_functions.deploy.yaml
+- section: '2.7'
+  domain: Time Series Data Pipeline
+  slug: time_series_data_pipeline
+  specCount: 10
+  specFile: docs/1-requirements/time_series_data_pipeline/time_series_data_pipeline.spec.yaml
+  archFile: docs/3-design/time_series_data_pipeline/time_series_data_pipeline.arch.yaml
+  testFile: docs/5-testing/time_series_data_pipeline/time_series_data_pipeline.test.yaml
+  deployFile: docs/6-deployment/time_series_data_pipeline/time_series_data_pipeline.deploy.yaml
+- section: '2.8'
+  domain: Model Architectures
+  slug: model_architectures
+  specCount: 5
+  specFile: docs/1-requirements/model_architectures/model_architectures.spec.yaml
+  archFile: docs/3-design/model_architectures/model_architectures.arch.yaml
+  testFile: docs/5-testing/model_architectures/model_architectures.test.yaml
+  deployFile: docs/6-deployment/model_architectures/model_architectures.deploy.yaml
+- section: '2.9'
+  domain: Training Infrastructure
+  slug: training_infrastructure
+  specCount: 8
+  specFile: docs/1-requirements/training_infrastructure/training_infrastructure.spec.yaml
+  archFile: docs/3-design/training_infrastructure/training_infrastructure.arch.yaml
+  testFile: docs/5-testing/training_infrastructure/training_infrastructure.test.yaml
+  deployFile: docs/6-deployment/training_infrastructure/training_infrastructure.deploy.yaml
+- section: '2.10'
+  domain: Serialization
+  slug: serialization
+  specCount: 3
+  specFile: docs/1-requirements/serialization/serialization.spec.yaml
+  archFile: docs/3-design/serialization/serialization.arch.yaml
+  testFile: docs/5-testing/serialization/serialization.test.yaml
+  deployFile: docs/6-deployment/serialization/serialization.deploy.yaml
+- section: '2.11'
+  domain: Metrics
+  slug: metrics
+  specCount: 4
+  specFile: docs/1-requirements/metrics/metrics.spec.yaml
+  archFile: docs/3-design/metrics/metrics.arch.yaml
+  testFile: docs/5-testing/metrics/metrics.test.yaml
+  deployFile: docs/6-deployment/metrics/metrics.deploy.yaml
+- section: '3.1'
+  domain: Performance
+  slug: performance
+  specCount: 4
+  specFile: docs/1-requirements/performance/performance.spec.yaml
+  archFile: docs/3-design/performance/performance.arch.yaml
+  testFile: docs/5-testing/performance/performance.test.yaml
+  deployFile: docs/6-deployment/performance/performance.deploy.yaml
+- section: '3.2'
+  domain: Correctness
+  slug: correctness
+  specCount: 5
+  specFile: docs/1-requirements/correctness/correctness.spec.yaml
+  archFile: docs/3-design/correctness/correctness.arch.yaml
+  testFile: docs/5-testing/correctness/correctness.test.yaml
+  deployFile: docs/6-deployment/correctness/correctness.deploy.yaml
+- section: '3.3'
+  domain: Rust Safety
+  slug: rust_safety
+  specCount: 4
+  specFile: docs/1-requirements/rust_safety/rust_safety.spec.yaml
+  archFile: docs/3-design/rust_safety/rust_safety.arch.yaml
+  testFile: docs/5-testing/rust_safety/rust_safety.test.yaml
+  deployFile: docs/6-deployment/rust_safety/rust_safety.deploy.yaml
+- section: '3.4'
+  domain: Compatibility
+  slug: compatibility
+  specCount: 4
+  specFile: docs/1-requirements/compatibility/compatibility.spec.yaml
+  archFile: docs/3-design/compatibility/compatibility.arch.yaml
+  testFile: docs/5-testing/compatibility/compatibility.test.yaml
+  deployFile: docs/6-deployment/compatibility/compatibility.deploy.yaml
+- section: '3.5'
+  domain: Extensibility
+  slug: extensibility
+  specCount: 4
+  specFile: docs/1-requirements/extensibility/extensibility.spec.yaml
+  archFile: docs/3-design/extensibility/extensibility.arch.yaml
+  testFile: docs/5-testing/extensibility/extensibility.test.yaml
+  deployFile: docs/6-deployment/extensibility/extensibility.deploy.yaml

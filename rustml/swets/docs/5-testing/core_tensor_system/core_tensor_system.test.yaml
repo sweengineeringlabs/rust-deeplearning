@@ -1,0 +1,61 @@
+kind: test_plan
+domain: Core Tensor System
+section: '2.1'
+specRef: docs/1-requirements/core_tensor_system/core_tensor_system.spec.yaml
+testCases:
+- id: TC-001
+  test: 'FR-100: Tensor struct with unique `TensorId`, `Arc<Storage>` data, shape, strides, dtype, device (Test)'
+  verifies: REQ-001
+  priority: Must
+- id: TC-002
+  test: 'FR-101: `TensorId` generated via atomic counter for tape tracking (Test)'
+  verifies: REQ-002
+  priority: Must
+- id: TC-003
+  test: 'FR-102: `Storage` enum: `Owned(Vec<u8>)`, `View { parent, offset, len }`, `MMap` (Test)'
+  verifies: REQ-003
+  priority: Must
+- id: TC-004
+  test: 'FR-103: `DType` enum matching rustml-core: F32, F16, BF16, I8, U8, Q8_0, Q4_0, Q4_1 (Test)'
+  verifies: REQ-004
+  priority: Must
+- id: TC-005
+  test: 'FR-104: Thread-local `TensorPool` for buffer recycling during backward pass (Test)'
+  verifies: REQ-005
+  priority: Should
+- id: TC-006
+  test: 'FR-105: Creation ops: `zeros`, `ones`, `randn`, `uniform`, `from_vec`, `arange` (Test)'
+  verifies: REQ-006
+  priority: Must
+- id: TC-007
+  test: 'FR-106: Shape ops: `reshape`, `transpose`, `permute`, `squeeze`, `unsqueeze`, `flatten`, `view` (Test)'
+  verifies: REQ-007
+  priority: Must
+- id: TC-008
+  test: 'FR-107: Indexing ops: `slice`, `index_select`, `gather`, `masked_select` (Test)'
+  verifies: REQ-008
+  priority: Must
+- id: TC-009
+  test: 'FR-108: Element-wise math: add, sub, mul, div, pow, sqrt, exp, log, abs, neg (Test)'
+  verifies: REQ-009
+  priority: Must
+- id: TC-010
+  test: 'FR-109: Reductions: sum, mean, max, min, std, var (Test)'
+  verifies: REQ-010
+  priority: Must
+- id: TC-011
+  test: 'FR-110: `matmul` and `dot` with broadcasting (Test)'
+  verifies: REQ-011
+  priority: Must
+- id: TC-012
+  test: 'FR-111: `conv1d` with stride, padding, and dilation parameters (Test)'
+  verifies: REQ-012
+  priority: Must
+- id: TC-013
+  test: 'FR-112: `concat`, `stack`, `split` tensor joining/splitting (Test)'
+  verifies: REQ-013
+  priority: Must
+- id: TC-014
+  test: 'FR-113: Row-major strides computation and flat offset indexing (Test)'
+  verifies: REQ-014
+  priority: Must

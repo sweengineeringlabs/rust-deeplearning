@@ -1,0 +1,17 @@
+# Architecture: Serialization
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/serialization/serialization.spec)
+
+## Components
+
+| Component | Traces To | Description |
+|-----------|-----------|-------------|
+
+## Related Documents
+
+- [Feature Spec](../1-requirements/serialization/serialization.spec)
+- [Test Plan](../5-testing/serialization/serialization.test)
+- [Deployment](../6-deployment/serialization/serialization.deploy)
+

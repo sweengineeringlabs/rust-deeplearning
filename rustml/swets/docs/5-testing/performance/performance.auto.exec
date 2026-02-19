@@ -1,0 +1,19 @@
+# Automated Test Execution: Performance
+
+> **TLDR:** CI/automated test tracker for Performance — maps each test case to a CI job and build.
+
+**Version:** 1.0
+**Status:** Pending
+**Test Plan:** [Test Plan](performance.test)
+
+---
+
+## Test Cases
+
+| TC | Test | Verifies | CI Job | Build | Status | Last Run |
+|----|------|----------|--------|-------|--------|----------|
+| TC-001 | NFR-100: SIMD-accelerated tensor operations (matmul, conv1d, element-wise) (Analysis) | REQ-001 | | | Pending | |
+| TC-002 | NFR-101: Cache-friendly memory layout (row-major, contiguous where possible) (Analysis) | REQ-002 | | | Pending | |
+| TC-003 | NFR-102: Buffer recycling via `TensorPool` reduces allocation pressure in backward pass (Analysis) | REQ-003 | | | Pending | |
+| TC-004 | NFR-103: Zero-copy views for reshape/transpose/slice (Analysis) | REQ-004 | | | Pending | |
+

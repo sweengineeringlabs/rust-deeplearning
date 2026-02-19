@@ -1,0 +1,20 @@
+# Deployment: Training Infrastructure
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/training_infrastructure/training_infrastructure.spec)
+
+## Environments
+
+| Environment | Description |
+|-------------|-------------|
+| staging | Staging environment for Training Infrastructure validation |
+| production | Production environment for Training Infrastructure |
+
+## Build
+
+_TODO: Define build steps._
+
+## Rollback
+
+_TODO: Define rollback procedures._

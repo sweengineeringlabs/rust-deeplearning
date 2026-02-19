@@ -1,0 +1,9 @@
+kind: deployment
+domain: Performance
+section: '3.1'
+specRef: docs/1-requirements/performance/performance.spec.yaml
+environments:
+- name: staging
+  description: Staging environment for Performance validation
+- name: production
+  description: Production environment for Performance

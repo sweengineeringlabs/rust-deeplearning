@@ -1,0 +1,9 @@
+kind: deployment
+domain: Training Infrastructure
+section: '2.9'
+specRef: docs/1-requirements/training_infrastructure/training_infrastructure.spec.yaml
+environments:
+- name: staging
+  description: Staging environment for Training Infrastructure validation
+- name: production
+  description: Production environment for Training Infrastructure

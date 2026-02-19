@@ -1,0 +1,19 @@
+# Automated Test Execution: Learning Rate Schedulers
+
+> **TLDR:** CI/automated test tracker for Learning Rate Schedulers — maps each test case to a CI job and build.
+
+**Version:** 1.0
+**Status:** Pending
+**Test Plan:** [Test Plan](learning_rate_schedulers.test)
+
+---
+
+## Test Cases
+
+| TC | Test | Verifies | CI Job | Build | Status | Last Run |
+|----|------|----------|--------|-------|--------|----------|
+| TC-001 | FR-500: `LRScheduler` trait: `step(optimizer)`, `get_lr()` (Test) | REQ-001 | | | Pending | |
+| TC-002 | FR-501: `StepLR` — decay by gamma every N steps (Test) | REQ-002 | | | Pending | |
+| TC-003 | FR-502: `CosineAnnealingLR` — cosine decay to eta_min (Test) | REQ-003 | | | Pending | |
+| TC-004 | FR-503: `WarmupCosineScheduler` — linear warmup then cosine decay (Test) | REQ-004 | | | Pending | |
+

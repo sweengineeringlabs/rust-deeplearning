@@ -1,0 +1,20 @@
+# Deployment: Learning Rate Schedulers
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/learning_rate_schedulers/learning_rate_schedulers.spec)
+
+## Environments
+
+| Environment | Description |
+|-------------|-------------|
+| staging | Staging environment for Learning Rate Schedulers validation |
+| production | Production environment for Learning Rate Schedulers |
+
+## Build
+
+_TODO: Define build steps._
+
+## Rollback
+
+_TODO: Define rollback procedures._

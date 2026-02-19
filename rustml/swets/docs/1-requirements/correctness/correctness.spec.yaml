@@ -1,0 +1,39 @@
+kind: feature_request
+domain: Correctness
+section: '3.2'
+requirements:
+- id: REQ-001
+  sourceId: NFR-200
+  title: Gradient correctness validated via finite-difference numerical checks for all BackwardOp implementations
+  priority: Must
+  status: Proposed
+  verification: Analysis
+  acceptance: ''
+- id: REQ-002
+  sourceId: NFR-201
+  title: Scaler handles constant features (zero variance/range) without producing NaN/Inf
+  priority: Must
+  status: Proposed
+  verification: Analysis
+  acceptance: ''
+- id: REQ-003
+  sourceId: NFR-202
+  title: CrossEntropyLoss uses numerically stable log-softmax (subtract max before exp)
+  priority: Must
+  status: Proposed
+  verification: Analysis
+  acceptance: ''
+- id: REQ-004
+  sourceId: NFR-203
+  title: Causal masking prevents information leakage from future timesteps
+  priority: Must
+  status: Proposed
+  verification: Analysis
+  acceptance: ''
+- id: REQ-005
+  sourceId: NFR-204
+  title: RSI uses Wilder's EMA (smoothing factor 1/period), not simple moving average
+  priority: Must
+  status: Proposed
+  verification: Analysis
+  acceptance: ''

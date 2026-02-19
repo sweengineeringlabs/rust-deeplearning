@@ -1,0 +1,29 @@
+# Test Plan: Automatic Differentiation
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/automatic_differentiation/automatic_differentiation.spec)
+
+## Test Cases
+
+| ID | Test | Verifies | Priority |
+|----|------|----------|----------|
+| TC-001 | FR-200: `GradientTape` records forward operations as `TapeEntry` list (Test) | REQ-001 | Must |
+| TC-002 | FR-201: `TapeEntry` stores: `BackwardOp`, output ID, input IDs, saved tensors (Test) | REQ-002 | Must |
+| TC-003 | FR-202: `BackwardOp` trait with `backward(grad_output, saved) -> Vec<input_grads>` (Test) | REQ-003 | Must |
+| TC-004 | FR-203: `GradientTape::backward(loss_id)` replays tape in reverse, accumulates gradients in `HashMap<TensorId, Tensor>` (Test) | REQ-004 | Must |
+| TC-005 | FR-204: `GradientTape::grad(id)` retrieves gradient for a tensor (Test) | REQ-005 | Must |
+| TC-006 | FR-205: `GradientTape::clear()` resets ops and gradients between training steps (Test) | REQ-006 | Must |
+| TC-007 | FR-206: `tape.enabled` flag to disable recording (inference mode) (Test) | REQ-007 | Must |
+| TC-008 | FR-207: `Layer::forward` accepts `Option<&mut GradientTape>` — `None` means no recording (Test) | REQ-008 | Must |
+| TC-009 | FR-208: Scoped `no_grad` helper that temporarily disables tape (Test) | REQ-009 | Should |
+| TC-010 | FR-209: Non-tracking `_raw` variants of ops (e.g. `matmul_raw`) for use inside backward implementations (Test) | REQ-010 | Must |
+| TC-011 | FR-210: MatMul (Test) | REQ-011 | Must |
+| TC-012 | FR-211: Add (Test) | REQ-012 | Must |
+| TC-013 | FR-212: Mul (element-wise) (Test) | REQ-013 | Must |
+| TC-014 | FR-213: Sigmoid (Test) | REQ-014 | Must |
+| TC-015 | FR-214: Tanh (Test) | REQ-015 | Must |
+| TC-016 | FR-215: ReLU (Test) | REQ-016 | Must |
+| TC-017 | FR-216: Softmax (Test) | REQ-017 | Must |
+| TC-018 | FR-217: Conv1d (Test) | REQ-018 | Must |
+

@@ -1,0 +1,30 @@
+# Manual Test Execution: Rust Safety
+
+> **TLDR:** Manual test checklist for Rust Safety — step-by-step procedures with expected outcomes.
+
+**Version:** 1.0
+**Status:** Pending
+**Test Plan:** [Test Plan](rust_safety.test)
+
+---
+
+## Test Cases
+
+| TC | Test | Steps | Expected |
+|----|------|-------|----------|
+| TC-001 | NFR-300: No `unsafe` code outside SIMD kernels (Analysis) | _TODO_ | To be defined |
+| TC-002 | NFR-301: `Storage::View` holds `Arc<Storage>` (not `Arc<Tensor>`) to prevent reference cycles (Analysis) | _TODO_ | To be defined |
+| TC-003 | NFR-302: `GradientTape` borrow semantics must compile — design must resolve `Option<&mut GradientTape>` threading through nested layer calls (see Section 5.1) (Analysis) | _TODO_ | To be defined |
+| TC-004 | NFR-303: All `BackwardOp` implementations must be `Send + Sync` (Analysis) | _TODO_ | To be defined |
+
+---
+
+## Execution Log
+
+| TC | Tester | Date | Pass/Fail | Notes |
+|----|--------|------|-----------|-------|
+| TC-001 | | | | |
+| TC-002 | | | | |
+| TC-003 | | | | |
+| TC-004 | | | | |
+

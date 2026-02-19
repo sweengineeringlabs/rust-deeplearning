@@ -1,0 +1,32 @@
+kind: feature_request
+domain: Metrics
+section: '2.11'
+requirements:
+- id: REQ-001
+  sourceId: FR-1100
+  title: Accumulator-based `Metrics` struct with `update(pred, target)` and `reset()`
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-002
+  sourceId: FR-1101
+  title: MSE, MAE, RMSE
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-003
+  sourceId: FR-1102
+  title: R-squared (coefficient of determination)
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-004
+  sourceId: FR-1103
+  title: MAPE and SMAPE
+  priority: Should
+  status: Proposed
+  verification: Test
+  acceptance: ''

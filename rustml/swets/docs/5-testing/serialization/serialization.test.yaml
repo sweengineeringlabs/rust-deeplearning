@@ -1,0 +1,17 @@
+kind: test_plan
+domain: Serialization
+section: '2.10'
+specRef: docs/1-requirements/serialization/serialization.spec.yaml
+testCases:
+- id: TC-001
+  test: 'FR-1000: `Checkpoint` struct: model parameters (name, bytes, shape, dtype), optimizer state, epoch, best_val_loss (Test)'
+  verifies: REQ-001
+  priority: Must
+- id: TC-002
+  test: 'FR-1001: `save_checkpoint(model, path)` — serialize parameters via bincode (Test)'
+  verifies: REQ-002
+  priority: Must
+- id: TC-003
+  test: 'FR-1002: `load_checkpoint(model, path)` — deserialize and load into model (Test)'
+  verifies: REQ-003
+  priority: Must

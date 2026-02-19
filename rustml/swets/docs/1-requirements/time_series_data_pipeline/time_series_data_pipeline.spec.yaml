@@ -1,0 +1,74 @@
+kind: feature_request
+domain: Time Series Data Pipeline
+section: '2.7'
+requirements:
+- id: REQ-001
+  sourceId: FR-700
+  title: '`OHLCVCandle` struct: timestamp, open, high, low, close, volume'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-002
+  sourceId: FR-701
+  title: '`TimeSeriesDataset`: windowed access over candle data, configurable window size and prediction horizon'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-003
+  sourceId: FR-702
+  title: 'Configurable target columns: single, multi, or close (default)'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-004
+  sourceId: FR-703
+  title: '`DataLoader` implementing `Iterator` — yields `(input_batch, target_batch)`'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-005
+  sourceId: FR-704
+  title: '`DataLoader` shuffle support with epoch reset'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-006
+  sourceId: FR-705
+  title: '`FeatureEngineer` with pluggable `Feature` trait'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-007
+  sourceId: FR-706
+  title: 'Built-in features: log returns, moving average, volatility'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-008
+  sourceId: FR-707
+  title: RSI feature using Wilder's exponential moving average (not SMA)
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-009
+  sourceId: FR-708
+  title: '`Scaler` with MinMax, StandardScaler, RobustScaler'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-010
+  sourceId: FR-709
+  title: '`Scaler::inverse_transform` for denormalization'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''

@@ -1,0 +1,17 @@
+# Architecture: Model Architectures
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/model_architectures/model_architectures.spec)
+
+## Components
+
+| Component | Traces To | Description |
+|-----------|-----------|-------------|
+
+## Related Documents
+
+- [Feature Spec](../1-requirements/model_architectures/model_architectures.spec)
+- [Test Plan](../5-testing/model_architectures/model_architectures.test)
+- [Deployment](../6-deployment/model_architectures/model_architectures.deploy)
+

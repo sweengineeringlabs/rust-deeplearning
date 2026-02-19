@@ -1,0 +1,28 @@
+# Manual Test Execution: Serialization
+
+> **TLDR:** Manual test checklist for Serialization — step-by-step procedures with expected outcomes.
+
+**Version:** 1.0
+**Status:** Pending
+**Test Plan:** [Test Plan](serialization.test)
+
+---
+
+## Test Cases
+
+| TC | Test | Steps | Expected |
+|----|------|-------|----------|
+| TC-001 | FR-1000: `Checkpoint` struct: model parameters (name, bytes, shape, dtype), optimizer state, epoch, best_val_loss (Test) | _TODO_ | To be defined |
+| TC-002 | FR-1001: `save_checkpoint(model, path)` — serialize parameters via bincode (Test) | _TODO_ | To be defined |
+| TC-003 | FR-1002: `load_checkpoint(model, path)` — deserialize and load into model (Test) | _TODO_ | To be defined |
+
+---
+
+## Execution Log
+
+| TC | Tester | Date | Pass/Fail | Notes |
+|----|--------|------|-----------|-------|
+| TC-001 | | | | |
+| TC-002 | | | | |
+| TC-003 | | | | |
+

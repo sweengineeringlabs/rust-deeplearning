@@ -1,0 +1,5 @@
+kind: architecture
+domain: Compatibility
+section: '3.4'
+specRef: docs/1-requirements/compatibility/compatibility.spec.yaml
+components: []

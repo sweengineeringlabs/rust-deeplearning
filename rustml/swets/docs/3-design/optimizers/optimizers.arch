@@ -1,0 +1,17 @@
+# Architecture: Optimizers
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/optimizers/optimizers.spec)
+
+## Components
+
+| Component | Traces To | Description |
+|-----------|-----------|-------------|
+
+## Related Documents
+
+- [Feature Spec](../1-requirements/optimizers/optimizers.spec)
+- [Test Plan](../5-testing/optimizers/optimizers.test)
+- [Deployment](../6-deployment/optimizers/optimizers.deploy)
+

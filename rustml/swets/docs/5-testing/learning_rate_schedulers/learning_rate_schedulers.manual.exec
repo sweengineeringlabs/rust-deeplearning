@@ -1,0 +1,30 @@
+# Manual Test Execution: Learning Rate Schedulers
+
+> **TLDR:** Manual test checklist for Learning Rate Schedulers — step-by-step procedures with expected outcomes.
+
+**Version:** 1.0
+**Status:** Pending
+**Test Plan:** [Test Plan](learning_rate_schedulers.test)
+
+---
+
+## Test Cases
+
+| TC | Test | Steps | Expected |
+|----|------|-------|----------|
+| TC-001 | FR-500: `LRScheduler` trait: `step(optimizer)`, `get_lr()` (Test) | _TODO_ | To be defined |
+| TC-002 | FR-501: `StepLR` — decay by gamma every N steps (Test) | _TODO_ | To be defined |
+| TC-003 | FR-502: `CosineAnnealingLR` — cosine decay to eta_min (Test) | _TODO_ | To be defined |
+| TC-004 | FR-503: `WarmupCosineScheduler` — linear warmup then cosine decay (Test) | _TODO_ | To be defined |
+
+---
+
+## Execution Log
+
+| TC | Tester | Date | Pass/Fail | Notes |
+|----|--------|------|-----------|-------|
+| TC-001 | | | | |
+| TC-002 | | | | |
+| TC-003 | | | | |
+| TC-004 | | | | |
+

@@ -1,0 +1,17 @@
+# Architecture: Neural Network Layers
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/neural_network_layers/neural_network_layers.spec)
+
+## Components
+
+| Component | Traces To | Description |
+|-----------|-----------|-------------|
+
+## Related Documents
+
+- [Feature Spec](../1-requirements/neural_network_layers/neural_network_layers.spec)
+- [Test Plan](../5-testing/neural_network_layers/neural_network_layers.test)
+- [Deployment](../6-deployment/neural_network_layers/neural_network_layers.deploy)
+

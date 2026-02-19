@@ -1,0 +1,5 @@
+kind: architecture
+domain: Neural Network Layers
+section: '2.3'
+specRef: docs/1-requirements/neural_network_layers/neural_network_layers.spec.yaml
+components: []

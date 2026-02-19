@@ -1,0 +1,45 @@
+kind: test_plan
+domain: Time Series Data Pipeline
+section: '2.7'
+specRef: docs/1-requirements/time_series_data_pipeline/time_series_data_pipeline.spec.yaml
+testCases:
+- id: TC-001
+  test: 'FR-700: `OHLCVCandle` struct: timestamp, open, high, low, close, volume (Test)'
+  verifies: REQ-001
+  priority: Must
+- id: TC-002
+  test: 'FR-701: `TimeSeriesDataset`: windowed access over candle data, configurable window size and prediction horizon (Test)'
+  verifies: REQ-002
+  priority: Must
+- id: TC-003
+  test: 'FR-702: Configurable target columns: single, multi, or close (default) (Test)'
+  verifies: REQ-003
+  priority: Must
+- id: TC-004
+  test: 'FR-703: `DataLoader` implementing `Iterator` — yields `(input_batch, target_batch)` (Test)'
+  verifies: REQ-004
+  priority: Must
+- id: TC-005
+  test: 'FR-704: `DataLoader` shuffle support with epoch reset (Test)'
+  verifies: REQ-005
+  priority: Must
+- id: TC-006
+  test: 'FR-705: `FeatureEngineer` with pluggable `Feature` trait (Test)'
+  verifies: REQ-006
+  priority: Must
+- id: TC-007
+  test: 'FR-706: Built-in features: log returns, moving average, volatility (Test)'
+  verifies: REQ-007
+  priority: Must
+- id: TC-008
+  test: 'FR-707: RSI feature using Wilder''s exponential moving average (not SMA) (Test)'
+  verifies: REQ-008
+  priority: Must
+- id: TC-009
+  test: 'FR-708: `Scaler` with MinMax, StandardScaler, RobustScaler (Test)'
+  verifies: REQ-009
+  priority: Must
+- id: TC-010
+  test: 'FR-709: `Scaler::inverse_transform` for denormalization (Test)'
+  verifies: REQ-010
+  priority: Must

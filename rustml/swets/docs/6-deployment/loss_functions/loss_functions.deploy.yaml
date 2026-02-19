@@ -1,0 +1,9 @@
+kind: deployment
+domain: Loss Functions
+section: '2.6'
+specRef: docs/1-requirements/loss_functions/loss_functions.spec.yaml
+environments:
+- name: staging
+  description: Staging environment for Loss Functions validation
+- name: production
+  description: Production environment for Loss Functions

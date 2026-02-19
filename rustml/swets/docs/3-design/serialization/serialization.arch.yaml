@@ -1,0 +1,5 @@
+kind: architecture
+domain: Serialization
+section: '2.10'
+specRef: docs/1-requirements/serialization/serialization.spec.yaml
+components: []

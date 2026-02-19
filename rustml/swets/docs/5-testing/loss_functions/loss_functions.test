@@ -1,0 +1,17 @@
+# Test Plan: Loss Functions
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/loss_functions/loss_functions.spec)
+
+## Test Cases
+
+| ID | Test | Verifies | Priority |
+|----|------|----------|----------|
+| TC-001 | FR-600: `Loss` trait: `forward(predictions, targets, tape)` (Test) | REQ-001 | Must |
+| TC-002 | FR-601: `MSELoss` — mean squared error (Test) | REQ-002 | Must |
+| TC-003 | FR-602: `MAELoss` — mean absolute error (Test) | REQ-003 | Must |
+| TC-004 | FR-603: `HuberLoss` — quadratic near zero, linear far from zero, configurable delta (Test) | REQ-004 | Must |
+| TC-005 | FR-604: `CrossEntropyLoss` — numerically stable log-softmax + NLL (Test) | REQ-005 | Should |
+| TC-006 | FR-605: `QuantileLoss` — asymmetric loss for quantile regression (Test) | REQ-006 | Should |
+

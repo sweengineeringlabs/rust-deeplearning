@@ -1,0 +1,21 @@
+kind: test_plan
+domain: Performance
+section: '3.1'
+specRef: docs/1-requirements/performance/performance.spec.yaml
+testCases:
+- id: TC-001
+  test: 'NFR-100: SIMD-accelerated tensor operations (matmul, conv1d, element-wise) (Analysis)'
+  verifies: REQ-001
+  priority: Must
+- id: TC-002
+  test: 'NFR-101: Cache-friendly memory layout (row-major, contiguous where possible) (Analysis)'
+  verifies: REQ-002
+  priority: Must
+- id: TC-003
+  test: 'NFR-102: Buffer recycling via `TensorPool` reduces allocation pressure in backward pass (Analysis)'
+  verifies: REQ-003
+  priority: Must
+- id: TC-004
+  test: 'NFR-103: Zero-copy views for reshape/transpose/slice (Analysis)'
+  verifies: REQ-004
+  priority: Must

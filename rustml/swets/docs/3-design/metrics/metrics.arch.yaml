@@ -1,0 +1,5 @@
+kind: architecture
+domain: Metrics
+section: '2.11'
+specRef: docs/1-requirements/metrics/metrics.spec.yaml
+components: []

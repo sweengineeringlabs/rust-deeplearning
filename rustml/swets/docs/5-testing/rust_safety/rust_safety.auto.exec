@@ -1,0 +1,19 @@
+# Automated Test Execution: Rust Safety
+
+> **TLDR:** CI/automated test tracker for Rust Safety — maps each test case to a CI job and build.
+
+**Version:** 1.0
+**Status:** Pending
+**Test Plan:** [Test Plan](rust_safety.test)
+
+---
+
+## Test Cases
+
+| TC | Test | Verifies | CI Job | Build | Status | Last Run |
+|----|------|----------|--------|-------|--------|----------|
+| TC-001 | NFR-300: No `unsafe` code outside SIMD kernels (Analysis) | REQ-001 | | | Pending | |
+| TC-002 | NFR-301: `Storage::View` holds `Arc<Storage>` (not `Arc<Tensor>`) to prevent reference cycles (Analysis) | REQ-002 | | | Pending | |
+| TC-003 | NFR-302: `GradientTape` borrow semantics must compile — design must resolve `Option<&mut GradientTape>` threading through nested layer calls (see Section 5.1) (Analysis) | REQ-003 | | | Pending | |
+| TC-004 | NFR-303: All `BackwardOp` implementations must be `Send + Sync` (Analysis) | REQ-004 | | | Pending | |
+

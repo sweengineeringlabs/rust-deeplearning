@@ -1,0 +1,21 @@
+kind: test_plan
+domain: Learning Rate Schedulers
+section: '2.5'
+specRef: docs/1-requirements/learning_rate_schedulers/learning_rate_schedulers.spec.yaml
+testCases:
+- id: TC-001
+  test: 'FR-500: `LRScheduler` trait: `step(optimizer)`, `get_lr()` (Test)'
+  verifies: REQ-001
+  priority: Must
+- id: TC-002
+  test: 'FR-501: `StepLR` — decay by gamma every N steps (Test)'
+  verifies: REQ-002
+  priority: Must
+- id: TC-003
+  test: 'FR-502: `CosineAnnealingLR` — cosine decay to eta_min (Test)'
+  verifies: REQ-003
+  priority: Must
+- id: TC-004
+  test: 'FR-503: `WarmupCosineScheduler` — linear warmup then cosine decay (Test)'
+  verifies: REQ-004
+  priority: Must

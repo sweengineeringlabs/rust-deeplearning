@@ -1,0 +1,25 @@
+kind: feature_request
+domain: Serialization
+section: '2.10'
+requirements:
+- id: REQ-001
+  sourceId: FR-1000
+  title: '`Checkpoint` struct: model parameters (name, bytes, shape, dtype), optimizer state, epoch, best_val_loss'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-002
+  sourceId: FR-1001
+  title: '`save_checkpoint(model, path)` — serialize parameters via bincode'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''
+- id: REQ-003
+  sourceId: FR-1002
+  title: '`load_checkpoint(model, path)` — deserialize and load into model'
+  priority: Must
+  status: Proposed
+  verification: Test
+  acceptance: ''

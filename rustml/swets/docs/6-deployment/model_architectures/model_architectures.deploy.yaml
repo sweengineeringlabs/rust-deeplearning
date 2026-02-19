@@ -1,0 +1,9 @@
+kind: deployment
+domain: Model Architectures
+section: '2.8'
+specRef: docs/1-requirements/model_architectures/model_architectures.spec.yaml
+environments:
+- name: staging
+  description: Staging environment for Model Architectures validation
+- name: production
+  description: Production environment for Model Architectures

@@ -1,0 +1,5 @@
+kind: architecture
+domain: Optimizers
+section: '2.4'
+specRef: docs/1-requirements/optimizers/optimizers.spec.yaml
+components: []

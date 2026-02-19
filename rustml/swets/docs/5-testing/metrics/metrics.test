@@ -1,0 +1,15 @@
+# Test Plan: Metrics
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/metrics/metrics.spec)
+
+## Test Cases
+
+| ID | Test | Verifies | Priority |
+|----|------|----------|----------|
+| TC-001 | FR-1100: Accumulator-based `Metrics` struct with `update(pred, target)` and `reset()` (Test) | REQ-001 | Must |
+| TC-002 | FR-1101: MSE, MAE, RMSE (Test) | REQ-002 | Must |
+| TC-003 | FR-1102: R-squared (coefficient of determination) (Test) | REQ-003 | Must |
+| TC-004 | FR-1103: MAPE and SMAPE (Test) | REQ-004 | Should |
+

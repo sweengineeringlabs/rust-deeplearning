@@ -1,0 +1,9 @@
+kind: deployment
+domain: Core Tensor System
+section: '2.1'
+specRef: docs/1-requirements/core_tensor_system/core_tensor_system.spec.yaml
+environments:
+- name: staging
+  description: Staging environment for Core Tensor System validation
+- name: production
+  description: Production environment for Core Tensor System

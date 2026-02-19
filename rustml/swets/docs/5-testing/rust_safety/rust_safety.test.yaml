@@ -1,0 +1,21 @@
+kind: test_plan
+domain: Rust Safety
+section: '3.3'
+specRef: docs/1-requirements/rust_safety/rust_safety.spec.yaml
+testCases:
+- id: TC-001
+  test: 'NFR-300: No `unsafe` code outside SIMD kernels (Analysis)'
+  verifies: REQ-001
+  priority: Must
+- id: TC-002
+  test: 'NFR-301: `Storage::View` holds `Arc<Storage>` (not `Arc<Tensor>`) to prevent reference cycles (Analysis)'
+  verifies: REQ-002
+  priority: Must
+- id: TC-003
+  test: 'NFR-302: `GradientTape` borrow semantics must compile — design must resolve `Option<&mut GradientTape>` threading through nested layer calls (see Section 5.1) (Analysis)'
+  verifies: REQ-003
+  priority: Must
+- id: TC-004
+  test: 'NFR-303: All `BackwardOp` implementations must be `Send + Sync` (Analysis)'
+  verifies: REQ-004
+  priority: Must

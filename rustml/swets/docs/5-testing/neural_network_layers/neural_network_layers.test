@@ -1,0 +1,21 @@
+# Test Plan: Neural Network Layers
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/neural_network_layers/neural_network_layers.spec)
+
+## Test Cases
+
+| ID | Test | Verifies | Priority |
+|----|------|----------|----------|
+| TC-001 | FR-300: `Layer` trait: `forward(&mut self, input, tape)`, `parameters()`, `parameters_mut()`, `train()`, `eval()`, `parameter_count()` (Test) | REQ-001 | Must |
+| TC-002 | FR-301: `Sequential` container chaining arbitrary layers (Test) | REQ-002 | Must |
+| TC-003 | FR-302: `Linear` layer with Xavier (default) and He initialization (Test) | REQ-003 | Must |
+| TC-004 | FR-303: `LSTM` layer: multi-layer, configurable hidden size, optional bidirectional, dropout between layers (Test) | REQ-004 | Must |
+| TC-005 | FR-304: `Conv1d` layer with stride, padding, dilation (Test) | REQ-005 | Must |
+| TC-006 | FR-305: Activation layers: `ReLU`, `Tanh`, `Sigmoid`, `GELU`, `SiLU` (Test) | REQ-006 | Must |
+| TC-007 | FR-306: `LayerNorm` with configurable epsilon (Test) | REQ-007 | Must |
+| TC-008 | FR-307: `BatchNorm1d` with running statistics (updated via `&mut self` in training mode) (Test) | REQ-008 | Should |
+| TC-009 | FR-308: `Dropout` layer: active in training, identity in eval (Test) | REQ-009 | Must |
+| TC-010 | FR-309: `model_summary()` prints total/trainable/frozen parameter counts (Test) | REQ-010 | Should |
+

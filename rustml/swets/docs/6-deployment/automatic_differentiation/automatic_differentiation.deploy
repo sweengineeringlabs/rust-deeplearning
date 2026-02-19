@@ -1,0 +1,20 @@
+# Deployment: Automatic Differentiation
+
+**Version:** 1.0
+**Status:** Draft
+**Spec:** [Feature Spec](../1-requirements/automatic_differentiation/automatic_differentiation.spec)
+
+## Environments
+
+| Environment | Description |
+|-------------|-------------|
+| staging | Staging environment for Automatic Differentiation validation |
+| production | Production environment for Automatic Differentiation |
+
+## Build
+
+_TODO: Define build steps._
+
+## Rollback
+
+_TODO: Define rollback procedures._
