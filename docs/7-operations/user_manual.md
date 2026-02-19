@@ -20,6 +20,7 @@
   - [GGUF Models](#gguf-models)
   - [Streaming](#streaming)
   - [Chat Mode](#chat-mode)
+  - [Interactive Mode](#interactive-mode)
   - [Sampling Options](#sampling-options)
   - [Batch Generation](#batch-generation)
   - [Timeout](#timeout)
@@ -40,6 +41,7 @@
 1. **Build the CLI** (release mode recommended for inference speed):
 
    ```bash
+   cd /path/to/rust-deeplearning
    cargo build --release -p rustml-cli
    ```
 
@@ -51,6 +53,8 @@
    ./target/release/sweai --version
    ./target/release/sweai --help
    ```
+
+> **Tip:** All commands below assume you are in the workspace root (`rust-deeplearning/`). If you add `./target/release` to your `PATH`, you can run `sweai` directly without the path prefix.
 
 ---
 
@@ -113,12 +117,29 @@ Use `--safetensors <MODEL_ID>` with a HuggingFace model ID. The architecture is 
 
 ### GGUF Models
 
-Pass a local GGUF file path as the first positional argument:
+Pass a GGUF file path as the first positional argument. You provide **either** a `[GGUF_PATH]` **or** `--safetensors <MODEL_ID>`, not both:
 
 ```bash
-./target/release/sweai infer model.gguf \
+./target/release/sweai infer /path/to/model.gguf \
   --prompt "The capital of France is" --max-tokens 20
 ```
+
+**Where to find GGUF files:** Models downloaded via `sweai hub download` are cached under `~/.cache/huggingface/hub/`:
+
+```bash
+# Download a GGUF model
+./target/release/sweai hub download TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF \
+  --gguf tinyllama-1.1b-chat-v1.0.Q4_0.gguf
+
+# The file is cached at:
+# ~/.cache/huggingface/hub/models--TheBloke--TinyLlama-1.1B-Chat-v1.0-GGUF/snapshots/<rev>/tinyllama-1.1b-chat-v1.0.Q4_0.gguf
+
+# Run inference with the cached file
+./target/release/sweai infer ~/.cache/huggingface/hub/models--TheBloke--TinyLlama-1.1B-Chat-v1.0-GGUF/snapshots/*/tinyllama-1.1b-chat-v1.0.Q4_0.gguf \
+  --prompt "Hello" --max-tokens 20
+```
+
+You can also use any local GGUF file directly (e.g., `/mnt/c/models/model.gguf`). Override the cache directory with `HF_HOME` or `HF_HUB_CACHE` environment variables.
 
 ### Streaming
 
@@ -145,17 +166,74 @@ Chat mode and streaming can be combined:
   --prompt "Explain transformers briefly" --chat --stream --max-tokens 64
 ```
 
+### Interactive Mode
+
+Add `--interactive` to start a multi-turn REPL-style chat session. This implies `--chat` and `--stream` behavior:
+
+```bash
+./target/release/sweai infer --safetensors google/gemma-3-1b-it \
+  --interactive --max-tokens 256
+```
+
+Or with a GGUF model:
+
+```bash
+./target/release/sweai infer /path/to/model.gguf \
+  --interactive --max-tokens 256
+```
+
+**How it works:**
+
+1. The CLI shows a `> ` prompt and waits for your input
+2. Type a message and press Enter — the model streams its response token-by-token
+3. The full conversation history is maintained across turns, so the model can reference prior messages
+4. The entire conversation is re-encoded and re-prefilled each turn
+
+**REPL commands:**
+
+| Input | Effect |
+|-------|--------|
+| Any text + Enter | Send message, get response |
+| Empty Enter | Skipped (no generation) |
+| `quit` or `exit` | Exit the session |
+| Ctrl-D | Exit the session (EOF) |
+| `/clear` | Reset conversation history |
+
+**Example session:**
+
+```
+> What is the capital of France?
+Paris is the capital of France.
+  [12 tokens in 2.45s (4.9 tok/s)]
+> What about Germany?
+The capital of Germany is Berlin.
+  [10 tokens in 1.98s (5.1 tok/s)]
+> /clear
+[History cleared]
+> quit
+Goodbye!
+```
+
+**Sampling options work with interactive mode:**
+
+```bash
+./target/release/sweai infer --safetensors google/gemma-3-1b-it \
+  --interactive --temperature 0.5 --max-tokens 128
+```
+
+> **Note:** `--interactive` cannot be used with `--prompt` or `--batch-file`.
+
 ### Sampling Options
 
 Control text generation with these flags:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--max-tokens N` | 128 | Maximum number of tokens to generate |
-| `--temperature F` | 1.0 | Randomness (0 = deterministic, higher = more random) |
-| `--top-k N` | 50 | Sample from top N most likely tokens |
-| `--top-p F` | 0.9 | Nucleus sampling threshold (0.0–1.0] |
-| `--repetition-penalty F` | 1.0 | Penalize repeated tokens (> 1.0 reduces repetition) |
+| `--max-tokens N` | 256 | Maximum number of tokens to generate |
+| `--temperature F` | 0.8 | Randomness (0 = deterministic, higher = more random) |
+| `--top-k N` | (off) | Sample from top N most likely tokens |
+| `--top-p F` | (off) | Nucleus sampling threshold (0.0–1.0] |
+| `--repetition-penalty F` | (off) | Penalize repeated tokens (> 1.0 reduces repetition) |
 
 **Example with all sampling options:**
 
@@ -377,6 +455,9 @@ GGUF models support any architecture embedded in the GGUF file.
 | `Unsupported SafeTensors model_type` | The model architecture is not yet supported — see [Supported Architectures](#supported-architectures) |
 | Slow generation | Use a release build: `cargo build --release -p rustml-cli` |
 | `--stream is not supported with --batch-file` | Remove `--stream` when using batch mode |
+| `--interactive cannot be used with --prompt` | `--interactive` is a standalone mode — remove `--prompt` |
+| `--interactive cannot be used with --batch-file` | `--interactive` is a standalone mode — remove `--batch-file` |
+| `[warn] no chat template found in model` | The model doesn't have a recognized chat template; interactive mode will still work but multi-turn formatting may be suboptimal |
 | `Key not found` (GGUF meta) | The metadata key does not exist in this GGUF file — list all keys with `sweai gguf meta model.gguf` |
 
 ---
