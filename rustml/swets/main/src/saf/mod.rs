@@ -13,13 +13,23 @@ pub use crate::core::loss::cross_entropy::CrossEntropyLoss;
 pub use crate::core::loss::huber::HuberLoss;
 pub use crate::core::loss::mae::MAELoss;
 pub use crate::core::loss::mse::MSELoss;
+pub use crate::core::loss::quantile::QuantileLoss;
 
 // Neural network layers
 pub use crate::core::nn::activations::{GELU, ReLU, SiLU, Sigmoid, Tanh};
+pub use crate::core::nn::batch_norm::BatchNorm1d;
+pub use crate::core::nn::conv1d::Conv1d;
 pub use crate::core::nn::dropout::Dropout;
 pub use crate::core::nn::layer_norm::LayerNorm;
 pub use crate::core::nn::linear::Linear;
+pub use crate::core::nn::lstm::LSTM;
 pub use crate::core::nn::sequential::Sequential;
+
+// Models
+pub use crate::core::models::lstm_forecast::LSTMForecast;
+pub use crate::core::models::nbeats::NBeats;
+pub use crate::core::models::tcn::TCN;
+pub use crate::core::models::transformer::TimeSeriesTransformer;
 
 // Optimizers
 pub use crate::core::optim::adam::Adam;

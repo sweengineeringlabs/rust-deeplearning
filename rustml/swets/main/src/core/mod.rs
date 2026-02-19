@@ -1,4 +1,5 @@
 pub mod loss;
+pub mod models;
 pub mod nn;
 pub mod ops;
 pub mod optim;
