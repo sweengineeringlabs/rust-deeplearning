@@ -1,5 +1,18 @@
 # Backlog
 
+## Performance Optimization
+
+> Identified via hierarchical performance tracing. See [perf_trace_bottleneck_report.md](../7-operations/audit/perf_trace_bottleneck_report.md) for full profiling data.
+
+- [x] **Gemma 3 lm_head projection is a major bottleneck (262K vocab)** — The final output projection `[1,1152]x[1152,262144]` F32 matmul costs ~100ms/step, consuming 27% of total decode time. Fixed: runtime Q8_0 quantization of lm_head weights reduces memory bandwidth ~4x; parallel F32 gemv path for M=1 decode added to `matmul_inner()`.
+  - Files: `rustml/nlp/main/src/core/model.rs`, `rustml/nn/main/src/core/linear.rs`, `rustml/core/main/src/core/tensor/ops.rs`, `rustml/cli/src/cmd/infer.rs`, `rustml/nlp/main/src/bin/infer.rs`
+
+- [x] **FFN linear projections dominate per-layer time (67-93%)** — Feed-forward networks consume the majority of per-layer compute across all models. Fixed: column-parallel quantized matmul for M≤4 decode in all 5 quantized matmul functions. When M=1, parallelizes over out_features (N dimension) instead of rows (M dimension), enabling rayon utilization during decode.
+  - Files: `rustml/quant/main/src/core/quantize.rs`
+
+- [x] **GPT-2 lm_head projection overhead (50K vocab)** — The `[1,768]x[768,50257]` matmul costs ~13ms/step, consuming 20% of decode time. Fixed: same lm_head Q8_0 quantization and parallel gemv path as Gemma 3 fix.
+  - Files: `rustml/nlp/main/src/core/model.rs`, `rustml/nn/main/src/core/linear.rs`, `rustml/core/main/src/core/tensor/ops.rs`
+
 ## Model Format Support
 
 - [ ] **ONNX runtime/loading is not implemented** — No `.onnx` model loading exists in the production crates. SafeTensors and GGUF are supported; ONNX is not. Requires adding an ONNX parser or integrating an ONNX runtime (e.g., `ort` crate) to load and execute ONNX graphs.

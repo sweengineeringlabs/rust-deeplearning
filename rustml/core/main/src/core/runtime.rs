@@ -6,6 +6,10 @@ pub(crate) static SOFTMAX_PAR_THRESHOLD: AtomicUsize = AtomicUsize::new(4096);
 /// Global threshold for switching batched_matmul from sequential to parallel (rayon).
 pub(crate) static BATCHED_MATMUL_PAR_THRESHOLD: AtomicUsize = AtomicUsize::new(4096);
 
+/// Global threshold for switching F32 gemv (M=1) to custom parallel path.
+/// When N >= this threshold, use parallel gemv instead of faer.
+pub(crate) static GEMV_PAR_THRESHOLD: AtomicUsize = AtomicUsize::new(4096);
+
 /// Runtime configuration for parallelism and thread management.
 /// Must be applied (via `apply()`) before any computation to take effect.
 pub struct RuntimeConfig {
@@ -16,6 +20,8 @@ pub struct RuntimeConfig {
     pub softmax_par_threshold: usize,
     /// Element count below which batched_matmul uses a sequential path (default 4096).
     pub batched_matmul_par_threshold: usize,
+    /// Minimum N (out_features) for parallel F32 gemv when M=1 (default 4096).
+    pub gemv_par_threshold: usize,
 }
 
 impl Default for RuntimeConfig {
@@ -24,6 +30,7 @@ impl Default for RuntimeConfig {
             num_threads: 0,
             softmax_par_threshold: 4096,
             batched_matmul_par_threshold: 4096,
+            gemv_par_threshold: 4096,
         }
     }
 }
@@ -53,6 +60,7 @@ impl RuntimeConfig {
         // Write optimization thresholds to global atomics
         SOFTMAX_PAR_THRESHOLD.store(self.softmax_par_threshold, Ordering::Relaxed);
         BATCHED_MATMUL_PAR_THRESHOLD.store(self.batched_matmul_par_threshold, Ordering::Relaxed);
+        GEMV_PAR_THRESHOLD.store(self.gemv_par_threshold, Ordering::Relaxed);
 
         // Log SIMD capabilities
         let simd = Self::detect_simd();
@@ -106,11 +114,13 @@ impl OptProfile {
             OptProfile::Baseline => RuntimeConfig {
                 softmax_par_threshold: usize::MAX,
                 batched_matmul_par_threshold: usize::MAX,
+                gemv_par_threshold: usize::MAX,
                 ..RuntimeConfig::default()
             },
             OptProfile::Aggressive => RuntimeConfig {
                 softmax_par_threshold: 1024,
                 batched_matmul_par_threshold: 1024,
+                gemv_par_threshold: 1024,
                 ..RuntimeConfig::default()
             },
         }
@@ -137,6 +147,7 @@ mod tests {
         assert_eq!(config.num_threads, 0);
         assert_eq!(config.softmax_par_threshold, 4096);
         assert_eq!(config.batched_matmul_par_threshold, 4096);
+        assert_eq!(config.gemv_par_threshold, 4096);
     }
 
     #[test]
@@ -151,6 +162,7 @@ mod tests {
         let cfg = p.runtime_config();
         assert_eq!(cfg.softmax_par_threshold, 4096);
         assert_eq!(cfg.batched_matmul_par_threshold, 4096);
+        assert_eq!(cfg.gemv_par_threshold, 4096);
         assert!(p.use_inplace_ops());
         assert!(p.use_buffered_sampling());
     }
@@ -161,6 +173,7 @@ mod tests {
         let cfg = p.runtime_config();
         assert_eq!(cfg.softmax_par_threshold, usize::MAX);
         assert_eq!(cfg.batched_matmul_par_threshold, usize::MAX);
+        assert_eq!(cfg.gemv_par_threshold, usize::MAX);
         assert!(!p.use_inplace_ops());
         assert!(!p.use_buffered_sampling());
     }
@@ -171,6 +184,7 @@ mod tests {
         let cfg = p.runtime_config();
         assert_eq!(cfg.softmax_par_threshold, 1024);
         assert_eq!(cfg.batched_matmul_par_threshold, 1024);
+        assert_eq!(cfg.gemv_par_threshold, 1024);
         assert!(p.use_inplace_ops());
         assert!(p.use_buffered_sampling());
     }

@@ -219,44 +219,85 @@ pub fn matmul_f32_q8(
 
     let mut output = vec![0.0f32; m * out_features];
 
-    output
-        .par_chunks_mut(out_features)
-        .enumerate()
-        .for_each(|(row_idx, out_row)| {
+    if m <= 4 {
+        // Small-M path: parallelize over output columns (N dimension)
+        let col_chunk = (out_features / rayon::current_num_threads()).max(TILE_N);
+        for row_idx in 0..m {
             let input_row = &input_data[row_idx * in_features..(row_idx + 1) * in_features];
+            let out_row = &mut output[row_idx * out_features..(row_idx + 1) * out_features];
 
-            let mut col_idx = 0;
-            while col_idx < out_features {
-                let tile_end = (col_idx + TILE_N).min(out_features);
-                for c in col_idx..tile_end {
-                    let w_row_offset = c * row_bytes;
-                    let mut dot = 0.0f32;
+            out_row.par_chunks_mut(col_chunk)
+                .enumerate()
+                .for_each(|(chunk_idx, out_chunk)| {
+                    let col_start = chunk_idx * col_chunk;
+                    for (local_c, out_val) in out_chunk.iter_mut().enumerate() {
+                        let c = col_start + local_c;
+                        let w_row_offset = c * row_bytes;
+                        let mut dot = 0.0f32;
 
-                    for block_idx in 0..blocks_per_row {
-                        let block_offset = w_row_offset + block_idx * Q8_0_BLOCK_BYTES;
-                        let scale_f16 = f16::from_le_bytes([
-                            weight_bytes[block_offset],
-                            weight_bytes[block_offset + 1],
-                        ]);
-                        let scale = scale_f16.to_f32();
-                        let input_offset = block_idx * Q8_0_BLOCK_SIZE;
-                        let q_bytes = &weight_bytes[block_offset + 2..block_offset + 2 + Q8_0_BLOCK_SIZE];
-                        // SAFETY: q_bytes contains i8 values stored as u8
-                        let q_i8: &[i8] = unsafe {
-                            std::slice::from_raw_parts(q_bytes.as_ptr() as *const i8, Q8_0_BLOCK_SIZE)
-                        };
-                        dot += simd::dot_q8_block(
-                            &input_row[input_offset..input_offset + Q8_0_BLOCK_SIZE],
-                            q_i8,
-                            scale,
-                        );
+                        for block_idx in 0..blocks_per_row {
+                            let block_offset = w_row_offset + block_idx * Q8_0_BLOCK_BYTES;
+                            let scale_f16 = f16::from_le_bytes([
+                                weight_bytes[block_offset],
+                                weight_bytes[block_offset + 1],
+                            ]);
+                            let scale = scale_f16.to_f32();
+                            let input_offset = block_idx * Q8_0_BLOCK_SIZE;
+                            let q_bytes = &weight_bytes[block_offset + 2..block_offset + 2 + Q8_0_BLOCK_SIZE];
+                            let q_i8: &[i8] = unsafe {
+                                std::slice::from_raw_parts(q_bytes.as_ptr() as *const i8, Q8_0_BLOCK_SIZE)
+                            };
+                            dot += simd::dot_q8_block(
+                                &input_row[input_offset..input_offset + Q8_0_BLOCK_SIZE],
+                                q_i8,
+                                scale,
+                            );
+                        }
+
+                        *out_val = dot;
                     }
+                });
+        }
+    } else {
+        // Large-M path: parallelize over output rows
+        output
+            .par_chunks_mut(out_features)
+            .enumerate()
+            .for_each(|(row_idx, out_row)| {
+                let input_row = &input_data[row_idx * in_features..(row_idx + 1) * in_features];
 
-                    out_row[c] = dot;
+                let mut col_idx = 0;
+                while col_idx < out_features {
+                    let tile_end = (col_idx + TILE_N).min(out_features);
+                    for c in col_idx..tile_end {
+                        let w_row_offset = c * row_bytes;
+                        let mut dot = 0.0f32;
+
+                        for block_idx in 0..blocks_per_row {
+                            let block_offset = w_row_offset + block_idx * Q8_0_BLOCK_BYTES;
+                            let scale_f16 = f16::from_le_bytes([
+                                weight_bytes[block_offset],
+                                weight_bytes[block_offset + 1],
+                            ]);
+                            let scale = scale_f16.to_f32();
+                            let input_offset = block_idx * Q8_0_BLOCK_SIZE;
+                            let q_bytes = &weight_bytes[block_offset + 2..block_offset + 2 + Q8_0_BLOCK_SIZE];
+                            let q_i8: &[i8] = unsafe {
+                                std::slice::from_raw_parts(q_bytes.as_ptr() as *const i8, Q8_0_BLOCK_SIZE)
+                            };
+                            dot += simd::dot_q8_block(
+                                &input_row[input_offset..input_offset + Q8_0_BLOCK_SIZE],
+                                q_i8,
+                                scale,
+                            );
+                        }
+
+                        out_row[c] = dot;
+                    }
+                    col_idx = tile_end;
                 }
-                col_idx = tile_end;
-            }
-        });
+            });
+    }
 
     if let Some(t) = _t {
         log::trace!("[perf] quant::matmul_f32_q8 [{}x{}]x[{}x{}] {:.3}ms",
@@ -288,40 +329,79 @@ pub fn matmul_f32_q4(
 
     let mut output = vec![0.0f32; m * out_features];
 
-    output
-        .par_chunks_mut(out_features)
-        .enumerate()
-        .for_each(|(row_idx, out_row)| {
+    if m <= 4 {
+        // Small-M path: parallelize over output columns (N dimension)
+        let col_chunk = (out_features / rayon::current_num_threads()).max(TILE_N);
+        for row_idx in 0..m {
             let input_row = &input_data[row_idx * in_features..(row_idx + 1) * in_features];
+            let out_row = &mut output[row_idx * out_features..(row_idx + 1) * out_features];
 
-            let mut col_idx = 0;
-            while col_idx < out_features {
-                let tile_end = (col_idx + TILE_N).min(out_features);
-                for c in col_idx..tile_end {
-                    let w_row_offset = c * row_bytes;
-                    let mut dot = 0.0f32;
+            out_row.par_chunks_mut(col_chunk)
+                .enumerate()
+                .for_each(|(chunk_idx, out_chunk)| {
+                    let col_start = chunk_idx * col_chunk;
+                    for (local_c, out_val) in out_chunk.iter_mut().enumerate() {
+                        let c = col_start + local_c;
+                        let w_row_offset = c * row_bytes;
+                        let mut dot = 0.0f32;
 
-                    for block_idx in 0..blocks_per_row {
-                        let block_offset = w_row_offset + block_idx * Q4_0_BLOCK_BYTES;
-                        let scale_f16 = f16::from_le_bytes([
-                            weight_bytes[block_offset],
-                            weight_bytes[block_offset + 1],
-                        ]);
-                        let scale = scale_f16.to_f32();
-                        let input_offset = block_idx * Q4_0_BLOCK_SIZE;
-                        let packed = &weight_bytes[block_offset + 2..block_offset + 2 + 16];
-                        dot += simd::dot_q4_block(
-                            &input_row[input_offset..input_offset + Q4_0_BLOCK_SIZE],
-                            packed,
-                            scale,
-                        );
+                        for block_idx in 0..blocks_per_row {
+                            let block_offset = w_row_offset + block_idx * Q4_0_BLOCK_BYTES;
+                            let scale_f16 = f16::from_le_bytes([
+                                weight_bytes[block_offset],
+                                weight_bytes[block_offset + 1],
+                            ]);
+                            let scale = scale_f16.to_f32();
+                            let input_offset = block_idx * Q4_0_BLOCK_SIZE;
+                            let packed = &weight_bytes[block_offset + 2..block_offset + 2 + 16];
+                            dot += simd::dot_q4_block(
+                                &input_row[input_offset..input_offset + Q4_0_BLOCK_SIZE],
+                                packed,
+                                scale,
+                            );
+                        }
+
+                        *out_val = dot;
                     }
+                });
+        }
+    } else {
+        // Large-M path: parallelize over output rows
+        output
+            .par_chunks_mut(out_features)
+            .enumerate()
+            .for_each(|(row_idx, out_row)| {
+                let input_row = &input_data[row_idx * in_features..(row_idx + 1) * in_features];
 
-                    out_row[c] = dot;
+                let mut col_idx = 0;
+                while col_idx < out_features {
+                    let tile_end = (col_idx + TILE_N).min(out_features);
+                    for c in col_idx..tile_end {
+                        let w_row_offset = c * row_bytes;
+                        let mut dot = 0.0f32;
+
+                        for block_idx in 0..blocks_per_row {
+                            let block_offset = w_row_offset + block_idx * Q4_0_BLOCK_BYTES;
+                            let scale_f16 = f16::from_le_bytes([
+                                weight_bytes[block_offset],
+                                weight_bytes[block_offset + 1],
+                            ]);
+                            let scale = scale_f16.to_f32();
+                            let input_offset = block_idx * Q4_0_BLOCK_SIZE;
+                            let packed = &weight_bytes[block_offset + 2..block_offset + 2 + 16];
+                            dot += simd::dot_q4_block(
+                                &input_row[input_offset..input_offset + Q4_0_BLOCK_SIZE],
+                                packed,
+                                scale,
+                            );
+                        }
+
+                        out_row[c] = dot;
+                    }
+                    col_idx = tile_end;
                 }
-                col_idx = tile_end;
-            }
-        });
+            });
+    }
 
     if let Some(t) = _t {
         log::trace!("[perf] quant::matmul_f32_q4 [{}x{}]x[{}x{}] {:.3}ms",
@@ -354,53 +434,100 @@ pub fn matmul_f32_q4_native(
 
     let mut output = vec![0.0f32; m * out_features];
 
-    output
-        .par_chunks_mut(out_features)
-        .enumerate()
-        .for_each(|(row_idx, out_row)| {
+    if m <= 4 {
+        // Small-M path: parallelize over output columns (N dimension)
+        // Quantize input row once before the parallel region, then share read-only buffers.
+        let col_chunk = (out_features / rayon::current_num_threads()).max(TILE_N);
+        for row_idx in 0..m {
             let input_row = &input_data[row_idx * in_features..(row_idx + 1) * in_features];
+            let out_row = &mut output[row_idx * out_features..(row_idx + 1) * out_features];
 
-            // Thread-local Q8_0 buffers
             let mut q8_buf = vec![0u8; blocks_per_row * Q8_0_BLOCK_BYTES];
             let mut q8_scales = vec![0.0f32; blocks_per_row];
-
             quantize_row_q8_0(input_row, &mut q8_buf, &mut q8_scales);
 
-            let mut col_idx = 0;
-            while col_idx < out_features {
-                let tile_end = (col_idx + TILE_N).min(out_features);
-                for c in col_idx..tile_end {
-                    let w_row_offset = c * row_bytes;
-                    let mut dot = 0.0f32;
+            out_row.par_chunks_mut(col_chunk)
+                .enumerate()
+                .for_each(|(chunk_idx, out_chunk)| {
+                    let col_start = chunk_idx * col_chunk;
+                    for (local_c, out_val) in out_chunk.iter_mut().enumerate() {
+                        let c = col_start + local_c;
+                        let w_row_offset = c * row_bytes;
+                        let mut dot = 0.0f32;
 
-                    for block_idx in 0..blocks_per_row {
-                        let block_offset = w_row_offset + block_idx * Q4_0_BLOCK_BYTES;
-                        let w_scale_f16 = f16::from_le_bytes([
-                            weight_bytes[block_offset],
-                            weight_bytes[block_offset + 1],
-                        ]);
-                        let w_scale = w_scale_f16.to_f32();
-                        let packed_q4 = &weight_bytes[block_offset + 2..block_offset + 2 + 16];
+                        for block_idx in 0..blocks_per_row {
+                            let block_offset = w_row_offset + block_idx * Q4_0_BLOCK_BYTES;
+                            let w_scale_f16 = f16::from_le_bytes([
+                                weight_bytes[block_offset],
+                                weight_bytes[block_offset + 1],
+                            ]);
+                            let w_scale = w_scale_f16.to_f32();
+                            let packed_q4 = &weight_bytes[block_offset + 2..block_offset + 2 + 16];
 
-                        let q8_block_offset = block_idx * Q8_0_BLOCK_BYTES;
-                        // SAFETY: q8_buf[+2..+34] contains i8 values stored as u8
-                        let q8_i8: &[i8] = unsafe {
-                            std::slice::from_raw_parts(
-                                q8_buf[q8_block_offset + 2..q8_block_offset + 2 + Q8_0_BLOCK_SIZE]
-                                    .as_ptr() as *const i8,
-                                Q8_0_BLOCK_SIZE,
-                            )
-                        };
+                            let q8_block_offset = block_idx * Q8_0_BLOCK_BYTES;
+                            let q8_i8: &[i8] = unsafe {
+                                std::slice::from_raw_parts(
+                                    q8_buf[q8_block_offset + 2..q8_block_offset + 2 + Q8_0_BLOCK_SIZE]
+                                        .as_ptr() as *const i8,
+                                    Q8_0_BLOCK_SIZE,
+                                )
+                            };
 
-                        let int_dot = simd::dot_q4q8_block(packed_q4, q8_i8);
-                        dot += (int_dot as f32) * q8_scales[block_idx] * w_scale;
+                            let int_dot = simd::dot_q4q8_block(packed_q4, q8_i8);
+                            dot += (int_dot as f32) * q8_scales[block_idx] * w_scale;
+                        }
+
+                        *out_val = dot;
                     }
+                });
+        }
+    } else {
+        // Large-M path: parallelize over output rows
+        output
+            .par_chunks_mut(out_features)
+            .enumerate()
+            .for_each(|(row_idx, out_row)| {
+                let input_row = &input_data[row_idx * in_features..(row_idx + 1) * in_features];
 
-                    out_row[c] = dot;
+                let mut q8_buf = vec![0u8; blocks_per_row * Q8_0_BLOCK_BYTES];
+                let mut q8_scales = vec![0.0f32; blocks_per_row];
+                quantize_row_q8_0(input_row, &mut q8_buf, &mut q8_scales);
+
+                let mut col_idx = 0;
+                while col_idx < out_features {
+                    let tile_end = (col_idx + TILE_N).min(out_features);
+                    for c in col_idx..tile_end {
+                        let w_row_offset = c * row_bytes;
+                        let mut dot = 0.0f32;
+
+                        for block_idx in 0..blocks_per_row {
+                            let block_offset = w_row_offset + block_idx * Q4_0_BLOCK_BYTES;
+                            let w_scale_f16 = f16::from_le_bytes([
+                                weight_bytes[block_offset],
+                                weight_bytes[block_offset + 1],
+                            ]);
+                            let w_scale = w_scale_f16.to_f32();
+                            let packed_q4 = &weight_bytes[block_offset + 2..block_offset + 2 + 16];
+
+                            let q8_block_offset = block_idx * Q8_0_BLOCK_BYTES;
+                            let q8_i8: &[i8] = unsafe {
+                                std::slice::from_raw_parts(
+                                    q8_buf[q8_block_offset + 2..q8_block_offset + 2 + Q8_0_BLOCK_SIZE]
+                                        .as_ptr() as *const i8,
+                                    Q8_0_BLOCK_SIZE,
+                                )
+                            };
+
+                            let int_dot = simd::dot_q4q8_block(packed_q4, q8_i8);
+                            dot += (int_dot as f32) * q8_scales[block_idx] * w_scale;
+                        }
+
+                        out_row[c] = dot;
+                    }
+                    col_idx = tile_end;
                 }
-                col_idx = tile_end;
-            }
-        });
+            });
+    }
 
     if let Some(t) = _t {
         log::trace!("[perf] quant::matmul_f32_q4_native [{}x{}]x[{}x{}] {:.3}ms",
@@ -462,51 +589,99 @@ pub fn matmul_f32_q4_1(
 
     let mut output = vec![0.0f32; m * out_features];
 
-    output
-        .par_chunks_mut(out_features)
-        .enumerate()
-        .for_each(|(row_idx, out_row)| {
+    if m <= 4 {
+        // Small-M path: parallelize over output columns (N dimension)
+        let col_chunk = (out_features / rayon::current_num_threads()).max(TILE_N);
+        for row_idx in 0..m {
             let input_row = &input_data[row_idx * in_features..(row_idx + 1) * in_features];
+            let out_row = &mut output[row_idx * out_features..(row_idx + 1) * out_features];
 
-            let mut col_idx = 0;
-            while col_idx < out_features {
-                let tile_end = (col_idx + TILE_N).min(out_features);
-                for c in col_idx..tile_end {
-                    let w_row_offset = c * row_bytes;
-                    let mut dot = 0.0f32;
+            out_row.par_chunks_mut(col_chunk)
+                .enumerate()
+                .for_each(|(chunk_idx, out_chunk)| {
+                    let col_start = chunk_idx * col_chunk;
+                    for (local_c, out_val) in out_chunk.iter_mut().enumerate() {
+                        let c = col_start + local_c;
+                        let w_row_offset = c * row_bytes;
+                        let mut dot = 0.0f32;
 
-                    for block_idx in 0..blocks_per_row {
-                        let block_offset = w_row_offset + block_idx * Q4_1_BLOCK_BYTES;
-                        let d = f16::from_le_bytes([
-                            weight_bytes[block_offset],
-                            weight_bytes[block_offset + 1],
-                        ]).to_f32();
-                        let m_val = f16::from_le_bytes([
-                            weight_bytes[block_offset + 2],
-                            weight_bytes[block_offset + 3],
-                        ]).to_f32();
-                        let input_offset = block_idx * Q4_1_BLOCK_SIZE;
-                        let packed = &weight_bytes[block_offset + 4..block_offset + 4 + 16];
+                        for block_idx in 0..blocks_per_row {
+                            let block_offset = w_row_offset + block_idx * Q4_1_BLOCK_BYTES;
+                            let d = f16::from_le_bytes([
+                                weight_bytes[block_offset],
+                                weight_bytes[block_offset + 1],
+                            ]).to_f32();
+                            let m_val = f16::from_le_bytes([
+                                weight_bytes[block_offset + 2],
+                                weight_bytes[block_offset + 3],
+                            ]).to_f32();
+                            let input_offset = block_idx * Q4_1_BLOCK_SIZE;
+                            let packed = &weight_bytes[block_offset + 4..block_offset + 4 + 16];
 
-                        // Dequantize-then-dot path
-                        let mut block_dot = 0.0f32;
-                        let mut input_sum = 0.0f32;
-                        for j in 0..16 {
-                            let lo = (packed[j] & 0x0F) as f32;
-                            let hi = ((packed[j] >> 4) & 0x0F) as f32;
-                            block_dot += input_row[input_offset + j] * lo;
-                            block_dot += input_row[input_offset + j + 16] * hi;
-                            input_sum += input_row[input_offset + j];
-                            input_sum += input_row[input_offset + j + 16];
+                            let mut block_dot = 0.0f32;
+                            let mut input_sum = 0.0f32;
+                            for j in 0..16 {
+                                let lo = (packed[j] & 0x0F) as f32;
+                                let hi = ((packed[j] >> 4) & 0x0F) as f32;
+                                block_dot += input_row[input_offset + j] * lo;
+                                block_dot += input_row[input_offset + j + 16] * hi;
+                                input_sum += input_row[input_offset + j];
+                                input_sum += input_row[input_offset + j + 16];
+                            }
+                            dot += d * block_dot + m_val * input_sum;
                         }
-                        dot += d * block_dot + m_val * input_sum;
-                    }
 
-                    out_row[c] = dot;
+                        *out_val = dot;
+                    }
+                });
+        }
+    } else {
+        // Large-M path: parallelize over output rows
+        output
+            .par_chunks_mut(out_features)
+            .enumerate()
+            .for_each(|(row_idx, out_row)| {
+                let input_row = &input_data[row_idx * in_features..(row_idx + 1) * in_features];
+
+                let mut col_idx = 0;
+                while col_idx < out_features {
+                    let tile_end = (col_idx + TILE_N).min(out_features);
+                    for c in col_idx..tile_end {
+                        let w_row_offset = c * row_bytes;
+                        let mut dot = 0.0f32;
+
+                        for block_idx in 0..blocks_per_row {
+                            let block_offset = w_row_offset + block_idx * Q4_1_BLOCK_BYTES;
+                            let d = f16::from_le_bytes([
+                                weight_bytes[block_offset],
+                                weight_bytes[block_offset + 1],
+                            ]).to_f32();
+                            let m_val = f16::from_le_bytes([
+                                weight_bytes[block_offset + 2],
+                                weight_bytes[block_offset + 3],
+                            ]).to_f32();
+                            let input_offset = block_idx * Q4_1_BLOCK_SIZE;
+                            let packed = &weight_bytes[block_offset + 4..block_offset + 4 + 16];
+
+                            let mut block_dot = 0.0f32;
+                            let mut input_sum = 0.0f32;
+                            for j in 0..16 {
+                                let lo = (packed[j] & 0x0F) as f32;
+                                let hi = ((packed[j] >> 4) & 0x0F) as f32;
+                                block_dot += input_row[input_offset + j] * lo;
+                                block_dot += input_row[input_offset + j + 16] * hi;
+                                input_sum += input_row[input_offset + j];
+                                input_sum += input_row[input_offset + j + 16];
+                            }
+                            dot += d * block_dot + m_val * input_sum;
+                        }
+
+                        out_row[c] = dot;
+                    }
+                    col_idx = tile_end;
                 }
-                col_idx = tile_end;
-            }
-        });
+            });
+    }
 
     if let Some(t) = _t {
         log::trace!("[perf] quant::matmul_f32_q4_1 [{}x{}]x[{}x{}] {:.3}ms",
@@ -539,56 +714,106 @@ pub fn matmul_f32_q4_1_native(
 
     let mut output = vec![0.0f32; m * out_features];
 
-    output
-        .par_chunks_mut(out_features)
-        .enumerate()
-        .for_each(|(row_idx, out_row)| {
+    if m <= 4 {
+        // Small-M path: parallelize over output columns (N dimension)
+        // Quantize input row once before the parallel region, then share read-only buffers.
+        let col_chunk = (out_features / rayon::current_num_threads()).max(TILE_N);
+        for row_idx in 0..m {
             let input_row = &input_data[row_idx * in_features..(row_idx + 1) * in_features];
+            let out_row = &mut output[row_idx * out_features..(row_idx + 1) * out_features];
 
-            // Thread-local Q8_0 buffers
             let mut q8_buf = vec![0u8; blocks_per_row * Q8_0_BLOCK_BYTES];
             let mut q8_scales = vec![0.0f32; blocks_per_row];
-
             quantize_row_q8_0(input_row, &mut q8_buf, &mut q8_scales);
 
-            let mut col_idx = 0;
-            while col_idx < out_features {
-                let tile_end = (col_idx + TILE_N).min(out_features);
-                for c in col_idx..tile_end {
-                    let w_row_offset = c * row_bytes;
-                    let mut dot = 0.0f32;
+            out_row.par_chunks_mut(col_chunk)
+                .enumerate()
+                .for_each(|(chunk_idx, out_chunk)| {
+                    let col_start = chunk_idx * col_chunk;
+                    for (local_c, out_val) in out_chunk.iter_mut().enumerate() {
+                        let c = col_start + local_c;
+                        let w_row_offset = c * row_bytes;
+                        let mut dot = 0.0f32;
 
-                    for block_idx in 0..blocks_per_row {
-                        let block_offset = w_row_offset + block_idx * Q4_1_BLOCK_BYTES;
-                        let d = f16::from_le_bytes([
-                            weight_bytes[block_offset],
-                            weight_bytes[block_offset + 1],
-                        ]).to_f32();
-                        let m_val = f16::from_le_bytes([
-                            weight_bytes[block_offset + 2],
-                            weight_bytes[block_offset + 3],
-                        ]).to_f32();
-                        let packed_q4 = &weight_bytes[block_offset + 4..block_offset + 4 + 16];
+                        for block_idx in 0..blocks_per_row {
+                            let block_offset = w_row_offset + block_idx * Q4_1_BLOCK_BYTES;
+                            let d = f16::from_le_bytes([
+                                weight_bytes[block_offset],
+                                weight_bytes[block_offset + 1],
+                            ]).to_f32();
+                            let m_val = f16::from_le_bytes([
+                                weight_bytes[block_offset + 2],
+                                weight_bytes[block_offset + 3],
+                            ]).to_f32();
+                            let packed_q4 = &weight_bytes[block_offset + 4..block_offset + 4 + 16];
 
-                        let q8_block_offset = block_idx * Q8_0_BLOCK_BYTES;
-                        // SAFETY: q8_buf[+2..+34] contains i8 values stored as u8
-                        let q8_i8: &[i8] = unsafe {
-                            std::slice::from_raw_parts(
-                                q8_buf[q8_block_offset + 2..q8_block_offset + 2 + Q8_0_BLOCK_SIZE]
-                                    .as_ptr() as *const i8,
-                                Q8_0_BLOCK_SIZE,
-                            )
-                        };
+                            let q8_block_offset = block_idx * Q8_0_BLOCK_BYTES;
+                            let q8_i8: &[i8] = unsafe {
+                                std::slice::from_raw_parts(
+                                    q8_buf[q8_block_offset + 2..q8_block_offset + 2 + Q8_0_BLOCK_SIZE]
+                                        .as_ptr() as *const i8,
+                                    Q8_0_BLOCK_SIZE,
+                                )
+                            };
 
-                        let (unsigned_dot, q8_sum) = simd::dot_q4_1_q8_block(packed_q4, q8_i8);
-                        dot += q8_scales[block_idx] * (d * unsigned_dot as f32 + m_val * q8_sum as f32);
+                            let (unsigned_dot, q8_sum) = simd::dot_q4_1_q8_block(packed_q4, q8_i8);
+                            dot += q8_scales[block_idx] * (d * unsigned_dot as f32 + m_val * q8_sum as f32);
+                        }
+
+                        *out_val = dot;
                     }
+                });
+        }
+    } else {
+        // Large-M path: parallelize over output rows
+        output
+            .par_chunks_mut(out_features)
+            .enumerate()
+            .for_each(|(row_idx, out_row)| {
+                let input_row = &input_data[row_idx * in_features..(row_idx + 1) * in_features];
 
-                    out_row[c] = dot;
+                let mut q8_buf = vec![0u8; blocks_per_row * Q8_0_BLOCK_BYTES];
+                let mut q8_scales = vec![0.0f32; blocks_per_row];
+                quantize_row_q8_0(input_row, &mut q8_buf, &mut q8_scales);
+
+                let mut col_idx = 0;
+                while col_idx < out_features {
+                    let tile_end = (col_idx + TILE_N).min(out_features);
+                    for c in col_idx..tile_end {
+                        let w_row_offset = c * row_bytes;
+                        let mut dot = 0.0f32;
+
+                        for block_idx in 0..blocks_per_row {
+                            let block_offset = w_row_offset + block_idx * Q4_1_BLOCK_BYTES;
+                            let d = f16::from_le_bytes([
+                                weight_bytes[block_offset],
+                                weight_bytes[block_offset + 1],
+                            ]).to_f32();
+                            let m_val = f16::from_le_bytes([
+                                weight_bytes[block_offset + 2],
+                                weight_bytes[block_offset + 3],
+                            ]).to_f32();
+                            let packed_q4 = &weight_bytes[block_offset + 4..block_offset + 4 + 16];
+
+                            let q8_block_offset = block_idx * Q8_0_BLOCK_BYTES;
+                            let q8_i8: &[i8] = unsafe {
+                                std::slice::from_raw_parts(
+                                    q8_buf[q8_block_offset + 2..q8_block_offset + 2 + Q8_0_BLOCK_SIZE]
+                                        .as_ptr() as *const i8,
+                                    Q8_0_BLOCK_SIZE,
+                                )
+                            };
+
+                            let (unsigned_dot, q8_sum) = simd::dot_q4_1_q8_block(packed_q4, q8_i8);
+                            dot += q8_scales[block_idx] * (d * unsigned_dot as f32 + m_val * q8_sum as f32);
+                        }
+
+                        out_row[c] = dot;
+                    }
+                    col_idx = tile_end;
                 }
-                col_idx = tile_end;
-            }
-        });
+            });
+    }
 
     if let Some(t) = _t {
         log::trace!("[perf] quant::matmul_f32_q4_1_native [{}x{}]x[{}x{}] {:.3}ms",

@@ -845,6 +845,14 @@ impl LlmModel {
         })
     }
 
+    /// Quantize the lm_head (output projection) weight from F32 to Q8_0.
+    /// Reduces memory bandwidth ~4x for large-vocabulary models.
+    /// No-op if weight is already quantized or alignment requirements aren't met.
+    pub fn quantize_lm_head(&mut self) -> NlpResult<()> {
+        self.output.quantize_weight_q8()?;
+        Ok(())
+    }
+
     /// Apply an optimization profile across all layers.
     ///
     /// Sets `use_inplace_ops` on each TransformerBlock and

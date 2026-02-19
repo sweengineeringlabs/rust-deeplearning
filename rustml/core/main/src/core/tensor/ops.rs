@@ -6,6 +6,7 @@ use crate::core::shape::Shape;
 use super::tensor::{Tensor, f32_vec_to_bytes, TensorShape};
 use std::time::Instant;
 use smallvec::{smallvec, SmallVec};
+use rayon::prelude::*;
 
 // ==================== SIMD-accelerated kernels ====================
 
@@ -784,6 +785,38 @@ impl Tensor {
 
     // ==================== Matrix multiplication ====================
 
+    /// Parallel gemv for M=1 decode-time projections.
+    /// Each output[n] = dot(input[0..K], weight_row[n]).
+    /// Returns empty Vec if the weight layout is non-contiguous (caller falls through to faer).
+    fn gemv_parallel(input: &[f32], weight: &[f32], w_strides: &[usize], k: usize, n: usize) -> Vec<f32> {
+        let row_stride = w_strides[0];
+        let col_stride = w_strides[1];
+
+        if col_stride != 1 {
+            // Non-contiguous columns: fall through to faer
+            return Vec::new();
+        }
+
+        let mut output = vec![0.0f32; n];
+        let chunk_size = (n / rayon::current_num_threads()).max(1);
+        output.par_chunks_mut(chunk_size)
+            .enumerate()
+            .for_each(|(chunk_idx, out_chunk)| {
+                let n_start = chunk_idx * chunk_size;
+                for (local_n, out_val) in out_chunk.iter_mut().enumerate() {
+                    let n_idx = n_start + local_n;
+                    let w_offset = n_idx * row_stride;
+                    let w_row = &weight[w_offset..w_offset + k];
+                    let mut sum = 0.0f32;
+                    for i in 0..k {
+                        sum += input[i] * w_row[i];
+                    }
+                    *out_val = sum;
+                }
+            });
+        output
+    }
+
     /// Matrix multiplication using faer for 2D, with broadcasting for higher dims.
     pub fn matmul(&self, other: &Tensor) -> TensorResult<Tensor> {
         let _t = if log::log_enabled!(log::Level::Trace) { Some(Instant::now()) } else { None };
@@ -841,6 +874,15 @@ impl Tensor {
 
         let lhs_data = self.as_slice_f32()?;
         let rhs_data = other.as_slice_f32()?;
+
+        // Fast parallel gemv for M=1 (decode-time projections)
+        let gemv_threshold = crate::core::runtime::GEMV_PAR_THRESHOLD.load(std::sync::atomic::Ordering::Relaxed);
+        if M == 1 && N >= gemv_threshold {
+            let out_data = Self::gemv_parallel(lhs_data, rhs_data, &other.strides, K, N);
+            if !out_data.is_empty() {
+                return Ok(Tensor::new(f32_vec_to_bytes(out_data), smallvec![1usize, N], DType::F32));
+            }
+        }
 
         let mut out_data = vec![0.0f32; M * N];
 
