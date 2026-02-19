@@ -8,7 +8,7 @@ use crate::core::linear::Linear;
 use crate::core::rms_norm::RMSNorm;
 use crate::core::rope::{alibi_bias, compute_alibi_slopes, RoPEFreqs};
 use std::time::Instant;
-use rustml_core::Tensor;
+use rustml_core::{DType, Tensor};
 
 /// Multi-head attention with GQA, RoPE, ALiBi, and KV-cache support.
 ///
@@ -41,6 +41,14 @@ pub struct MultiHeadAttention {
     pub k_proj: Linear,
     pub v_proj: Linear,
     pub out_proj: Linear,
+
+    /// Fused Q+K+V projection for decode optimization.
+    /// Created by `fuse_qkv_weights()` — reduces 3 matmul dispatches to 1.
+    pub fused_qkv: Option<Linear>,
+    /// Q output dimension within fused output (= num_heads * head_dim).
+    fused_q_dim: usize,
+    /// Single KV output dimension within fused output (= num_kv_heads * head_dim).
+    fused_kv_dim: usize,
 }
 
 impl MultiHeadAttention {
@@ -114,6 +122,9 @@ impl MultiHeadAttention {
             k_proj: Linear::with_bias(d_model, kv_dim, bias),
             v_proj: Linear::with_bias(d_model, kv_dim, bias),
             out_proj: Linear::with_bias(d_model, d_model, bias),
+            fused_qkv: None,
+            fused_q_dim: 0,
+            fused_kv_dim: 0,
         })
     }
 
@@ -171,6 +182,9 @@ impl MultiHeadAttention {
             k_proj,
             v_proj,
             out_proj,
+            fused_qkv: None,
+            fused_q_dim: 0,
+            fused_kv_dim: 0,
         })
     }
 
@@ -219,6 +233,9 @@ impl MultiHeadAttention {
             k_proj,
             v_proj,
             out_proj,
+            fused_qkv: None,
+            fused_q_dim: 0,
+            fused_kv_dim: 0,
         })
     }
 
@@ -284,6 +301,42 @@ impl MultiHeadAttention {
         self.use_inplace_scaling = enabled;
     }
 
+    /// Fuse q_proj, k_proj, v_proj Q8_0 weights into a single `[q_dim+kv_dim+kv_dim, in_features]` tensor.
+    /// Reduces 3 matmul dispatches to 1 during decode. No-op if weights are not all Q8_0 or biases are present.
+    pub fn fuse_qkv_weights(&mut self) -> bool {
+        if self.q_proj.weight.dtype() != DType::Q8_0 { return false; }
+        if self.k_proj.weight.dtype() != DType::Q8_0 { return false; }
+        if self.v_proj.weight.dtype() != DType::Q8_0 { return false; }
+        if self.q_proj.bias.is_some() || self.k_proj.bias.is_some() || self.v_proj.bias.is_some() { return false; }
+        if self.q_proj.in_features != self.k_proj.in_features { return false; }
+        if self.q_proj.in_features != self.v_proj.in_features { return false; }
+
+        let q_bytes = match self.q_proj.weight.as_raw_bytes() { Ok(b) => b, Err(_) => return false };
+        let k_bytes = match self.k_proj.weight.as_raw_bytes() { Ok(b) => b, Err(_) => return false };
+        let v_bytes = match self.v_proj.weight.as_raw_bytes() { Ok(b) => b, Err(_) => return false };
+
+        let mut fused_bytes = Vec::with_capacity(q_bytes.len() + k_bytes.len() + v_bytes.len());
+        fused_bytes.extend_from_slice(q_bytes);
+        fused_bytes.extend_from_slice(k_bytes);
+        fused_bytes.extend_from_slice(v_bytes);
+
+        let in_features = self.q_proj.in_features;
+        let out_features = self.q_proj.out_features + self.k_proj.out_features + self.v_proj.out_features;
+
+        let fused_weight = Tensor::new(fused_bytes, vec![out_features, in_features], DType::Q8_0);
+        self.fused_qkv = Some(Linear {
+            weight: fused_weight,
+            bias: None,
+            in_features,
+            out_features,
+            frozen: true,
+            use_native_q4: false,
+        });
+        self.fused_q_dim = self.q_proj.out_features;
+        self.fused_kv_dim = self.k_proj.out_features;
+        true
+    }
+
     /// Forward pass without KV cache.
     ///
     /// Input: [B, S, d_model] -> Output: [B, S, d_model]
@@ -292,9 +345,21 @@ impl MultiHeadAttention {
         let seq_len = input.shape()[1];
 
         // Project inputs
-        let q = self.q_proj.forward(input)?;
-        let k = self.k_proj.forward(input)?;
-        let v = self.v_proj.forward(input)?;
+        let (q, k, v) = if let Some(ref fused) = self.fused_qkv {
+            let fused_out = fused.forward(input)?;
+            let q_end = self.fused_q_dim;
+            let k_end = q_end + self.fused_kv_dim;
+            let v_end = k_end + self.fused_kv_dim;
+            let q = fused_out.slice(-1, 0, q_end)?.contiguous()?;
+            let k = fused_out.slice(-1, q_end, k_end)?.contiguous()?;
+            let v = fused_out.slice(-1, k_end, v_end)?.contiguous()?;
+            (q, k, v)
+        } else {
+            let q = self.q_proj.forward(input)?;
+            let k = self.k_proj.forward(input)?;
+            let v = self.v_proj.forward(input)?;
+            (q, k, v)
+        };
 
         // Reshape Q: [B, S, num_heads, D] -> [B, num_heads, S, D]
         let q = q
@@ -404,9 +469,21 @@ impl MultiHeadAttention {
         let start_pos = cache.current_len;
 
         // Project
-        let q = self.q_proj.forward(input)?;
-        let k = self.k_proj.forward(input)?;
-        let v = self.v_proj.forward(input)?;
+        let (q, k, v) = if let Some(ref fused) = self.fused_qkv {
+            let fused_out = fused.forward(input)?;
+            let q_end = self.fused_q_dim;
+            let k_end = q_end + self.fused_kv_dim;
+            let v_end = k_end + self.fused_kv_dim;
+            let q = fused_out.slice(-1, 0, q_end)?.contiguous()?;
+            let k = fused_out.slice(-1, q_end, k_end)?.contiguous()?;
+            let v = fused_out.slice(-1, k_end, v_end)?.contiguous()?;
+            (q, k, v)
+        } else {
+            let q = self.q_proj.forward(input)?;
+            let k = self.k_proj.forward(input)?;
+            let v = self.v_proj.forward(input)?;
+            (q, k, v)
+        };
 
         // Reshape Q: [B, S, num_heads, D] -> [B, num_heads, S, D]
         let q = q

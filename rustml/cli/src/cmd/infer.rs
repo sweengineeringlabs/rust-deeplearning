@@ -363,6 +363,12 @@ fn run_safetensors(
         eprintln!("  Fused {} gate+up projection pairs", fused);
     }
 
+    // Fuse Q+K+V projections in attention layers
+    let fused_qkv = model.fuse_qkv_weights();
+    if fused_qkv > 0 {
+        eprintln!("  Fused {} QKV projection triples", fused_qkv);
+    }
+
     // Warm up M=1 decode path (rayon, SIMD, branch prediction, TLB)
     let warmup_start = Instant::now();
     if let Err(e) = model.warmup_decode() {
@@ -458,6 +464,12 @@ fn run_gguf(
             .with_context(|| "Failed to build model")?
     };
     model.set_optimization_profile(profile);
+
+    // Fuse Q+K+V projections in attention layers
+    let fused_qkv = model.fuse_qkv_weights();
+    if fused_qkv > 0 {
+        eprintln!("  Fused {} QKV projection triples", fused_qkv);
+    }
 
     // Warm up M=1 decode path (rayon, SIMD, branch prediction, TLB)
     let warmup_start = Instant::now();

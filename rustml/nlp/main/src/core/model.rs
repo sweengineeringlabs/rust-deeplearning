@@ -908,6 +908,18 @@ impl LlmModel {
         count
     }
 
+    /// Fuse Q+K+V projection weights in all attention layers.
+    /// Call after `quantize_all_weights()`. Returns number of layers fused.
+    pub fn fuse_qkv_weights(&mut self) -> usize {
+        let mut count = 0;
+        for layer in &mut self.layers {
+            if layer.attention.fuse_qkv_weights() {
+                count += 1;
+            }
+        }
+        count
+    }
+
     /// Apply an optimization profile across all layers.
     ///
     /// Sets `use_inplace_ops` on each TransformerBlock and

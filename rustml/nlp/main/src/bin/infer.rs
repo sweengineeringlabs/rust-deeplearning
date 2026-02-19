@@ -294,6 +294,12 @@ fn run_safetensors(
         eprintln!("  Fused {} gate+up projection pairs", fused);
     }
 
+    // Fuse Q+K+V projections in attention layers
+    let fused_qkv = model.fuse_qkv_weights();
+    if fused_qkv > 0 {
+        eprintln!("  Fused {} QKV projection triples", fused_qkv);
+    }
+
     // Warm up M=1 decode path (rayon, SIMD, branch prediction, TLB)
     let warmup_start = Instant::now();
     if let Err(e) = model.warmup_decode() {
@@ -388,13 +394,20 @@ fn run_gguf(
     eprintln!("  {} tensors loaded", tensors.len());
 
     eprintln!("  Building model...");
-    let model = if is_gemma3 {
+    let mut model = if is_gemma3 {
         LlmModel::from_pretrained_gemma3(&config, tensors)
             .with_context(|| "Failed to build gemma3 model")?
     } else {
         LlmModel::from_pretrained(&config, tensors)
             .with_context(|| "Failed to build model")?
     };
+
+    // Fuse Q+K+V projections in attention layers
+    let fused_qkv = model.fuse_qkv_weights();
+    if fused_qkv > 0 {
+        eprintln!("  Fused {} QKV projection triples", fused_qkv);
+    }
+
     // Warm up M=1 decode path (rayon, SIMD, branch prediction, TLB)
     let warmup_start = Instant::now();
     if let Err(e) = model.warmup_decode() {

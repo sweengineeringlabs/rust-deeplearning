@@ -184,6 +184,7 @@
 | Metrics (non-stream) | stderr after generation | `Generated in <T>s` |
 | Quantization | stderr during load | `Quantized <N> linear layers F32 -> Q8_0` (N depends on model dimensions; layers with max dim < 1024 are skipped) |
 | Gate+up fusion | stderr during load | `Fused <N> gate+up projection pairs` (N = number of SwiGLU/GeGLU layers; absent for models without gate_proj like GPT-2) |
+| QKV fusion | stderr during load | `Fused <N> QKV projection triples` (N = number of attention layers with Q8_0 no-bias Q/K/V; absent for models with biased projections like GPT-2) |
 
 ## 14. Optimization Profiles
 
@@ -215,10 +216,11 @@
 |------|---------|----------|
 | GPT-2 debug | `RUST_LOG=rustml=debug cargo run --release -p rustml-nlp --bin rustml-infer -- --safetensors openai-community/gpt2 --prompt "Hello" --max-tokens 10 --temperature 0` | Per-step timings on stderr showing Embedding, Layers, Norm, Projection columns |
 | GPT-2 quantization | (same as above) | stderr: `Quantized 25 linear layers F32 -> Q8_0` (768-dim attention skipped, FFN + lm_head quantized) |
-| GPT-2 no fusion | (same as above) | No `Fused` message (GPT-2 has no gate_proj) |
+| GPT-2 no fusion | (same as above) | No `Fused` message (GPT-2 has biased projections — no gate_proj, no bias-free Q/K/V) |
 | GPT-2 output | (same as above) | `Hello, I'm sorry. I'm sorry. I` (deterministic at temp=0) |
 | Gemma 3 debug | `RUST_LOG=rustml=debug cargo run --release -p rustml-nlp --bin rustml-infer -- --safetensors google/gemma-3-1b-it --prompt "Hello" --max-tokens 5 --temperature 0` | Per-step timings; all 183 layers quantized (all dims ≥ 1152) |
-| Gemma 3 fusion | (same as above) | stderr: `Fused 26 gate+up projection pairs` (all 26 GeGLU layers fused) |
+| Gemma 3 gate+up fusion | (same as above) | stderr: `Fused 26 gate+up projection pairs` (all 26 GeGLU layers fused) |
+| Gemma 3 QKV fusion | (same as above) | stderr: `Fused 26 QKV projection triples` (all 26 attention layers fused) |
 | Gemma 3 output | (same as above) | Generates 5 tokens; `Generated in <T>s` |
 
 ### Expected debug output format
@@ -231,14 +233,16 @@
 
 | Model | Step | Embedding | Layers | Norm | Projection | Total |
 |-------|------|-----------|--------|------|------------|-------|
-| GPT-2 (25 Q8_0) | prefill | ~0.1ms | ~65ms | ~0.7ms | ~7ms | ~73ms |
-| GPT-2 (25 Q8_0) | decode (avg) | ~0.1ms | ~60ms | ~0.6ms | ~5ms | ~66ms |
-| Gemma 3 1B (183 Q8_0, 26 fused) | prefill | ~4ms | ~430ms | <0.1ms | ~48ms | ~483ms |
-| Gemma 3 1B (183 Q8_0, 26 fused) | decode (avg) | ~0.2ms | ~215ms | <0.1ms | ~28ms | ~243ms |
+| GPT-2 (25 Q8_0) | prefill | ~0.1ms | ~55ms | ~0.5ms | ~4ms | ~58ms |
+| GPT-2 (25 Q8_0) | decode (avg) | ~0.1ms | ~50ms | ~0.5ms | ~3.5ms | ~54ms |
+| Gemma 3 1B (183 Q8_0, 26 gate+up fused, 26 QKV fused) | prefill | ~4ms | ~430ms | <0.1ms | ~48ms | ~483ms |
+| Gemma 3 1B (183 Q8_0, 26 gate+up fused, 26 QKV fused) | decode (avg) | ~0.2ms | ~180ms | <0.1ms | ~23ms | ~205ms |
 
 > **Note:** Timings vary with system load and CPU cache state. First decode step is typically 1.2-1.5x slower than steady state. The numbers above are approximate baselines for comparison, not strict pass/fail thresholds.
 >
 > **Round 3 change:** Gemma 3 decode improved from ~280ms to ~240ms/step via fused gate+up matmul (26 GeGLU layers). FFN reduced from ~6ms to ~4.7ms/layer by eliminating one rayon dispatch per layer.
+>
+> **Round 5 change:** Gemma 3 decode improved from ~224ms to ~205ms/step via fused QKV matmul (26 attention layers). Attention reduced from ~3ms to ~2ms/layer by eliminating two rayon dispatches per layer. GPT-2 unaffected (biased projections skip fusion).
 
 ### Trace level (per-layer breakdown)
 
@@ -254,12 +258,12 @@
 
 ### Dimension threshold behavior
 
-The runtime Q8_0 quantization applies a dimension threshold (`min_dim = 1024`): layers where `max(in_features, out_features) < 1024` remain F32. After quantization, gate+up projection pairs in SwiGLU/GeGLU layers are fused into single matmuls.
+The runtime Q8_0 quantization applies a dimension threshold (`min_dim = 1024`): layers where `max(in_features, out_features) < 1024` remain F32. After quantization, gate+up projection pairs in SwiGLU/GeGLU layers are fused into single matmuls, and Q/K/V projection triples in attention layers are fused into single matmuls (requires all three Q8_0 with no biases).
 
-| Model | d_model | Layers quantized | Layers skipped | Gate+up fused | Reason |
-|-------|---------|------------------|----------------|---------------|--------|
-| GPT-2 | 768 | 25 (FFN + lm_head) | 48 (attention Q/K/V/O) | 0 (no gate_proj) | 768 < 1024 |
-| Gemma 3 1B | 1152 | 183 (all) | 0 | 26 (all GeGLU) | 1152 ≥ 1024 |
+| Model | d_model | Layers quantized | Layers skipped | Gate+up fused | QKV fused | Reason |
+|-------|---------|------------------|----------------|---------------|-----------|--------|
+| GPT-2 | 768 | 25 (FFN + lm_head) | 48 (attention Q/K/V/O) | 0 (no gate_proj) | 0 (biased projections) | 768 < 1024 |
+| Gemma 3 1B | 1152 | 183 (all) | 0 | 26 (all GeGLU) | 26 (all attention) | 1152 ≥ 1024 |
 
 ## 16. Error Cases
 

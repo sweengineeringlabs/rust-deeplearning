@@ -25,6 +25,9 @@
 - [x] **Redundant gate+up matmul dispatch in SwiGLU/GeGLU FFN** — `gate_proj(x)` and `up_proj(x)` are two separate matmuls with identical input and identical dimensions (`[1,1152]×[1152,6144]` Q8_0). Fusing into a single `[1,1152]×[1152,12288]` matmul eliminates one rayon dispatch, one input extraction, and one tensor allocation per layer per step. Fixed: `FeedForward::fuse_gate_up_weights()` concatenates Q8_0 weight bytes at load time; forward splits the fused output via tensor slice.
   - Files: `rustml/nn/main/src/core/feed_forward.rs`, `rustml/nlp/main/src/core/model.rs`, `rustml/nlp/main/src/bin/infer.rs`, `rustml/cli/src/cmd/infer.rs`
 
+- [x] **Redundant Q+K+V matmul dispatch in attention** — `q_proj(x)`, `k_proj(x)`, `v_proj(x)` are three separate matmuls with identical input. Fusing into a single `[1,1152]x[1152,1536]` matmul eliminates two rayon dispatches, two input extractions, and two tensor allocations per layer per step. Fixed: `MultiHeadAttention::fuse_qkv_weights()` concatenates Q8_0 weight bytes at load time; forward splits the fused output via tensor slice.
+  - Files: `rustml/nn/main/src/core/attention.rs`, `rustml/nlp/main/src/core/model.rs`, `rustml/nlp/main/src/bin/infer.rs`, `rustml/cli/src/cmd/infer.rs`
+
 - [ ] **lm_head still ~30ms/step (262K vocab floor)** — The `[1,1152]×[1152,262144]` Q8_0 matmul is memory-bandwidth bound. Further reduction requires vocabulary pruning or speculative decoding to avoid the full vocab projection on every step.
 
 - [x] **Cold-start layer-0 latency** — First transformer layer takes ~2× longer than subsequent layers due to rayon thread pool warm-up. Mitigated by `LlmModel::warmup_decode()` which runs a single dummy forward pass at load time.
