@@ -6545,6 +6545,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustml-swets"
+version = "0.1.0"
+dependencies = [
+ "approx",
+ "log",
+ "rand 0.8.5",
+ "rustml-core",
+ "smallvec",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "rustml-tokenizer"
 version = "0.1.0"
 dependencies = [

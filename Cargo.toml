@@ -10,6 +10,7 @@ members = [
     "rustml/quant",
     "rustml/gguf",
     "rustml/cli",
+    "rustml/swets",
     # AudioLearn (umbrella: audiolearn/)
     "audiolearn/app",
     "audiolearn/tauri",
@@ -69,6 +70,7 @@ rustml-nlp = { path = "rustml/nlp" }
 rustml-tokenizer = { path = "rustml/tokenizer" }
 rustml-quant = { path = "rustml/quant" }
 rustml-gguf = { path = "rustml/gguf" }
+rustml-swets = { path = "rustml/swets" }
 # Shared deps for quant/gguf crates
 bytemuck = { version = "1", features = ["extern_crate_alloc"] }
 half = { version = "2.3", features = ["bytemuck"] }

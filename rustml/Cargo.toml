@@ -1,3 +1,3 @@
 [workspace]
-members = ["core", "nn", "hub", "nlp", "tokenizer"]
+members = ["core", "nn", "hub", "nlp", "tokenizer", "swets"]
 resolver = "2"
