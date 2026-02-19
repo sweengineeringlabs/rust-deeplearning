@@ -185,7 +185,7 @@
 | Tokenizer (BPE) | stderr when no tokenizer.json | `Tokenizer: <N> tokens (BPE)` |
 | Metrics (stream) | stderr after streaming | `<N> tokens in <T>s (<R> tokens/sec)` |
 | Metrics (non-stream) | stderr after generation | `Generated in <T>s` |
-| Quantization | stderr during load | `Quantized <N> linear layers F32 -> Q8_0` (N depends on model dimensions; layers with max dim < 1024 are skipped) |
+| Quantization | stderr during load | `Quantized <N> linear layers F32 -> Q8_0` (N depends on model dimensions; layers with max dim < 768 are skipped) |
 | Gate+up fusion | stderr during load | `Fused <N> gate+up projection pairs` (N = number of SwiGLU/GeGLU layers; absent for models without gate_proj like GPT-2) |
 | QKV fusion | stderr during load | `Fused <N> QKV projection triples` (N = number of attention layers with Q8_0 no-bias Q/K/V; absent for models with biased projections like GPT-2) |
 
@@ -218,7 +218,7 @@
 | Test | Command | Expected |
 |------|---------|----------|
 | GPT-2 debug | `RUST_LOG=rustml=debug cargo run --release -p rustml-nlp --bin rustml-infer -- --safetensors openai-community/gpt2 --prompt "Hello" --max-tokens 10 --temperature 0` | Per-step timings on stderr showing Embedding, Layers, Norm, Projection columns |
-| GPT-2 quantization | (same as above) | stderr: `Quantized 25 linear layers F32 -> Q8_0` (768-dim attention skipped, FFN + lm_head quantized) |
+| GPT-2 quantization | (same as above) | stderr: `Quantized 73 linear layers F32 -> Q8_0` (all linear layers including attention, 768 ≥ threshold) |
 | GPT-2 no fusion | (same as above) | No `Fused` message (GPT-2 has biased projections — no gate_proj, no bias-free Q/K/V) |
 | GPT-2 output | (same as above) | `Hello, I'm sorry. I'm sorry. I` (deterministic at temp=0) |
 | Gemma 3 debug | `RUST_LOG=rustml=debug cargo run --release -p rustml-nlp --bin rustml-infer -- --safetensors google/gemma-3-1b-it --prompt "Hello" --max-tokens 5 --temperature 0` | Per-step timings; all 183 layers quantized (all dims ≥ 1152) |
@@ -242,14 +242,16 @@ Per-layer breakdown (one line per transformer layer per step):
 
 | Model | Step | Embedding | Layers | Norm | Projection | Total |
 |-------|------|-----------|--------|------|------------|-------|
-| GPT-2 (25 Q8_0) | prefill | ~0.1ms | ~55ms | ~0.5ms | ~4ms | ~58ms |
-| GPT-2 (25 Q8_0) | decode (avg) | ~0.1ms | ~50ms | ~0.5ms | ~3.5ms | ~54ms |
-| Gemma 3 1B (183 Q8_0, 26 gate+up fused, 26 QKV fused) | prefill | ~4ms | ~430ms | <0.1ms | ~48ms | ~483ms |
-| Gemma 3 1B (183 Q8_0, 26 gate+up fused, 26 QKV fused) | decode (avg) | ~0.2ms | ~180ms | <0.1ms | ~23ms | ~205ms |
+| GPT-2 (73 Q8_0) | prefill (13 tok) | ~0.1ms | ~500ms | ~0.8ms | ~3ms | ~500ms |
+| GPT-2 (73 Q8_0) | decode (steady) | ~0.1ms | ~46ms | ~0.8ms | ~3ms | ~50ms |
+| Gemma 3 1B (183 Q8_0, fused) | prefill (10 tok) | ~0.3ms | ~1550ms | <0.1ms | ~50ms | ~1600ms |
+| Gemma 3 1B (183 Q8_0, fused) | decode (steady) | ~0.3ms | ~175ms | <0.1ms | ~22ms | ~200ms |
 
 > **Note:** Timings vary with system load and CPU cache state. First decode step is typically 1.2-1.5x slower than steady state. The numbers above are approximate baselines for comparison, not strict pass/fail thresholds.
 >
-> **Round 3 change:** Gemma 3 decode improved from ~280ms to ~240ms/step via fused gate+up matmul (26 GeGLU layers). FFN reduced from ~6ms to ~4.7ms/layer by eliminating one rayon dispatch per layer.
+> **Round 2 change:** Lowered Q8_0 threshold from 1024 to 768, enabling attention quantization for GPT-2 (25 → 73 Q8_0 layers). 10% faster inference, 75% less attention memory.
+>
+> **Round 3 change:** Added `RuntimeConfig::warmup_thread_pool()` to reduce layer jitter. Layer variance reduced from 5.1x to 2.3x. Step variance reduced from 1.9x to 1.4x.
 >
 > **Round 5 change:** Gemma 3 decode improved from ~224ms to ~205ms/step via fused QKV matmul (26 attention layers). Attention reduced from ~3ms to ~2ms/layer by eliminating two rayon dispatches per layer. GPT-2 unaffected (biased projections skip fusion).
 
@@ -258,12 +260,13 @@ Per-layer breakdown (one line per transformer layer per step):
 | Test | Command | Expected |
 |------|---------|----------|
 | Gemma 3 trace | `RUST_LOG=rustml=trace cargo run --release -p rustml-nlp --bin rustml-infer -- --safetensors google/gemma-3-1b-it --prompt "Hello" --max-tokens 3 --temperature 0` | All debug output plus per-operation timings (matmul, softmax, RoPE, embedding, linear, KV cache) |
+| Attention breakdown | `RUST_LOG=rustml=trace cargo run --release -p rustml-nlp --bin rustml-infer -- --safetensors openai-community/gpt2 --prompt "Hello" --max-tokens 5 --temperature 0 2>&1 \| grep "\[attn\]"` | Per-layer attention component timing (QKV, QKnorm, RoPE, QK^T, softmax, A*V, out) |
 
 ### Expected trace output format
 
 Individual operation timings (high volume — one line per matmul, softmax, etc.):
 ```
-[TRACE rustml_quant::core::quantize] [perf] quant::matmul_f32_q8 [M×K]x[N×K] <T>ms
+[TRACE rustml_quant::core::quantize] [perf] quant::matmul_f32_q8 [M×K]x[N×K] <T>ms (<BW> GB/s)
 [TRACE rustml_nn::core::linear] [perf] linear::forward [shape]->[in,out] <dtype> <T>ms
 [TRACE rustml_nn::core::rope] [perf] rope::apply [shape] pos=N <T>ms
 [TRACE rustml_core::core::tensor::ops] [perf] softmax [shape] <T>ms
@@ -271,7 +274,33 @@ Individual operation timings (high volume — one line per matmul, softmax, etc.
 [TRACE rustml_nn::core::kv_cache] [perf] kv_cache::update layer=N pos=N <T>ms
 ```
 
-> **Note:** Trace level produces very high output volume (hundreds of lines per decode step). Use `--max-tokens 1` or `--max-tokens 3` to keep output manageable.
+### Attention component breakdown (trace level)
+
+Per-layer attention timing for bottleneck analysis:
+```
+[TRACE rustml_nn::core::attention] [attn] layer=N QKV=<T>ms QKnorm=<T>ms RoPE=<T>ms QK^T=<T>ms softmax=<T>ms A*V=<T>ms out=<T>ms
+```
+
+| Component | Description | Typical % |
+|-----------|-------------|-----------|
+| QKV | Q/K/V projections (fused or 3 separate matmuls) | 50-60% |
+| QKnorm | QK normalization (Gemma 3 only) | 5% |
+| RoPE | Rotary position encoding | <2% |
+| QK^T | Attention scores matmul + scaling | 10-15% |
+| softmax | Attention weight normalization | <2% |
+| A*V | Weighted value aggregation | <2% |
+| out | Output projection | 18-25% |
+
+### Typical attention timings (per layer, decode)
+
+| Model | QKV | QK^T | softmax | A*V | out | Total |
+|-------|-----|------|---------|-----|-----|-------|
+| GPT-2 | 0.35ms | 0.08ms | 0.006ms | 0.012ms | 0.1ms | ~0.55ms |
+| Gemma 3 1B | 0.55ms | 0.1ms | 0.007ms | 0.015ms | 0.25ms | ~0.95ms |
+
+> **Note:** Core attention ops (QK^T + softmax + A*V) are <0.1ms combined. Projections dominate but are already Q8_0 quantized and fused where applicable.
+
+> **Note:** Trace level produces very high output volume (hundreds of lines per decode step). Use `--max-tokens 1` or `--max-tokens 3` to keep output manageable. Filter with `grep "\[attn\]"` for attention-only analysis.
 
 ### Windows PowerShell profiling
 
@@ -282,14 +311,64 @@ Individual operation timings (high volume — one line per matmul, softmax, etc.
 
 > **Note:** On Windows PowerShell, set the environment variable with `$env:RUST_LOG="rustml=debug"` (persists for the session) instead of the Unix `RUST_LOG=... command` prefix. Native Windows builds avoid WSL2 scheduling overhead (+/-30ms jitter) and may show faster or more consistent steady-state decode times.
 
+### Layer/step jitter analysis
+
+Jitter measures timing variance across decode steps and layers. Lower jitter indicates more predictable inference latency.
+
+| Test | Command | Expected |
+|------|---------|----------|
+| GPT-2 jitter | `RUST_LOG=rustml=debug cargo run --release -p rustml-nlp --bin rustml-infer -- --safetensors openai-community/gpt2 --prompt "Hello" --max-tokens 10 --temperature 0 2>&1 \| grep "transformer\[0\]"` | Layer 0 times across 10 steps; variance should be <2x |
+| Gemma 3 jitter | `RUST_LOG=rustml=debug cargo run --release -p rustml-nlp --bin rustml-infer -- --safetensors google/gemma-3-1b-it --prompt "Hello" --max-tokens 5 --temperature 0 2>&1 \| grep "model::forward"` | Step times; variance should be <1.5x after warmup |
+
+**How to assess jitter:**
+1. Run 5-10 decode steps with debug logging
+2. Extract step or layer timings
+3. Calculate `max / min` ratio (jitter)
+4. Expected: <2x for layers, <1.5x for steps (after warmup)
+
+**Typical jitter values (after thread pool warmup):**
+
+| Model | Layer jitter | Step jitter |
+|-------|--------------|-------------|
+| GPT-2 | 2.3x | 1.4x |
+| Gemma 3 1B | 3.1x | 1.2x |
+
+> **Note:** First 1-2 decode steps may show higher latency due to cache warming. Measure steady-state from step 3 onwards. Thread pool warmup (automatic) reduces layer jitter by ~50%.
+
+### Prefill vs decode analysis
+
+Prefill processes multiple tokens in a single forward pass; decode processes one token at a time. Prefill is typically **more efficient** per-token due to better batching.
+
+| Test | Command | Expected |
+|------|---------|----------|
+| GPT-2 prefill timing | `RUST_LOG=rustml=debug cargo run --release -p rustml-nlp --bin rustml-infer -- --safetensors openai-community/gpt2 --prompt "The quick brown fox jumps over the lazy dog" --max-tokens 3 --temperature 0 2>&1 \| grep -E "(prefill\|decode_step)"` | Prefill total, then per-decode-step timings |
+| Gemma 3 prefill timing | `RUST_LOG=rustml=debug cargo run --release -p rustml-nlp --bin rustml-infer -- --safetensors google/gemma-3-1b-it --prompt "The quick brown fox" --max-tokens 3 --temperature 0 2>&1 \| grep -E "(prefill\|decode_step)"` | Prefill total, then per-decode-step timings |
+
+**Expected output format:**
+```
+[DEBUG rustml_nlp::core::generator] [perf] generator::prefill tokens=N <T>ms
+[DEBUG rustml_nlp::core::generator] [perf] generator::decode_step token=N model=<T>ms sample=<T>ms total=<T>ms
+```
+
+**Typical prefill vs decode efficiency:**
+
+| Model | Prefill (per-token) | Decode | Efficiency |
+|-------|---------------------|--------|------------|
+| GPT-2 (10 tokens) | ~38ms | ~50ms | Prefill 24% faster |
+| Gemma 3 (10 tokens) | ~160ms | ~178ms | Prefill 10% faster |
+
+> **Note:** Prefill efficiency increases with more tokens due to better memory bandwidth utilization and cache locality. O(n²) attention scaling is acceptable for typical prompt lengths (<100 tokens).
+
 ### Dimension threshold behavior
 
-The runtime Q8_0 quantization applies a dimension threshold (`min_dim = 1024`): layers where `max(in_features, out_features) < 1024` remain F32. After quantization, gate+up projection pairs in SwiGLU/GeGLU layers are fused into single matmuls, and Q/K/V projection triples in attention layers are fused into single matmuls (requires all three Q8_0 with no biases).
+The runtime Q8_0 quantization applies a dimension threshold (`min_dim = 768`): layers where `max(in_features, out_features) < 768` remain F32. After quantization, gate+up projection pairs in SwiGLU/GeGLU layers are fused into single matmuls, and Q/K/V projection triples in attention layers are fused into single matmuls (requires all three Q8_0 with no biases).
 
 | Model | d_model | Layers quantized | Layers skipped | Gate+up fused | QKV fused | Reason |
 |-------|---------|------------------|----------------|---------------|-----------|--------|
-| GPT-2 | 768 | 25 (FFN + lm_head) | 48 (attention Q/K/V/O) | 0 (no gate_proj) | 0 (biased projections) | 768 < 1024 |
-| Gemma 3 1B | 1152 | 183 (all) | 0 | 26 (all GeGLU) | 26 (all attention) | 1152 ≥ 1024 |
+| GPT-2 | 768 | 73 (all linear) | 0 | 0 (no gate_proj) | 0 (biased projections) | 768 ≥ 768 |
+| Gemma 3 1B | 1152 | 183 (all) | 0 | 26 (all GeGLU) | 26 (all attention) | 1152 ≥ 768 |
+
+> **Note:** GPT-2 attention layers are now Q8_0 quantized (Round 2 change: threshold lowered from 1024 to 768). QKV fusion is still skipped because GPT-2 has biased Q/K/V projections.
 
 ## 16. Error Cases
 
