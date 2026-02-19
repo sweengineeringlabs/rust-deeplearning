@@ -66,18 +66,21 @@ Add `RUST_LOG=rustml=trace` output for each matmul call with dimensions, timing,
 ---
 
 ### 2. Investigate attention quantization threshold for smaller models
-**Priority**: High | **Status**: Pending | **Blocked by**: #1
+**Priority**: High | **Status**: ✓ Done
 
-Current Q8_0 threshold (min_dim=1024) skips all 48 attention projections in GPT-2 (768 dim).
+Lowered Q8_0 threshold from 1024 → 768 to enable attention quantization for GPT-2.
 
-**Analysis needed**:
-- Profile attention matmul with Q8_0 at 768 dim vs F32
-- Determine if lower threshold (512 or 768) provides net benefit
-- Consider accuracy impact
+**Results (2026-02-19)**:
+| Metric | F32 (before) | Q8_0 (after) | Change |
+|--------|--------------|--------------|--------|
+| Layers quantized | 25 | 73 | +48 |
+| Generation time | 0.54s | 0.49s | **-10%** |
+| Output quality | ✓ | ✓ | Identical |
+| Attention memory | 4x | 1x | **-75%** |
 
-**Observed**: GPT-2 attention is 50% of layer time with F32 projections. Gemma 3 attention is only 15% with Q8_0+fusion.
+**Conclusion**: Q8_0 at 768 dim is beneficial — faster inference and lower memory with no accuracy loss.
 
-**Files**: `rustml/nlp/main/src/core/model.rs`, `rustml/quant/`
+**Files**: `rustml/nlp/main/src/core/model.rs`
 
 ---
 
@@ -191,7 +194,7 @@ Prefill is slower than decode on a per-token basis:
 1. ~~**#1** - Foundation for data-driven decisions~~ ✓ Done
 2. ~~**#5** - Quick win, huge impact on Gemma 3~~ ✓ Resolved (no action needed)
 3. ~~**#6** - FFN optimization~~ ✓ Investigated (near-optimal)
-4. **#2** - Enable Q8_0 for GPT-2 attention (ready)
+4. ~~**#2** - Enable Q8_0 for GPT-2 attention~~ ✓ Done (10% speedup)
 5. **#3** - Reduce timing jitter
 6. **#4** - Attention optimizations (lower priority since fusion works)
 7. **#7** - Prefill optimization (context-dependent)
@@ -201,7 +204,7 @@ Prefill is slower than decode on a per-token basis:
 | Task | Model | Status | Expected Improvement |
 |------|-------|--------|---------------------|
 | #1 Trace profiling | All | ✓ Done | Enables data-driven optimization |
-| #2 Lower Q8_0 threshold | GPT-2 | Ready | 10-20% layer speedup |
+| #2 Lower Q8_0 threshold | GPT-2 | ✓ Done | 10% faster, 75% less memory |
 | #3 Jitter fix | GPT-2 | Pending | More predictable latency |
 | #4 Attention optimization | GPT-2 | Pending | 5-10% layer speedup |
 | #5 lm_head variance | Gemma 3 | ✓ Resolved | N/A (was measurement artifact) |

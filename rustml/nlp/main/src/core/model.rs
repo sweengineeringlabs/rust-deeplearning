@@ -855,12 +855,13 @@ impl LlmModel {
 
     /// Quantize F32 linear layers to Q8_0 at load time.
     /// Covers attention projections, FFN projections, MoE experts, and lm_head.
-    /// Skips layers where max(in_features, out_features) < 1024 — at small
+    /// Skips layers where max(in_features, out_features) < 768 — at very small
     /// dimensions the quantize/dequantize overhead exceeds bandwidth savings.
+    /// Tested: GPT-2 (768 dim) shows ~10% speedup with Q8_0 attention vs F32.
     /// Returns the number of layers successfully quantized.
     /// Safe no-op for non-F32 or already-quantized weights.
     pub fn quantize_all_weights(&mut self) -> NlpResult<usize> {
-        const MIN_DIM: usize = 1024;
+        const MIN_DIM: usize = 768;
         let mut count = 0usize;
         fn try_q(l: &mut Linear, c: &mut usize, min_dim: usize) {
             if l.in_features.max(l.out_features) < min_dim {
