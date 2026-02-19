@@ -2,6 +2,35 @@
 
 > Generated from profiling session 2026-02-19. Based on GPT-2 and Gemma 3 1B inference with `RUST_LOG=rustml=debug`.
 
+## Optimization Methodology
+
+**Always baseline before optimizing.** Capture current metrics before making changes to measure actual improvement.
+
+### Workflow
+1. **Baseline** — Run profiling, save metrics to file
+2. **Analyze** — Identify bottleneck from trace data
+3. **Implement** — Make targeted optimization
+4. **Measure** — Re-run profiling, compare to baseline
+5. **Document** — Record before/after in `docs/7-operations/audit/`
+
+### Baseline Commands
+```bash
+# Capture baseline (save to dated file)
+RUST_LOG=rustml=debug cargo run --release -p rustml-nlp --bin rustml-infer -- \
+  --safetensors openai-community/gpt2 --prompt "Hello" --max-tokens 10 --temperature 0 \
+  2>&1 | tee baseline_$(date +%Y%m%d).log
+
+# Key metrics to extract
+grep "model::forward" baseline.log      # Step times
+grep "transformer\[" baseline.log       # Layer times
+grep "\[attn\]" baseline.log            # Attention breakdown
+grep "prefill\|decode_step" baseline.log # Prefill vs decode
+```
+
+> **Tip:** Run 3-5 times, discard first (cold cache), average the rest. System variance is typically 10-20%.
+
+---
+
 ## Profiling Summary
 
 ### GPT-2 (163M params)

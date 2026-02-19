@@ -213,6 +213,51 @@
 >
 > **Build:** Always use `cargo build --release -p rustml-nlp` (or `-p rustml-cli`) — debug builds are too slow for meaningful profiling.
 
+### Baseline before optimizing
+
+**Always capture baseline metrics before making optimization changes.** This ensures you can measure actual improvement and avoid regressions.
+
+**Baseline workflow:**
+1. **Capture baseline** — Run profiling commands below, save output to a file
+2. **Make changes** — Implement optimization
+3. **Re-run profiling** — Compare against baseline
+4. **Document results** — Record before/after in audit report
+
+**Baseline capture commands:**
+```bash
+# GPT-2 baseline (save to file)
+RUST_LOG=rustml=debug cargo run --release -p rustml-nlp --bin rustml-infer -- \
+  --safetensors openai-community/gpt2 --prompt "Hello" --max-tokens 10 --temperature 0 \
+  2>&1 | tee baseline_gpt2_$(date +%Y%m%d).log
+
+# Gemma 3 baseline (save to file)
+RUST_LOG=rustml=debug cargo run --release -p rustml-nlp --bin rustml-infer -- \
+  --safetensors google/gemma-3-1b-it --prompt "Hello" --max-tokens 5 --temperature 0 \
+  2>&1 | tee baseline_gemma3_$(date +%Y%m%d).log
+```
+
+**Key metrics to baseline:**
+| Metric | Command filter | What to record |
+|--------|----------------|----------------|
+| Step time | `grep "model::forward"` | Prefill + decode times |
+| Layer time | `grep "transformer\["` | Per-layer attn + ffn |
+| Attention breakdown | `grep "\[attn\]"` | QKV, QK^T, softmax, A*V, out |
+| Prefill efficiency | `grep "prefill"` | Total time / token count |
+| Decode throughput | `grep "decode_step"` | Tokens/sec steady state |
+
+**Example baseline comparison:**
+```
+# Before optimization
+[perf] model::forward total=58ms
+
+# After optimization
+[perf] model::forward total=50ms
+
+# Improvement: (58-50)/58 = 14% faster
+```
+
+> **Tip:** Run 3-5 times and average to account for system variance. Discard first run (cold cache).
+
 ### Debug level (per-step breakdown)
 
 | Test | Command | Expected |
