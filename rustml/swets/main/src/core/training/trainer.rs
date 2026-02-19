@@ -1,9 +1,10 @@
 use crate::api::error::SwetsResult;
 use crate::api::layer::Layer;
 use crate::api::loss::Loss;
-use crate::api::optim::Optimizer;
+use crate::api::optim::{LRScheduler, Optimizer};
 use crate::api::tape;
 use crate::api::tensor::Tensor;
+use crate::core::serde::save_checkpoint;
 
 pub struct Trainer<M, O, L> {
     pub model: M,
@@ -13,6 +14,8 @@ pub struct Trainer<M, O, L> {
     patience: Option<usize>,
     best_val_loss: f32,
     epochs_without_improvement: usize,
+    scheduler: Option<Box<dyn LRScheduler>>,
+    checkpoint_dir: Option<String>,
 }
 
 impl<M: Layer, O: Optimizer, L: Loss> Trainer<M, O, L> {
@@ -25,6 +28,8 @@ impl<M: Layer, O: Optimizer, L: Loss> Trainer<M, O, L> {
             patience: None,
             best_val_loss: f32::INFINITY,
             epochs_without_improvement: 0,
+            scheduler: None,
+            checkpoint_dir: None,
         }
     }
 
@@ -39,6 +44,21 @@ impl<M: Layer, O: Optimizer, L: Loss> Trainer<M, O, L> {
     /// consecutive epochs.
     pub fn with_early_stopping(mut self, patience: usize) -> Self {
         self.patience = Some(patience);
+        self
+    }
+
+    /// Attach an LR scheduler that gets stepped each epoch (FR-907).
+    pub fn with_scheduler(mut self, scheduler: Box<dyn LRScheduler>) -> Self {
+        self.scheduler = Some(scheduler);
+        self
+    }
+
+    /// Set the directory for best-model checkpoints (FR-907).
+    ///
+    /// When a checkpoint directory is configured the trainer will automatically
+    /// save the model whenever validation loss improves (FR-906).
+    pub fn with_checkpoint_dir(mut self, path: impl Into<String>) -> Self {
+        self.checkpoint_dir = Some(path.into());
         self
     }
 
@@ -92,6 +112,14 @@ impl<M: Layer, O: Optimizer, L: Loss> Trainer<M, O, L> {
     /// Returns a `Vec<(train_loss, val_loss)>` for each completed epoch.
     /// If early stopping is configured and triggered, training ends early and
     /// the returned vector will contain fewer than `epochs` entries.
+    ///
+    /// After each epoch the following steps occur in order:
+    /// 1. The LR scheduler (if configured) is stepped (FR-907).
+    /// 2. If validation loss improved, a best-model checkpoint is saved to
+    ///    `checkpoint_dir` (FR-906).
+    /// 3. Early stopping is evaluated (FR-905). Because checkpointing happens
+    ///    before the early-stopping check, the best model is guaranteed to have
+    ///    been persisted when training halts early.
     pub fn fit(
         &mut self,
         train_batches: &[(Tensor, Tensor)],
@@ -114,7 +142,44 @@ impl<M: Layer, O: Optimizer, L: Loss> Trainer<M, O, L> {
 
             history.push((train_loss, val_loss));
 
-            if self.should_stop(val_loss) {
+            // FR-907: Step the LR scheduler after each epoch.
+            if let Some(ref mut scheduler) = self.scheduler {
+                scheduler.step(&mut self.optimizer);
+                log::debug!(
+                    "Epoch {}: LR updated to {:.6}",
+                    epoch,
+                    scheduler.get_lr(),
+                );
+            }
+
+            // Track whether this epoch improved on the best validation loss.
+            let is_improvement = val_loss < self.best_val_loss;
+
+            // FR-906: Save best-model checkpoint when validation loss improves.
+            if is_improvement {
+                self.best_val_loss = val_loss;
+
+                if let Some(ref dir) = self.checkpoint_dir {
+                    std::fs::create_dir_all(dir).map_err(|e| {
+                        crate::api::error::SwetsError::TrainingError(format!(
+                            "create checkpoint dir '{}': {}",
+                            dir, e
+                        ))
+                    })?;
+                    let path = format!("{}/best_model.bin", dir);
+                    save_checkpoint(&self.model, &path, epoch, val_loss)?;
+                    log::info!(
+                        "Epoch {}: saved best checkpoint (val_loss={:.6}) to {}",
+                        epoch,
+                        val_loss,
+                        path,
+                    );
+                }
+            }
+
+            // FR-905: Early stopping check (must happen after checkpointing so
+            // the best model has already been saved).
+            if self.should_stop(is_improvement) {
                 log::info!(
                     "Early stopping triggered at epoch {} (patience={}, best_val_loss={:.6})",
                     epoch,
@@ -164,16 +229,16 @@ impl<M: Layer, O: Optimizer, L: Loss> Trainer<M, O, L> {
 
     /// Check whether early stopping should be triggered.
     ///
-    /// Updates `best_val_loss` and `epochs_without_improvement` counters.
+    /// `improved` indicates whether the current epoch's validation loss was
+    /// a new best (the caller is responsible for updating `best_val_loss`).
     /// Returns `true` if the patience threshold has been reached.
-    fn should_stop(&mut self, val_loss: f32) -> bool {
+    fn should_stop(&mut self, improved: bool) -> bool {
         let patience = match self.patience {
             Some(p) => p,
             None => return false,
         };
 
-        if val_loss < self.best_val_loss {
-            self.best_val_loss = val_loss;
+        if improved {
             self.epochs_without_improvement = 0;
         } else {
             self.epochs_without_improvement += 1;

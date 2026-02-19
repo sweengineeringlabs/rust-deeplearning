@@ -5,6 +5,7 @@ pub use crate::api::error::{SwetsError, SwetsResult};
 pub use crate::api::layer::Layer;
 pub use crate::api::loss::Loss;
 pub use crate::api::optim::{LRScheduler, Optimizer};
+pub use crate::api::pool;
 pub use crate::api::tape;
 pub use crate::api::tensor::{Tensor, TensorId};
 
@@ -42,6 +43,7 @@ pub use crate::core::optim::schedulers::{CosineAnnealingLR, StepLR, WarmupCosine
 
 // Training
 pub use crate::core::training::metrics::Metrics;
+pub use crate::core::training::summary::model_summary;
 pub use crate::core::training::trainer::Trainer;
 
 // Serialization
