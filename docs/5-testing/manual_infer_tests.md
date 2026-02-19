@@ -124,6 +124,9 @@
 | Config summary | stderr | `arch=<arch>, dim=<N>, layers=<N>, heads=<N>, vocab=<N>` |
 | Tokenizer info | stderr | `Tokenizer: <N> tokens` |
 | Tensor loading | stderr | `Loading tensors...` then `<N> tensors loaded` |
+| Model build | stderr | `Building model...` |
+| QKV fusion (GGUF) | stderr during load | `Fused <N> QKV projection triples` (only for Q8_0 GGUF models with bias-free Q/K/V; absent for Q4_0 models) |
+| Warmup | stderr | `Warmup: <N>ms` |
 | Model ready | stderr | `Model ready: <N>M params` |
 | KV cache memory | stderr | `KV cache: <N> MB (<layers>layers x <heads>heads x <seq>seq x <dim>dim x f32 x 2)` |
 | Timeout (if set) | stderr | `Timeout: <N>s` |
@@ -225,8 +228,14 @@
 
 ### Expected debug output format
 
+Per-step summary (one line per forward pass):
 ```
-[DEBUG rustml...] [perf] Step N forward: <T>ms (embed=<T>ms, layers=<T>ms, norm=<T>ms, proj=<T>ms)
+[DEBUG rustml_nlp::core::model] [perf] model::forward embedding=<T>ms layers=<T>ms norm=<T>ms projection=<T>ms total=<T>ms
+```
+
+Per-layer breakdown (one line per transformer layer per step):
+```
+[DEBUG rustml_nn::core::transformer_block] [perf] transformer[N]::forward attn=<T>ms ffn=<T>ms
 ```
 
 ### Typical per-step timings (release build, x86_64 AVX2)
@@ -244,17 +253,34 @@
 >
 > **Round 5 change:** Gemma 3 decode improved from ~224ms to ~205ms/step via fused QKV matmul (26 attention layers). Attention reduced from ~3ms to ~2ms/layer by eliminating two rayon dispatches per layer. GPT-2 unaffected (biased projections skip fusion).
 
-### Trace level (per-layer breakdown)
+### Trace level (per-operation breakdown)
 
 | Test | Command | Expected |
 |------|---------|----------|
-| Gemma 3 trace | `RUST_LOG=rustml=trace cargo run --release -p rustml-nlp --bin rustml-infer -- --safetensors google/gemma-3-1b-it --prompt "Hello" --max-tokens 3 --temperature 0` | Per-layer timing showing attention and FFN time per layer |
+| Gemma 3 trace | `RUST_LOG=rustml=trace cargo run --release -p rustml-nlp --bin rustml-infer -- --safetensors google/gemma-3-1b-it --prompt "Hello" --max-tokens 3 --temperature 0` | All debug output plus per-operation timings (matmul, softmax, RoPE, embedding, linear, KV cache) |
 
 ### Expected trace output format
 
+Individual operation timings (high volume — one line per matmul, softmax, etc.):
 ```
-[TRACE rustml...] [perf] Layer N: <T>ms (attn=<T>ms, ffn=<T>ms)
+[TRACE rustml_quant::core::quantize] [perf] quant::matmul_f32_q8 [M×K]x[N×K] <T>ms
+[TRACE rustml_nn::core::linear] [perf] linear::forward [shape]->[in,out] <dtype> <T>ms
+[TRACE rustml_nn::core::rope] [perf] rope::apply [shape] pos=N <T>ms
+[TRACE rustml_core::core::tensor::ops] [perf] softmax [shape] <T>ms
+[TRACE rustml_nn::core::embedding] [perf] embedding::forward [shape]->[shape] <T>ms
+[TRACE rustml_nn::core::kv_cache] [perf] kv_cache::update layer=N pos=N <T>ms
 ```
+
+> **Note:** Trace level produces very high output volume (hundreds of lines per decode step). Use `--max-tokens 1` or `--max-tokens 3` to keep output manageable.
+
+### Windows PowerShell profiling
+
+| Test | Command | Expected |
+|------|---------|----------|
+| GPT-2 debug (Windows) | `$env:RUST_LOG="rustml=debug"; cargo run --release -p rustml-nlp --bin rustml-infer -- --safetensors openai-community/gpt2 --prompt "Hello" --max-tokens 10 --temperature 0` | Same debug output as Linux; potentially lower variance (no WSL2 scheduling overhead) |
+| Gemma 3 debug (Windows) | `$env:RUST_LOG="rustml=debug"; cargo run --release -p rustml-nlp --bin rustml-infer -- --safetensors google/gemma-3-1b-it --prompt "Hello" --max-tokens 5 --temperature 0` | Same debug output as Linux; expect lower step-to-step jitter |
+
+> **Note:** On Windows PowerShell, set the environment variable with `$env:RUST_LOG="rustml=debug"` (persists for the session) instead of the Unix `RUST_LOG=... command` prefix. Native Windows builds avoid WSL2 scheduling overhead (+/-30ms jitter) and may show faster or more consistent steady-state decode times.
 
 ### Dimension threshold behavior
 
