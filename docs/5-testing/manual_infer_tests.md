@@ -223,7 +223,7 @@
 3. **Re-run profiling** — Compare against baseline
 4. **Document results** — Record before/after in audit report
 
-**Baseline capture commands:**
+**Baseline capture commands (Linux/macOS):**
 ```bash
 # GPT-2 baseline (save to file)
 RUST_LOG=rustml=debug cargo run --release -p rustml-nlp --bin rustml-infer -- \
@@ -234,6 +234,21 @@ RUST_LOG=rustml=debug cargo run --release -p rustml-nlp --bin rustml-infer -- \
 RUST_LOG=rustml=debug cargo run --release -p rustml-nlp --bin rustml-infer -- \
   --safetensors google/gemma-3-1b-it --prompt "Hello" --max-tokens 5 --temperature 0 \
   2>&1 | tee baseline_gemma3_$(date +%Y%m%d).log
+```
+
+**Baseline capture commands (Windows PowerShell):**
+```powershell
+# GPT-2 baseline (save to file)
+$env:RUST_LOG="rustml=debug"
+cargo run --release -p rustml-nlp --bin rustml-infer -- `
+  --safetensors openai-community/gpt2 --prompt "Hello" --max-tokens 10 --temperature 0 `
+  2>&1 | Tee-Object -FilePath "baseline_gpt2_$(Get-Date -Format yyyyMMdd).log"
+
+# Gemma 3 baseline (save to file)
+$env:RUST_LOG="rustml=debug"
+cargo run --release -p rustml-nlp --bin rustml-infer -- `
+  --safetensors google/gemma-3-1b-it --prompt "Hello" --max-tokens 5 --temperature 0 `
+  2>&1 | Tee-Object -FilePath "baseline_gemma3_$(Get-Date -Format yyyyMMdd).log"
 ```
 
 **Key metrics to baseline:**

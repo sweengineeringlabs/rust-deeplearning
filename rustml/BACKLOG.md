@@ -14,6 +14,8 @@
 5. **Document** — Record before/after in `docs/7-operations/audit/`
 
 ### Baseline Commands
+
+**Linux/macOS:**
 ```bash
 # Capture baseline (save to dated file)
 RUST_LOG=rustml=debug cargo run --release -p rustml-nlp --bin rustml-infer -- \
@@ -25,6 +27,21 @@ grep "model::forward" baseline.log      # Step times
 grep "transformer\[" baseline.log       # Layer times
 grep "\[attn\]" baseline.log            # Attention breakdown
 grep "prefill\|decode_step" baseline.log # Prefill vs decode
+```
+
+**Windows PowerShell:**
+```powershell
+# Capture baseline (save to dated file)
+$env:RUST_LOG="rustml=debug"
+cargo run --release -p rustml-nlp --bin rustml-infer -- `
+  --safetensors openai-community/gpt2 --prompt "Hello" --max-tokens 10 --temperature 0 `
+  2>&1 | Tee-Object -FilePath "baseline_$(Get-Date -Format yyyyMMdd).log"
+
+# Key metrics to extract
+Select-String "model::forward" baseline.log      # Step times
+Select-String "transformer\[" baseline.log       # Layer times
+Select-String "\[attn\]" baseline.log            # Attention breakdown
+Select-String "prefill|decode_step" baseline.log # Prefill vs decode
 ```
 
 > **Tip:** Run 3-5 times, discard first (cold cache), average the rest. System variance is typically 10-20%.
