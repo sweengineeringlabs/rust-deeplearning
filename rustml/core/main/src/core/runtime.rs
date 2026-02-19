@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
+use rayon::prelude::*;
 
 /// Global threshold for switching softmax from sequential to parallel (rayon).
 pub(crate) static SOFTMAX_PAR_THRESHOLD: AtomicUsize = AtomicUsize::new(4096);
@@ -90,6 +91,40 @@ impl RuntimeConfig {
             return "NEON";
         }
         "scalar"
+    }
+
+    /// Warm up the rayon thread pool by forcing all threads to wake and do work.
+    ///
+    /// This reduces jitter on the first few parallel operations by:
+    /// 1. Spawning all threads in the pool (if not already spawned)
+    /// 2. Warming up each thread's instruction cache with SIMD code paths
+    /// 3. Touching memory to populate TLB entries
+    ///
+    /// Call this after model loading but before timed inference.
+    pub fn warmup_thread_pool() {
+        let n_threads = rayon::current_num_threads();
+
+        // Allocate enough work to ensure every thread gets some
+        // Use a larger buffer to exercise memory subsystem
+        let work_size = n_threads * 1024; // 1K elements per thread
+        let mut buffer: Vec<f32> = vec![1.0; work_size];
+
+        // Force parallel iteration that touches every element
+        // This wakes all threads and warms their caches
+        buffer.par_chunks_mut(1024).for_each(|chunk| {
+            // Do enough work to warm instruction cache (SIMD paths)
+            for i in 0..chunk.len() {
+                chunk[i] = chunk[i] * 2.0 + 1.0;
+            }
+            // Memory barrier to ensure writes complete
+            std::sync::atomic::fence(Ordering::SeqCst);
+        });
+
+        // Second pass: simulate matmul-like access pattern
+        // Each thread reads from different offsets (like column-parallel matmul)
+        let _sum: f32 = buffer.par_chunks(1024)
+            .map(|chunk| chunk.iter().sum::<f32>())
+            .sum();
     }
 }
 

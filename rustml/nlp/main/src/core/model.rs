@@ -8,7 +8,7 @@ use crate::api::error::{NlpError, NlpResult};
 use crate::api::types::{LanguageModel, ModelConfig};
 use crate::core::weight_map::WeightMap;
 use std::time::Instant;
-use rustml_core::{DType, Tensor, f32_vec_to_bytes};
+use rustml_core::{DType, Tensor, f32_vec_to_bytes, RuntimeConfig};
 use rustml_nn::{
     Activation, Embedding, FeedForward, KVCache, LayerNorm, Linear, MoeLayer,
     MultiHeadAttention, NormLayer, PositionEncoding, RMSNorm, RoPEFreqs, TransformerBlock,
@@ -938,7 +938,12 @@ impl LlmModel {
     /// Run a single dummy forward pass to warm up the M=1 decode code path.
     /// Exercises rayon column-parallel matmul, SIMD kernels, and TLB entries.
     /// Call after quantize_all_weights() and fuse_gate_up_weights().
+    ///
+    /// Also warms up the rayon thread pool to reduce jitter on first operations.
     pub fn warmup_decode(&self) -> NlpResult<()> {
+        // First, warm up the rayon thread pool to reduce scheduling jitter
+        RuntimeConfig::warmup_thread_pool();
+
         let n_kv_heads = self.config.n_kv_heads.unwrap_or(self.config.n_heads);
         let head_dim = self.config.head_dim.unwrap_or(self.config.dim / self.config.n_heads);
         let mut cache = KVCache::new(self.config.n_layers, 4, head_dim, n_kv_heads);
