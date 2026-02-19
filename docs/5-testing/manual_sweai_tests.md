@@ -35,14 +35,16 @@
 | Top-level help | `sweai --help` | Lists `infer`, `gguf`, `hub`, `tokenizer` subcommands with descriptions |
 | Version flag | `sweai --version` | Prints version string matching workspace version |
 | No args | `sweai` | Shows error and usage listing all subcommands |
-| Infer help | `sweai infer --help` | Lists `GGUF_PATH` positional, `--safetensors`, `--prompt`, `--batch-file`, `--max-tokens`, `--temperature`, `--top-k`, `--top-p`, `--repetition-penalty`, `--stream`, `--chat`, `--timeout` |
+| Infer help | `sweai infer --help` | Lists `GGUF_PATH` positional, `--safetensors`, `--prompt`, `--batch-file`, `--max-tokens`, `--temperature`, `--top-k`, `--top-p`, `--repetition-penalty`, `--stream`, `--interactive`, `--chat`, `--timeout` |
 | GGUF help | `sweai gguf --help` | Lists `info`, `meta`, `tensors`, `verify` subcommands |
 | Hub help | `sweai hub --help` | Lists `download`, `list`, `info` subcommands and `--cache-dir`, `--token` flags |
 | Tokenizer help | `sweai tokenizer --help` | Lists `--gguf`, `--hf`, `--bpe`, `--byte` backends and `encode`, `decode`, `info` subcommands |
 
 ## 2. Infer Subcommand
 
-> **Prerequisite**: A GGUF model file (e.g., Gemma 3 1B IT Q4_0). Release build recommended: `cargo build --release -p rustml-cli`.
+> **Prerequisite**: A GGUF model file or a cached SafeTensors model. Release build recommended: `cargo build --release -p rustml-cli`.
+>
+> **Model source**: Provide **either** a positional `[GGUF_PATH]` **or** `--safetensors <MODEL_ID>`, not both. Throughout this section, `model.gguf` is a placeholder — substitute with your actual GGUF file path. GGUF models downloaded via `sweai hub download` are cached under `~/.cache/huggingface/hub/models--<org>--<repo>/snapshots/<rev>/`.
 
 | Test | Command | Expected |
 |------|---------|----------|
@@ -62,6 +64,11 @@
 | SafeTensors Gemma 3 | `sweai infer --safetensors google/gemma-3-1b-it --prompt "The capital of France is" --max-tokens 20 --stream` | Auto-detects `arch=gemma3`; stderr: `Tokenizer: <N> tokens (tokenizer.json)`; generates text |
 | SafeTensors Gemma 3 chat | `sweai infer --safetensors google/gemma-3-1b-it --prompt "What is 2+2?" --chat --max-tokens 32` | Uses chat template from config; generates conversational response |
 | SafeTensors bad model | `sweai infer --safetensors nonexistent/model-xyz --prompt "Hi"` | Error: `Failed to download model` |
+| Interactive mode (GGUF) | `sweai infer model.gguf --interactive --max-tokens 128` | Enters REPL; stderr: `Interactive chat mode...`; type `quit` to exit |
+| Interactive mode (SafeTensors) | `sweai infer --safetensors google/gemma-3-1b-it --interactive --max-tokens 128` | Enters REPL; uses chat template; streams responses |
+| Interactive multi-turn | (in interactive mode) type `My name is Alice`, then `What is my name?` | Second response references "Alice" (conversation history maintained) |
+| Interactive /clear | (in interactive mode) type `/clear` | stderr: `[History cleared]` |
+| Interactive quit | (in interactive mode) type `quit` or `exit` | Prints `Goodbye!` and exits |
 
 ## 3. GGUF Subcommand
 
@@ -134,6 +141,8 @@
 | Infer no model | `sweai infer --prompt "Hi"` | Error: `Provide a GGUF model path or --safetensors <MODEL_ID>` |
 | Infer bad file | `sweai infer /nonexistent.gguf --prompt "Hi"` | Error: `Failed to parse GGUF` |
 | Infer stream + batch | `sweai infer model.gguf --batch-file f.txt --stream` | Error: `--stream is not supported with --batch-file` |
+| Infer interactive + prompt | `sweai infer model.gguf --interactive --prompt "Hi"` | Error: `--interactive` cannot be used with `--prompt` |
+| Infer interactive + batch | `sweai infer model.gguf --interactive --batch-file f.txt` | Error: `--interactive` cannot be used with `--batch-file` |
 | Infer timeout zero | `sweai infer model.gguf --prompt "Hi" --timeout 0` | Error: `--timeout must be > 0.0` |
 | GGUF bad file | `sweai gguf info /nonexistent.gguf` | Error: `Failed to parse GGUF` |
 | Hub uncached info | `sweai hub info nonexistent/model` | Error: model not cached |

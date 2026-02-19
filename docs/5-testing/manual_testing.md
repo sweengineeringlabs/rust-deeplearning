@@ -28,6 +28,22 @@
 5. (Optional) Internet access for Hub download tests
 6. (Optional) A HuggingFace API token for gated model tests (e.g., `google/gemma-3-1b-it`)
 
+### Model cache location
+
+All models downloaded via `sweai hub download` (or `rustml-hub-cli download`) are cached under `~/.cache/huggingface/hub/`:
+
+```
+~/.cache/huggingface/hub/
+├── models--openai-community--gpt2/snapshots/<rev>/          # SafeTensors (config.json, model.safetensors, ...)
+├── models--google--gemma-3-1b-it/snapshots/<rev>/           # SafeTensors (gated, requires HF_TOKEN)
+├── models--TheBloke--TinyLlama-1.1B-Chat-v1.0-GGUF/snapshots/<rev>/tinyllama-1.1b-chat-v1.0.Q4_0.gguf
+└── ...
+```
+
+Override with `HF_HOME` or `HF_HUB_CACHE` environment variables, or `sweai hub --cache-dir /custom/path`.
+
+**Note on `[GGUF_PATH]`**: The `sweai infer` (and `rustml-infer`) command accepts **either** a positional `[GGUF_PATH]` **or** `--safetensors <MODEL_ID>`, not both. The `[GGUF_PATH]` is optional (square brackets = optional in clap). Throughout the test docs, `model.gguf` is a placeholder — substitute with the actual path to your GGUF file.
+
 ### HuggingFace Token Setup
 
 A token is required to download gated models (e.g., Gemma 3). Token precedence (highest to lowest):
@@ -90,11 +106,11 @@ The `sweai` binary is a single facade over all four standalone CLIs. Every stand
 
 | Document | Domain | Tests |
 |----------|--------|-------|
-| [SweAI Unified CLI Tests](manual_sweai_tests.md) | Top-level help, subcommand dispatch, parity, error handling | 70 |
+| [SweAI Unified CLI Tests](manual_sweai_tests.md) | Top-level help, subcommand dispatch, parity, error handling | 77 |
 | [Tokenizer Tests](manual_tokenizer_tests.md) | Tokenizer encode/decode, backends, vocab info | 28 |
 | [GGUF Inspector Tests](manual_gguf_inspect_tests.md) | GGUF metadata, tensor listing, model info | 25 |
 | [Hub CLI Tests](manual_hub_cli_tests.md) | Model download, cache listing, config display, SafeTensors inference | 30 |
-| [Inference Tests](manual_infer_tests.md) | GGUF and SafeTensors model loading, multi-arch dispatch, text generation, streaming, batch, timeout, optimization profiles | 92 |
+| [Inference Tests](manual_infer_tests.md) | GGUF and SafeTensors model loading, multi-arch dispatch, text generation, streaming, batch, interactive mode, timeout, optimization profiles | 113 |
 
 > **Note:** Each test document lists standalone binary commands. All commands can also be run via the unified `sweai` binary — see the equivalence table above.
 
@@ -123,11 +139,11 @@ cargo test -p rustml-tokenizer
 | GGUF CLI integration | `rustml/gguf/tests/cli.rs` | 27 |
 | Hub unit tests | `rustml/hub/main/src/` | 8 |
 | Hub CLI integration | `rustml/hub/tests/cli.rs` | 15 |
-| NLP unit tests | `rustml/nlp/main/src/` | 69 |
+| NLP unit tests | `rustml/nlp/main/src/` | 74 |
 | NLP integration tests | `rustml/nlp/tests/` | 4 |
 | Infer CLI integration | `rustml/nlp/tests/infer_cli.rs` | 14 |
 | Tokenizer CLI integration | `rustml/tokenizer/tests/cli.rs` | 18 |
-| **Total** | | **273** |
+| **Total** | | **278** |
 
 ---
 

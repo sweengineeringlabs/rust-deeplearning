@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -55,6 +55,10 @@ pub struct InferArgs {
     /// Print tokens as they are generated.
     #[arg(long)]
     stream: bool,
+
+    /// Start an interactive multi-turn chat session (implies --chat --stream).
+    #[arg(long, conflicts_with_all = ["prompt", "batch_file"])]
+    interactive: bool,
 
     /// Wrap the prompt in a chat template extracted from GGUF metadata.
     #[arg(long)]
@@ -158,8 +162,17 @@ fn run_generation(
     chat_template: Option<String>,
     profile: OptProfile,
 ) -> Result<()> {
+    // Interactive mode auto-enables chat.
+    let use_chat = args.chat || args.interactive;
+    if args.interactive && chat_template.is_none() {
+        eprintln!("  [warn] no chat template found in model; interactive mode may produce poor results");
+    }
+
     // Read prompt(s) early so we can compute effective KV cache context length.
-    let (prompts, is_batch) = if let Some(ref contents) = batch_contents {
+    // Interactive mode doesn't need prompts upfront.
+    let (prompts, is_batch) = if args.interactive {
+        (vec![], false)
+    } else if let Some(ref contents) = batch_contents {
         let ps: Vec<String> = contents
             .lines()
             .filter(|l| !l.trim().is_empty())
@@ -173,17 +186,25 @@ fn run_generation(
 
     // Compute effective context length for KV cache auto-sizing.
     let model_max = model.max_sequence_length();
-    let effective_ctx = match args.context_len {
-        Some(cl) => cl.min(model_max),
-        None => {
-            let max_prompt_tokens = prompts
-                .iter()
-                .map(|p| tokenizer.encode(p).map(|t| t.len()).unwrap_or(0))
-                .max()
-                .unwrap_or(0);
-            // Margin: extra 128 if chat template may add tokens, else 64
-            let margin = if args.chat { 128 } else { 64 };
-            (max_prompt_tokens + args.max_tokens + margin).min(model_max)
+    let effective_ctx = if args.interactive {
+        // Interactive conversations need all available context.
+        match args.context_len {
+            Some(cl) => cl.min(model_max),
+            None => model_max,
+        }
+    } else {
+        match args.context_len {
+            Some(cl) => cl.min(model_max),
+            None => {
+                let max_prompt_tokens = prompts
+                    .iter()
+                    .map(|p| tokenizer.encode(p).map(|t| t.len()).unwrap_or(0))
+                    .max()
+                    .unwrap_or(0);
+                // Margin: extra 128 if chat template may add tokens, else 64
+                let margin = if use_chat { 128 } else { 64 };
+                (max_prompt_tokens + args.max_tokens + margin).min(model_max)
+            }
         }
     };
 
@@ -217,12 +238,16 @@ fn run_generation(
     if let Some(bos) = bos_token_id {
         generator = generator.with_bos_token(bos);
     }
-    if args.chat {
+    if use_chat {
         generator = generator.with_chat_template(chat_template);
     }
     if let Some(secs) = args.timeout {
         generator = generator.with_timeout(Duration::from_secs_f64(secs));
         eprintln!("  Timeout: {:.1}s", secs);
+    }
+
+    if args.interactive {
+        return run_interactive(&generator, tokenizer, args.max_tokens);
     }
 
     if is_batch {
@@ -284,6 +309,97 @@ fn run_generation(
             eprintln!("---");
             eprintln!("  Generated in {:.2}s", elapsed.as_secs_f64());
         }
+    }
+
+    Ok(())
+}
+
+fn run_interactive(
+    generator: &rustml_nlp::Generator,
+    tokenizer: &(dyn rustml_tokenizer::Tokenizer + Sync),
+    max_tokens: usize,
+) -> Result<()> {
+    eprintln!("Interactive chat mode. Type 'quit' or 'exit' to leave, '/clear' to reset history.");
+    eprintln!("---");
+
+    let mut history: Vec<(String, String)> = Vec::new();
+    let stdin = io::stdin();
+
+    loop {
+        eprint!("> ");
+        io::stderr().flush().ok();
+
+        let mut input = String::new();
+        match stdin.read_line(&mut input) {
+            Ok(0) => {
+                // EOF (Ctrl-D)
+                eprintln!("\nGoodbye!");
+                break;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("Error reading input: {}", e);
+                break;
+            }
+        }
+
+        let input = input.trim();
+        if input.is_empty() {
+            continue;
+        }
+
+        match input {
+            "quit" | "exit" => {
+                eprintln!("Goodbye!");
+                break;
+            }
+            "/clear" => {
+                history.clear();
+                eprintln!("[History cleared]");
+                continue;
+            }
+            _ => {}
+        }
+
+        // Build messages from history + current input
+        let mut messages: Vec<(&str, &str)> = Vec::new();
+        for (role, content) in &history {
+            messages.push((role.as_str(), content.as_str()));
+        }
+        messages.push(("user", input));
+
+        let gen_start = Instant::now();
+        let mut token_count: usize = 0;
+
+        let response = generator.generate_turn_stream(&messages, max_tokens, |token_id| {
+            token_count += 1;
+            match tokenizer.decode(&[token_id]) {
+                Ok(piece) => {
+                    print!("{piece}");
+                    io::stdout().flush().ok();
+                }
+                Err(e) => eprintln!("[warn] failed to decode token {}: {}", token_id, e),
+            }
+            true
+        })?;
+        println!();
+
+        let elapsed = gen_start.elapsed();
+        let tps = if elapsed.as_secs_f64() > 0.0 {
+            token_count as f64 / elapsed.as_secs_f64()
+        } else {
+            0.0
+        };
+        eprintln!(
+            "  [{} tokens in {:.2}s ({:.1} tok/s)]",
+            token_count,
+            elapsed.as_secs_f64(),
+            tps,
+        );
+
+        // Append to history
+        history.push(("user".to_string(), input.to_string()));
+        history.push(("assistant".to_string(), response));
     }
 
     Ok(())

@@ -65,6 +65,88 @@ fn build_template_segments(prompt: &str, template: &str) -> Vec<TemplateSegment>
     vec![TemplateSegment::Text(prompt.to_string())]
 }
 
+/// Build template segments for a multi-turn conversation given a chat template string.
+/// Messages are `(role, content)` pairs where role is `"user"` or `"assistant"`.
+fn build_multi_turn_segments(messages: &[(&str, &str)], template: &str) -> Vec<TemplateSegment> {
+    let mut segments = Vec::new();
+
+    // Gemma format: <start_of_turn>user\n{msg}<end_of_turn>\n<start_of_turn>model\n
+    if template.contains("<start_of_turn>") {
+        for &(role, content) in messages {
+            let model_role = if role == "assistant" { "model" } else { role };
+            segments.push(TemplateSegment::Special("<start_of_turn>".into()));
+            segments.push(TemplateSegment::Text(format!("{}\n{}", model_role, content)));
+            segments.push(TemplateSegment::Special("<end_of_turn>".into()));
+            segments.push(TemplateSegment::Text("\n".into()));
+        }
+        // Start the assistant turn
+        segments.push(TemplateSegment::Special("<start_of_turn>".into()));
+        segments.push(TemplateSegment::Text("model\n".into()));
+        return segments;
+    }
+
+    // ChatML format: <|system|>\n...\n<|user|>\n{msg}</s>\n<|assistant|>\n{resp}</s>\n...
+    if template.contains("<|user|>") || template.contains("<|system|>") {
+        segments.push(TemplateSegment::Special("<|system|>".into()));
+        segments.push(TemplateSegment::Text("\nYou are a helpful assistant.".into()));
+        segments.push(TemplateSegment::Special("</s>".into()));
+        segments.push(TemplateSegment::Text("\n".into()));
+
+        for &(role, content) in messages {
+            let tag = if role == "user" { "<|user|>" } else { "<|assistant|>" };
+            segments.push(TemplateSegment::Special(tag.into()));
+            segments.push(TemplateSegment::Text(format!("\n{}", content)));
+            segments.push(TemplateSegment::Special("</s>".into()));
+            segments.push(TemplateSegment::Text("\n".into()));
+        }
+        segments.push(TemplateSegment::Special("<|assistant|>".into()));
+        segments.push(TemplateSegment::Text("\n".into()));
+        return segments;
+    }
+
+    // Llama/Mistral format: [INST] msg [/INST] resp [INST] msg2 [/INST]
+    if template.contains("[INST]") {
+        for &(role, content) in messages {
+            if role == "user" {
+                segments.push(TemplateSegment::Special("[INST]".into()));
+                segments.push(TemplateSegment::Text(format!(" {} ", content)));
+                segments.push(TemplateSegment::Special("[/INST]".into()));
+            } else {
+                segments.push(TemplateSegment::Text(format!(" {} ", content)));
+            }
+        }
+        return segments;
+    }
+
+    // Qwen format: <|im_start|>system\n...<|im_end|>\n<|im_start|>user\n{msg}<|im_end|>\n...
+    if template.contains("<|im_start|>") {
+        segments.push(TemplateSegment::Special("<|im_start|>".into()));
+        segments.push(TemplateSegment::Text("system\nYou are a helpful assistant.".into()));
+        segments.push(TemplateSegment::Special("<|im_end|>".into()));
+        segments.push(TemplateSegment::Text("\n".into()));
+
+        for &(role, content) in messages {
+            segments.push(TemplateSegment::Special("<|im_start|>".into()));
+            segments.push(TemplateSegment::Text(format!("{}\n{}", role, content)));
+            segments.push(TemplateSegment::Special("<|im_end|>".into()));
+            segments.push(TemplateSegment::Text("\n".into()));
+        }
+        segments.push(TemplateSegment::Special("<|im_start|>".into()));
+        segments.push(TemplateSegment::Text("assistant\n".into()));
+        return segments;
+    }
+
+    // Unknown template — plain text fallback
+    eprintln!("[warn] unrecognized chat template format for multi-turn, falling back to plain text");
+    let text: String = messages
+        .iter()
+        .map(|(role, content)| format!("{}: {}\n", role, content))
+        .collect();
+    segments.push(TemplateSegment::Text(text));
+    segments.push(TemplateSegment::Text("assistant: ".into()));
+    segments
+}
+
 /// High-level generator combining a model, tokenizer, and sampling parameters.
 ///
 /// Supports greedy/sampling generation, streaming output, beam search, and
@@ -594,6 +676,135 @@ impl<'a> Generator<'a> {
             .par_iter()
             .map(|prompt| self.generate(prompt, max_tokens))
             .collect::<Result<Vec<_>, _>>()
+    }
+
+    /// Encode a multi-turn conversation, applying the chat template.
+    /// Messages are `(role, content)` pairs where role is `"user"` or `"assistant"`.
+    pub fn encode_conversation(&self, messages: &[(&str, &str)]) -> NlpResult<Vec<u32>> {
+        let template = match self.chat_template {
+            Some(ref tmpl) => tmpl,
+            None => {
+                // No chat template — format as plain text
+                let text: String = messages
+                    .iter()
+                    .map(|(role, content)| format!("{}: {}\n", role, content))
+                    .collect();
+                let text = format!("{}assistant: ", text);
+                return Ok(self.tokenizer.encode(&text)?);
+            }
+        };
+
+        let segments = build_multi_turn_segments(messages, template);
+
+        let mut token_ids = Vec::new();
+        let mut all_resolved = true;
+
+        for seg in &segments {
+            match seg {
+                TemplateSegment::Special(tok) => {
+                    if let Some(id) = self.tokenizer.token_to_id(tok) {
+                        token_ids.push(id);
+                    } else {
+                        all_resolved = false;
+                        break;
+                    }
+                }
+                TemplateSegment::Text(text) => {
+                    if !text.is_empty() {
+                        let ids = self.tokenizer.encode(text)?;
+                        token_ids.extend(ids);
+                    }
+                }
+            }
+        }
+
+        if all_resolved {
+            return Ok(token_ids);
+        }
+
+        // Fallback: encode as a single formatted string
+        let formatted: String = segments
+            .iter()
+            .map(|seg| match seg {
+                TemplateSegment::Special(s) => s.as_str(),
+                TemplateSegment::Text(t) => t.as_str(),
+            })
+            .collect();
+        Ok(self.tokenizer.encode(&formatted)?)
+    }
+
+    /// Resolve template-specific end-of-turn token IDs.
+    fn resolve_stop_tokens(&self) -> Vec<u32> {
+        let mut ids = Vec::new();
+        let candidates = ["<end_of_turn>", "<|im_end|>", "</s>", "<|eot_id|>"];
+        for name in &candidates {
+            if let Some(id) = self.tokenizer.token_to_id(name) {
+                ids.push(id);
+            }
+        }
+        ids
+    }
+
+    /// Check if a token is a stop token (EOS or end-of-turn).
+    fn is_stop_token(&self, token: u32, end_of_turn_ids: &[u32]) -> bool {
+        if let Some(eos) = self.eos_token_id {
+            if token == eos {
+                return true;
+            }
+        }
+        end_of_turn_ids.contains(&token)
+    }
+
+    /// Generate a single assistant turn in a multi-turn conversation with streaming.
+    ///
+    /// Encodes the full conversation history, runs prefill + decode with the
+    /// streaming callback, and returns only the assistant's new response text.
+    /// Stops on EOS or template-specific end-of-turn tokens.
+    pub fn generate_turn_stream<F: FnMut(u32) -> bool>(
+        &self,
+        messages: &[(&str, &str)],
+        max_tokens: usize,
+        mut callback: F,
+    ) -> NlpResult<String> {
+        self.validate_params()?;
+        let mut tokens = self.encode_conversation(messages)?;
+        if let Some(bos) = self.bos_token_id {
+            tokens.insert(0, bos);
+        }
+        let prompt_len = tokens.len();
+        let mut cache = self.make_cache();
+        let mut sampling_buf = sampling::SamplingBuffer::new(self.model.vocab_size());
+
+        let end_of_turn_ids = self.resolve_stop_tokens();
+
+        let last_logits = self.prefill(&tokens, &mut cache)?;
+        let mut next_token = self.sample_token(&last_logits, &tokens, &mut sampling_buf);
+
+        if self.is_stop_token(next_token, &end_of_turn_ids) {
+            return Ok(String::new());
+        }
+        tokens.push(next_token);
+        if !callback(next_token) {
+            let response_tokens = &tokens[prompt_len..];
+            return Ok(self.tokenizer.decode(response_tokens)?);
+        }
+
+        for _ in 1..max_tokens {
+            self.check_deadline()?;
+            let logits = self.decode_step(next_token, &mut cache)?;
+            next_token = self.sample_token(&logits, &tokens, &mut sampling_buf);
+
+            if self.is_stop_token(next_token, &end_of_turn_ids) {
+                break;
+            }
+            tokens.push(next_token);
+            if !callback(next_token) {
+                break;
+            }
+        }
+
+        let response_tokens = &tokens[prompt_len..];
+        Ok(self.tokenizer.decode(response_tokens)?)
     }
 }
 

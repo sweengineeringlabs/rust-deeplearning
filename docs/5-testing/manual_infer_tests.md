@@ -24,6 +24,7 @@
 - [SafeTensors Generation (GPT-2)](#10-safetensors-generation-gpt-2)
 - [SafeTensors Multi-Architecture](#11-safetensors-multi-architecture)
 - [SafeTensors Diagnostics](#12-safetensors-diagnostics)
+- [Interactive Mode](#13-interactive-mode)
 - [Optimization Profiles](#14-optimization-profiles)
 - [Performance Profiling (RUST_LOG)](#15-performance-profiling-rust_log)
 - [Error Cases](#16-error-cases)
@@ -31,6 +32,14 @@
 ---
 
 > **Prerequisite**: A GGUF model file (e.g., Gemma 3 1B IT Q4_0) for GGUF tests, or a cached SafeTensors model (e.g., `openai-community/gpt2`) for SafeTensors tests. Release build recommended for inference speed: `cargo build --release -p rustml-nlp`.
+>
+> **Model source — `[GGUF_PATH]` vs `--safetensors`**: The `[GGUF_PATH]` positional argument is optional. You must provide **either** a GGUF file path **or** `--safetensors <MODEL_ID>`, not both. Throughout this document, `model.gguf` is a placeholder — substitute with your actual GGUF file path.
+>
+> **Finding GGUF files**: GGUF models downloaded via `sweai hub download` are cached under `~/.cache/huggingface/hub/`. For example:
+> ```
+> ~/.cache/huggingface/hub/models--TheBloke--TinyLlama-1.1B-Chat-v1.0-GGUF/snapshots/<rev>/tinyllama-1.1b-chat-v1.0.Q4_0.gguf
+> ```
+> You can also use a local GGUF file path directly (e.g., `/path/to/model.gguf`).
 >
 > **Gated models**: Gated models (e.g., `google/gemma-3-1b-it`) require a HuggingFace token. Set `export HF_TOKEN=hf_xxx` before running, or use `~/.cache/huggingface/token`. See [Manual Testing Hub](manual_testing.md#huggingface-token-setup) for full token precedence.
 >
@@ -40,7 +49,7 @@
 
 | Test | Command | Expected |
 |------|---------|----------|
-| Help flag | `rustml-infer --help` | Lists `GGUF_PATH` positional, `--safetensors`, `--prompt`, `--batch-file`, `--max-tokens`, `--temperature`, `--top-k`, `--top-p`, `--repetition-penalty`, `--stream`, `--chat`, `--timeout`, `--opt-profile` |
+| Help flag | `rustml-infer --help` | Lists `GGUF_PATH` positional, `--safetensors`, `--prompt`, `--batch-file`, `--max-tokens`, `--temperature`, `--top-k`, `--top-p`, `--repetition-penalty`, `--stream`, `--interactive`, `--chat`, `--timeout`, `--opt-profile` |
 | Version flag | `rustml-infer --version` | Prints version string |
 | No args | `rustml-infer` | Error: `Provide a GGUF model path or --safetensors <MODEL_ID>` |
 | Unified help | `sweai infer --help` | Same flags as `rustml-infer --help` |
@@ -100,6 +109,7 @@
 | Batch prompt count | (same as above) | stderr shows `Batch: 3 prompts` and `3 prompts in Xs (Y prompts/sec)` |
 | Batch with sampling | `rustml-infer model.gguf --batch-file /tmp/prompts.txt --temperature 0.5 --top-k 20 --max-tokens 32` | Sampling flags applied to all prompts |
 | Batch conflicts with prompt | `rustml-infer model.gguf --batch-file /tmp/prompts.txt --prompt "Hello"` | Error: `--prompt` cannot be used with `--batch-file` |
+| Batch conflicts with interactive | `rustml-infer model.gguf --batch-file /tmp/prompts.txt --interactive` | Error: `--interactive` cannot be used with `--batch-file` |
 | Batch conflicts with stream | `rustml-infer model.gguf --batch-file /tmp/prompts.txt --stream` | Error: `--stream is not supported with --batch-file` |
 | Empty batch file | `touch /tmp/empty.txt && rustml-infer model.gguf --batch-file /tmp/empty.txt` | Error: `Batch file is empty` |
 | Nonexistent batch file | `rustml-infer model.gguf --batch-file /nonexistent.txt` | Error: `Failed to read batch file` |
@@ -188,6 +198,33 @@
 | Quantization | stderr during load | `Quantized <N> linear layers F32 -> Q8_0` (N depends on model dimensions; layers with max dim < 768 are skipped) |
 | Gate+up fusion | stderr during load | `Fused <N> gate+up projection pairs` (N = number of SwiGLU/GeGLU layers; absent for models without gate_proj like GPT-2) |
 | QKV fusion | stderr during load | `Fused <N> QKV projection triples` (N = number of attention layers with Q8_0 no-bias Q/K/V; absent for models with biased projections like GPT-2) |
+
+## 13. Interactive Mode
+
+> **What:** The `--interactive` flag starts a multi-turn REPL-style chat session. It implies `--chat` and `--stream` behavior. The full conversation history is re-encoded and re-prefilled each turn.
+>
+> **Prerequisites:** A GGUF model with a chat template (e.g., Gemma 3 1B IT Q4_0) or a SafeTensors model (e.g., `google/gemma-3-1b-it`). Interactive mode requires an interactive terminal for stdin reading. For scripted testing, pipe input: `printf 'Hello\nquit\n' | sweai infer model.gguf --interactive`.
+
+| Test | Command / Steps | Expected |
+|------|-----------------|----------|
+| Enter interactive mode (GGUF) | `rustml-infer model.gguf --interactive --max-tokens 256` | stderr: `Interactive chat mode. Type 'quit' or 'exit' to leave, '/clear' to reset history.` then `---` separator, then `> ` prompt |
+| Enter interactive mode (SafeTensors) | `rustml-infer --safetensors google/gemma-3-1b-it --interactive --max-tokens 128` | Same welcome message; uses chat template from config |
+| Single turn | Type `Hello` and press Enter | Streams response token-by-token; stderr shows `[N tokens in Xs (Y tok/s)]` |
+| Multi-turn history | 1. Type `My name is Alice` 2. After response, type `What is my name?` | Second response references "Alice" (model sees full conversation history) |
+| Empty input skipped | Press Enter without typing | No generation; shows `> ` prompt again |
+| Quit command | Type `quit` | Prints `Goodbye!` on stderr and exits |
+| Exit command | Type `exit` | Prints `Goodbye!` on stderr and exits |
+| Ctrl-D (EOF) | Press Ctrl-D on empty line | Prints `Goodbye!` on stderr and exits |
+| Clear history | Type `/clear` | stderr: `[History cleared]`; subsequent prompts start fresh (no prior context) |
+| Clear then verify | 1. Type `My name is Bob` 2. Type `/clear` 3. Type `What is my name?` | Model does not know the name (history was cleared) |
+| Sampling params respected | `rustml-infer model.gguf --interactive --temperature 0 --max-tokens 64` | Greedy decoding in interactive mode (deterministic per conversation state) |
+| Max tokens per turn | `rustml-infer model.gguf --interactive --max-tokens 10` | Each response limited to ~10 tokens |
+| No chat template warning | `rustml-infer --safetensors openai-community/gpt2 --interactive` | stderr: `[warn] no chat template found in model; interactive mode may produce poor results` |
+| Conflicts with --prompt | `rustml-infer model.gguf --interactive --prompt "Hello"` | Error: `--interactive` cannot be used with `--prompt` |
+| Conflicts with --batch-file | `rustml-infer model.gguf --interactive --batch-file /tmp/prompts.txt` | Error: `--interactive` cannot be used with `--batch-file` |
+| KV cache uses full context | `rustml-infer model.gguf --interactive --max-tokens 128` | stderr KV cache line shows full model context length (not prompt-sized) |
+| Opt profile in interactive | `rustml-infer model.gguf --interactive --max-tokens 64 --opt-profile baseline` | Baseline profile applied; generates text |
+| Timeout in interactive | `rustml-infer model.gguf --interactive --max-tokens 4096 --timeout 3` | Each turn stops after ~3s if not finished |
 
 ## 14. Optimization Profiles
 
@@ -444,6 +481,8 @@ The runtime Q8_0 quantization applies a dimension threshold (`min_dim = 768`): l
 | Top-k zero | `rustml-infer model.gguf --prompt "Hi" --top-k 0` | Error: `--top-k must be > 0` |
 | Top-p out of range | `rustml-infer model.gguf --prompt "Hi" --top-p 1.5` | Error: `--top-p must be in (0.0, 1.0]` |
 | Repetition penalty zero | `rustml-infer model.gguf --prompt "Hi" --repetition-penalty 0` | Error: `--repetition-penalty must be > 0.0` |
+| Interactive + prompt conflict | `rustml-infer model.gguf --interactive --prompt "Hi"` | Error: `--interactive` cannot be used with `--prompt` |
+| Interactive + batch conflict | `rustml-infer model.gguf --interactive --batch-file /tmp/f.txt` | Error: `--interactive` cannot be used with `--batch-file` |
 | SafeTensors bad model | `rustml-infer --safetensors nonexistent/model-xyz --prompt "Hi"` | Error: `Failed to download model` |
 
 ---
