@@ -23,6 +23,7 @@
 - [Tensor Shape Reference](#tensor-shape-reference)
 - [Architecture Variants](#architecture-variants)
 - [Optimization Profiles](#optimization-profiles)
+- [Runtime Optimizations](#runtime-optimizations)
 
 ---
 
@@ -263,6 +264,10 @@ The attention module computes scaled dot-product attention with optional GQA, Ro
 ```
 input [1, S_new, d_model]
   │
+  │  ┌─ If fused_qkv available (Q8_0, no biases):
+  │  │    fused_qkv(input) → [q|k|v], then slice
+  │  │
+  │  └─ Otherwise (separate projections):
   ├── q_proj(input) → q [1, S_new, d_model]
   ├── k_proj(input) → k [1, S_new, kv_dim]
   └── v_proj(input) → v [1, S_new, kv_dim]
@@ -535,10 +540,101 @@ All profiles produce numerically identical output under greedy decoding (tempera
 
 ---
 
+## Runtime Optimizations
+
+Beyond optimization profiles, several runtime optimizations reduce inference latency:
+
+### Q8_0 Quantization
+
+Linear layers are automatically quantized from F32 to Q8_0 at model load time. The dimension threshold determines which layers qualify:
+
+```
+Quantization rule:
+  max(in_features, out_features) >= 768  →  quantize to Q8_0
+  max(in_features, out_features) < 768   →  keep F32
+```
+
+| Model | d_model | Layers Quantized | Memory Reduction |
+|-------|---------|------------------|------------------|
+| GPT-2 | 768 | 73 (all linear) | ~75% |
+| Gemma 3 1B | 1152 | 183 (all linear) | ~75% |
+
+### Weight Fusion
+
+After quantization, compatible weight pairs are fused to reduce matmul dispatch overhead:
+
+**Gate+Up Fusion (SwiGLU/GeGLU layers):**
+```
+Before: gate_proj(x), up_proj(x)    →  2 matmul dispatches
+After:  fused_gate_up(x)            →  1 matmul dispatch, slice output
+```
+
+**QKV Fusion (Attention layers, requires no bias):**
+```
+Before: q_proj(x), k_proj(x), v_proj(x)  →  3 matmul dispatches
+After:  fused_qkv(x)                      →  1 matmul dispatch, slice output
+```
+
+| Model | Gate+Up Fused | QKV Fused | Reason |
+|-------|---------------|-----------|--------|
+| GPT-2 | 0 | 0 | No gate_proj; biased Q/K/V |
+| Gemma 3 1B | 26 | 26 | GeGLU; no biases |
+
+### Thread Pool Warmup
+
+Before timed inference, `RuntimeConfig::warmup_thread_pool()` pre-warms the rayon thread pool:
+
+```
+Warmup actions:
+1. Spawn all rayon threads (avoid first-use latency)
+2. Exercise SIMD code paths (warm instruction cache)
+3. Touch memory buffers (populate TLB entries)
+```
+
+**Impact on jitter:**
+| Metric | Before Warmup | After Warmup | Change |
+|--------|---------------|--------------|--------|
+| Layer variance | 5.1x | 2.3x | -55% |
+| Step variance | 1.9x | 1.4x | -26% |
+
+### Attention Component Timing
+
+Trace-level profiling (`RUST_LOG=rustml=trace`) breaks down attention into 7 components:
+
+```
+[attn] layer=N QKV=<T>ms QKnorm=<T>ms RoPE=<T>ms QK^T=<T>ms softmax=<T>ms A*V=<T>ms out=<T>ms
+```
+
+| Component | Description | Typical % |
+|-----------|-------------|-----------|
+| QKV | Q/K/V projections (fused or separate) | 50-60% |
+| QKnorm | QK normalization (Gemma 3 only) | 5% |
+| RoPE | Rotary position encoding | <2% |
+| QK^T | Attention scores + scaling | 10-15% |
+| softmax | Attention weights | <2% |
+| A*V | Weighted value aggregation | <2% |
+| out | Output projection | 18-25% |
+
+**Key insight:** Core attention ops (QK^T + softmax + A*V) total <0.1ms per layer. Projections dominate.
+
+### Prefill vs Decode Efficiency
+
+Prefill processes multiple tokens in one forward pass; decode processes one token at a time:
+
+| Model | Prefill (per-token) | Decode | Efficiency |
+|-------|---------------------|--------|------------|
+| GPT-2 (10 tokens) | ~38ms | ~50ms | Prefill 24% faster |
+| Gemma 3 (10 tokens) | ~160ms | ~178ms | Prefill 10% faster |
+
+Prefill is more efficient due to better memory bandwidth utilization and cache locality.
+
+---
+
 ## See Also
 
 - [Tokenizer–Weight Integration](guides/tokenizer_weight_integration.md) — how tokenization connects to model weights through the embedding matrix
 - [Project Structure](project_structure.md) — crate layout and SEA layering conventions
 - [ADR-001: Unified LlmModel](adr/adr-001-unified-llmmodel-for-gpt2.md) — why GGUF and SafeTensors share one model path
 - [Model Verification Guide](../4-development/guides/model-verification.md) — verifying correctness across the pipeline
-- [Manual Inference Tests](../5-testing/manual_infer_tests.md) — test procedures including optimization profiles
+- [Manual Inference Tests](../5-testing/manual_infer_tests.md) — test procedures including optimization profiles and profiling methodology
+- [FFN Architectures](guides/ffn_architectures.md) — Standard FFN vs SwiGLU/GeGLU, parameter math, gate+up fusion
