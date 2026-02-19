@@ -12,6 +12,7 @@ struct Cli {
 }
 
 fn main() -> Result<()> {
+    env_logger::init();
     let cli = Cli::parse();
     cmd::run(cli.command)
 }

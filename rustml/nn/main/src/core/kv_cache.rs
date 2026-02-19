@@ -3,6 +3,7 @@
 //! Pre-allocates key/value buffers for each transformer layer and provides
 //! efficient update/view operations for incremental decoding.
 
+use std::time::Instant;
 use crate::api::error::{NnError, NnResult};
 use rustml_core::Tensor;
 
@@ -109,13 +110,19 @@ impl KVCache {
 
     /// Get a view of cached K/V for `0..len` on the sequence dimension.
     pub fn get_view(&self, layer_idx: usize, len: usize) -> NnResult<(Tensor, Tensor)> {
+        let _t = if log::log_enabled!(log::Level::Trace) { Some(Instant::now()) } else { None };
         let k = self.past_keys[layer_idx].slice_sequence(0, len)?;
         let v = self.past_values[layer_idx].slice_sequence(0, len)?;
+        if let Some(t) = _t {
+            log::trace!("[perf] kv_cache::get_view layer={} len={} {:.3}ms",
+                layer_idx, len, t.elapsed().as_secs_f64() * 1000.0);
+        }
         Ok((k, v))
     }
 
     /// Write new K/V entries into the cache at `current_len`.
     pub fn update(&mut self, layer_idx: usize, key: Tensor, value: Tensor) -> NnResult<()> {
+        let _t = if log::log_enabled!(log::Level::Trace) { Some(Instant::now()) } else { None };
         let seq_len = key.shape()[2];
         if self.current_len + seq_len > self.max_seq_len {
             return Err(NnError::InvalidConfig(format!(
@@ -126,6 +133,10 @@ impl KVCache {
         }
         self.past_keys[layer_idx].slice_assign_sequence(self.current_len, &key)?;
         self.past_values[layer_idx].slice_assign_sequence(self.current_len, &value)?;
+        if let Some(t) = _t {
+            log::trace!("[perf] kv_cache::update layer={} pos={} {:.3}ms",
+                layer_idx, self.current_len, t.elapsed().as_secs_f64() * 1000.0);
+        }
         Ok(())
     }
 

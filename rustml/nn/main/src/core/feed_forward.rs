@@ -3,6 +3,7 @@
 use crate::api::error::NnResult;
 use crate::api::types::Activation;
 use crate::core::linear::Linear;
+use std::time::Instant;
 use rustml_core::Tensor;
 
 /// Feed-forward network (MLP) used in transformer blocks.
@@ -136,6 +137,15 @@ impl FeedForward {
     }
 
     pub fn forward(&self, input: &Tensor) -> NnResult<Tensor> {
+        let _t = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
+        let result = self.forward_inner(input);
+        if let Some(t) = _t {
+            log::debug!("[perf] ffn::forward {:?} {:.3}ms", input.shape(), t.elapsed().as_secs_f64() * 1000.0);
+        }
+        result
+    }
+
+    fn forward_inner(&self, input: &Tensor) -> NnResult<Tensor> {
         match self.activation {
             Activation::SwiGLU => {
                 let gate = self

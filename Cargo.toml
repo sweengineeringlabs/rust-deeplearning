@@ -60,6 +60,7 @@ web-sys = "0.3"
 approx = "0.5"
 # Logging
 log = "0.4"
+env_logger = "0.11"
 # Internal crates
 rustml-core = { path = "rustml/core" }
 rustml-nn = { path = "rustml/nn" }

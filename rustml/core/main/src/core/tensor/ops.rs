@@ -4,6 +4,7 @@ use crate::api::error::{TensorError, TensorResult};
 use crate::api::types::DType;
 use crate::core::shape::Shape;
 use super::tensor::{Tensor, f32_vec_to_bytes, TensorShape};
+use std::time::Instant;
 use smallvec::{smallvec, SmallVec};
 
 // ==================== SIMD-accelerated kernels ====================
@@ -300,6 +301,7 @@ impl Tensor {
     /// In-place RMSNorm: overwrites self with rms_norm(self, weight, eps).
     /// SIMD-accelerated on x86_64 (AVX2) and aarch64 (NEON).
     pub fn rms_norm_inplace(&mut self, weight: &Tensor, eps: f32) -> TensorResult<()> {
+        let _t = if log::log_enabled!(log::Level::Trace) { Some(Instant::now()) } else { None };
         if self.shape_sv.is_empty() {
             return Err(TensorError::ShapeMismatch {
                 expected: vec![1],
@@ -362,6 +364,10 @@ impl Tensor {
             }
         }
 
+        if let Some(t) = _t {
+            log::trace!("[perf] rms_norm_inplace {:?} {:.3}ms",
+                self.shape(), t.elapsed().as_secs_f64() * 1000.0);
+        }
         Ok(())
     }
 
@@ -580,10 +586,11 @@ impl Tensor {
 
     /// Softmax along a dimension. For last-dim, uses optimized path; otherwise generic.
     pub fn softmax(&self, dim: i64) -> TensorResult<Tensor> {
+        let _t = if log::log_enabled!(log::Level::Trace) { Some(Instant::now()) } else { None };
         let dim_idx = self.normalize_dim(dim)?;
         let ndim = self.ndim();
 
-        if dim_idx == ndim - 1 {
+        let result = if dim_idx == ndim - 1 {
             // Fast path: softmax along last dim
             let x = if self.is_contiguous() { self.clone() } else { self.contiguous()? };
             let input_data = x.as_slice_f32()?;
@@ -638,7 +645,12 @@ impl Tensor {
             let sum_broadcast = sum_exp.unsqueeze(dim)?;
             let sum_broadcast = sum_broadcast.broadcast_to_shape(&self.shape_sv)?;
             exp_vals.div(&sum_broadcast)
+        };
+        if let Some(t) = _t {
+            log::trace!("[perf] softmax {:?} {:.3}ms",
+                self.shape(), t.elapsed().as_secs_f64() * 1000.0);
         }
+        result
     }
 
     // ==================== Layer normalization ====================
@@ -700,6 +712,7 @@ impl Tensor {
 
     /// RMSNorm over the last dimension. SIMD-accelerated on x86_64 (AVX2) and aarch64 (NEON).
     pub fn rms_norm(&self, weight: &Tensor, eps: f32) -> TensorResult<Tensor> {
+        let _t = if log::log_enabled!(log::Level::Trace) { Some(Instant::now()) } else { None };
         if self.shape_sv.is_empty() {
             return Err(TensorError::ShapeMismatch {
                 expected: vec![1],
@@ -757,17 +770,32 @@ impl Tensor {
             }
         }
 
-        Ok(Tensor::new(
+        let result = Tensor::new(
             f32_vec_to_bytes(out_data),
             self.shape_sv.clone(),
             self.dtype,
-        ))
+        );
+        if let Some(t) = _t {
+            log::trace!("[perf] rms_norm {:?} {:.3}ms",
+                self.shape(), t.elapsed().as_secs_f64() * 1000.0);
+        }
+        Ok(result)
     }
 
     // ==================== Matrix multiplication ====================
 
     /// Matrix multiplication using faer for 2D, with broadcasting for higher dims.
     pub fn matmul(&self, other: &Tensor) -> TensorResult<Tensor> {
+        let _t = if log::log_enabled!(log::Level::Trace) { Some(Instant::now()) } else { None };
+        let result = self.matmul_inner(other);
+        if let Some(t) = _t {
+            log::trace!("[perf] matmul {:?}x{:?} {:.3}ms",
+                self.shape(), other.shape(), t.elapsed().as_secs_f64() * 1000.0);
+        }
+        result
+    }
+
+    fn matmul_inner(&self, other: &Tensor) -> TensorResult<Tensor> {
         let ndim = self.shape_sv.len();
         let other_ndim = other.shape_sv.len();
 
@@ -783,7 +811,7 @@ impl Tensor {
             }
 
             let lhs_2d = self.reshape(&[M, K])?;
-            let out_2d = lhs_2d.matmul(other)?;
+            let out_2d = lhs_2d.matmul_inner(other)?;
 
             let mut out_shape: SmallVec<[usize; 4]> =
                 SmallVec::from_slice(&self.shape_sv[0..ndim - 1]);
@@ -845,6 +873,7 @@ impl Tensor {
 
     /// Batched matrix multiplication: [B, M, K] x [B, K, N] -> [B, M, N].
     pub fn batched_matmul(&self, other: &Tensor) -> TensorResult<Tensor> {
+        let _t = if log::log_enabled!(log::Level::Trace) { Some(Instant::now()) } else { None };
         let ndim = self.shape_sv.len();
         if ndim != other.shape_sv.len() || ndim < 3 {
             return Err(TensorError::InvalidOperation(
@@ -922,11 +951,16 @@ impl Tensor {
                 });
         }
 
-        Ok(Tensor::new(
+        let result = Tensor::new(
             f32_vec_to_bytes(out_data),
             out_shape,
             DType::F32,
-        ))
+        );
+        if let Some(t) = _t {
+            log::trace!("[perf] batched_matmul {:?}x{:?} {:.3}ms",
+                self.shape(), other.shape(), t.elapsed().as_secs_f64() * 1000.0);
+        }
+        Ok(result)
     }
 
     // ==================== Causal mask ====================

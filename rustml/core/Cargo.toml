@@ -19,6 +19,7 @@ rayon.workspace = true
 smallvec.workspace = true
 memmap2.workspace = true
 faer = "0.20"
+log.workspace = true
 
 [dev-dependencies]
 approx.workspace = true

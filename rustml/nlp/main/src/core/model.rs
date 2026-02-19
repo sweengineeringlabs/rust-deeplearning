@@ -7,6 +7,7 @@
 use crate::api::error::{NlpError, NlpResult};
 use crate::api::types::{LanguageModel, ModelConfig};
 use crate::core::weight_map::WeightMap;
+use std::time::Instant;
 use rustml_core::{DType, Tensor, f32_vec_to_bytes};
 use rustml_nn::{
     Activation, Embedding, FeedForward, KVCache, LayerNorm, Linear, MoeLayer,
@@ -905,12 +906,16 @@ impl LlmModel {
         input_ids: &Tensor,
         cache: &mut KVCache,
     ) -> NlpResult<Tensor> {
+        let _t_total = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
+
+        let _t_emb = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
         let x_emb = self.token_embedding.forward(input_ids)?;
         let x_emb = if let Some(scale) = self.config.embedding_scale {
             x_emb.mul_scalar(scale)
         } else {
             x_emb
         };
+        let emb_ms = _t_emb.map(|t| t.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
 
         let batch_size = input_ids.shape()[0];
         let seq_len = input_ids.shape()[input_ids.ndim() - 1];
@@ -941,12 +946,30 @@ impl LlmModel {
             x_emb
         };
 
+        let _t_layers = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
         for (i, layer) in self.layers.iter().enumerate() {
+            let _t_layer = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
             x = layer.forward_with_cache(&x, None, cache, i)?;
+            if let Some(t) = _t_layer {
+                log::debug!("[perf] model::forward layer={} total={:.3}ms", i, t.elapsed().as_secs_f64() * 1000.0);
+            }
+        }
+        let layers_ms = _t_layers.map(|t| t.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+
+        let _t_norm = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
+        let x = self.norm.forward(&x)?;
+        let norm_ms = _t_norm.map(|t| t.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+
+        let _t_proj = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
+        let out = self.output.forward(&x)?;
+        let proj_ms = _t_proj.map(|t| t.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+
+        if let Some(t) = _t_total {
+            log::debug!("[perf] model::forward embedding={:.3}ms layers={:.3}ms norm={:.3}ms projection={:.3}ms total={:.3}ms",
+                emb_ms, layers_ms, norm_ms, proj_ms, t.elapsed().as_secs_f64() * 1000.0);
         }
 
-        let x = self.norm.forward(&x)?;
-        Ok(self.output.forward(&x)?)
+        Ok(out)
     }
 
     /// Returns (total_params, frozen_params).

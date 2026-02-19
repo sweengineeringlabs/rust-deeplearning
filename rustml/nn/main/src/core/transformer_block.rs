@@ -9,6 +9,7 @@ use crate::core::kv_cache::KVCache;
 use crate::core::layer_norm::LayerNorm;
 use crate::core::moe::MoeLayer;
 use crate::core::rms_norm::RMSNorm;
+use std::time::Instant;
 use rustml_core::Tensor;
 
 /// Normalization layer: either standard LayerNorm or RMSNorm.
@@ -338,40 +339,48 @@ impl TransformerBlock {
             // Falcon: x = input + attn(norm1(input)) + ffn(norm2(input))
             let mut norm_1 = input.clone();
             self.attention_norm.forward_inplace(&mut norm_1)?;
+            let _t_attn = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
             let mut attn_out = self.attention.forward_with_cache(&norm_1, cache, layer_idx)?;
+            let attn_ms = _t_attn.map(|t| t.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
             let mut norm_2 = input.clone();
             self.ffn_norm.forward_inplace(&mut norm_2)?;
+            let _t_ffn = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
             let ffn_out = self.feed_forward.forward(&norm_2)?;
-            // attn_out += input (in-place, attn_out is fresh with refcount 1)
+            let ffn_ms = _t_ffn.map(|t| t.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
             attn_out.add_inplace(input)?;
-            // attn_out += ffn_out
             attn_out.add_inplace(&ffn_out)?;
+            log::debug!("[perf] transformer[{}]::forward attn={:.3}ms ffn={:.3}ms", layer_idx, attn_ms, ffn_ms);
             Ok(attn_out)
         } else if let Some(ref moe) = self.moe {
             // Mixtral: MoE replaces FFN
             let mut norm_1 = input.clone();
             self.attention_norm.forward_inplace(&mut norm_1)?;
+            let _t_attn = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
             let mut attn_out = self.attention.forward_with_cache(&norm_1, cache, layer_idx)?;
+            let attn_ms = _t_attn.map(|t| t.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
             attn_out.add_inplace(input)?;
             let mut norm_2 = attn_out.clone();
             self.ffn_norm.forward_inplace(&mut norm_2)?;
+            let _t_ffn = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
             let moe_out = moe.forward(&norm_2)?;
+            let ffn_ms = _t_ffn.map(|t| t.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
             attn_out.add_inplace(&moe_out)?;
+            log::debug!("[perf] transformer[{}]::forward attn={:.3}ms ffn={:.3}ms", layer_idx, attn_ms, ffn_ms);
             Ok(attn_out)
         } else {
             // Standard pre-norm (with optional sandwich norms for Gemma 3)
             let mut norm_1 = input.clone();
             self.attention_norm.forward_inplace(&mut norm_1)?;
+            let _t_attn = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
             let mut attn_out = self.attention.forward_with_cache(&norm_1, cache, layer_idx)?;
+            let attn_ms = _t_attn.map(|t| t.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
             if let Some(ref pan) = self.post_attention_norm {
                 attn_out = pan.forward(&attn_out)?;
             }
 
-            // x = attn_out + input (in-place on attn_out, which is fresh)
             attn_out.add_inplace(input)?;
             let mut x = attn_out;
 
-            // Cross-attention (if present)
             if let (Some(cross_attn), Some(cross_norm), Some(enc_out)) =
                 (&self.cross_attention, &self.cross_attention_norm, encoder_output)
             {
@@ -380,16 +389,17 @@ impl TransformerBlock {
                 x.add_inplace(&cross_out)?;
             }
 
-            // FFN
             let mut norm_2 = x.clone();
             self.ffn_norm.forward_inplace(&mut norm_2)?;
+            let _t_ffn = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
             let mut ffn_out = self.feed_forward.forward(&norm_2)?;
+            let ffn_ms = _t_ffn.map(|t| t.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
             if let Some(ref pfn) = self.post_ffn_norm {
                 ffn_out = pfn.forward(&ffn_out)?;
             }
 
-            // x += ffn_out (in-place on x, which is uniquely owned)
             x.add_inplace(&ffn_out)?;
+            log::debug!("[perf] transformer[{}]::forward attn={:.3}ms ffn={:.3}ms", layer_idx, attn_ms, ffn_ms);
             Ok(x)
         }
     }

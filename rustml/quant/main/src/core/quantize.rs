@@ -3,6 +3,7 @@ use crate::api::types::*;
 use crate::core::simd;
 use half::f16;
 use rayon::prelude::*;
+use std::time::Instant;
 
 /// Quantize an f32 slice to Q8_0 format.
 ///
@@ -205,6 +206,7 @@ pub fn matmul_f32_q8(
     in_features: usize,
     out_features: usize,
 ) -> QuantResult<Vec<f32>> {
+    let _t = if log::log_enabled!(log::Level::Trace) { Some(Instant::now()) } else { None };
     if in_features % Q8_0_BLOCK_SIZE != 0 {
         return Err(QuantError::BlockAlignment(format!(
             "in_features {} not divisible by Q8_0 block size {}",
@@ -256,6 +258,10 @@ pub fn matmul_f32_q8(
             }
         });
 
+    if let Some(t) = _t {
+        log::trace!("[perf] quant::matmul_f32_q8 [{}x{}]x[{}x{}] {:.3}ms",
+            m, in_features, out_features, in_features, t.elapsed().as_secs_f64() * 1000.0);
+    }
     Ok(output)
 }
 
@@ -269,6 +275,7 @@ pub fn matmul_f32_q4(
     in_features: usize,
     out_features: usize,
 ) -> QuantResult<Vec<f32>> {
+    let _t = if log::log_enabled!(log::Level::Trace) { Some(Instant::now()) } else { None };
     if in_features % Q4_0_BLOCK_SIZE != 0 {
         return Err(QuantError::BlockAlignment(format!(
             "in_features {} not divisible by Q4_0 block size {}",
@@ -316,6 +323,10 @@ pub fn matmul_f32_q4(
             }
         });
 
+    if let Some(t) = _t {
+        log::trace!("[perf] quant::matmul_f32_q4 [{}x{}]x[{}x{}] {:.3}ms",
+            m, in_features, out_features, in_features, t.elapsed().as_secs_f64() * 1000.0);
+    }
     Ok(output)
 }
 
@@ -330,6 +341,7 @@ pub fn matmul_f32_q4_native(
     in_features: usize,
     out_features: usize,
 ) -> QuantResult<Vec<f32>> {
+    let _t = if log::log_enabled!(log::Level::Trace) { Some(Instant::now()) } else { None };
     if in_features % Q4_0_BLOCK_SIZE != 0 {
         return Err(QuantError::BlockAlignment(format!(
             "in_features {} not divisible by Q4_0 block size {}",
@@ -390,6 +402,10 @@ pub fn matmul_f32_q4_native(
             }
         });
 
+    if let Some(t) = _t {
+        log::trace!("[perf] quant::matmul_f32_q4_native [{}x{}]x[{}x{}] {:.3}ms",
+            m, in_features, out_features, in_features, t.elapsed().as_secs_f64() * 1000.0);
+    }
     Ok(output)
 }
 
@@ -433,6 +449,7 @@ pub fn matmul_f32_q4_1(
     in_features: usize,
     out_features: usize,
 ) -> QuantResult<Vec<f32>> {
+    let _t = if log::log_enabled!(log::Level::Trace) { Some(Instant::now()) } else { None };
     if in_features % Q4_1_BLOCK_SIZE != 0 {
         return Err(QuantError::BlockAlignment(format!(
             "in_features {} not divisible by Q4_1 block size {}",
@@ -491,6 +508,10 @@ pub fn matmul_f32_q4_1(
             }
         });
 
+    if let Some(t) = _t {
+        log::trace!("[perf] quant::matmul_f32_q4_1 [{}x{}]x[{}x{}] {:.3}ms",
+            m, in_features, out_features, in_features, t.elapsed().as_secs_f64() * 1000.0);
+    }
     Ok(output)
 }
 
@@ -505,6 +526,7 @@ pub fn matmul_f32_q4_1_native(
     in_features: usize,
     out_features: usize,
 ) -> QuantResult<Vec<f32>> {
+    let _t = if log::log_enabled!(log::Level::Trace) { Some(Instant::now()) } else { None };
     if in_features % Q4_1_BLOCK_SIZE != 0 {
         return Err(QuantError::BlockAlignment(format!(
             "in_features {} not divisible by Q4_1 block size {}",
@@ -568,6 +590,10 @@ pub fn matmul_f32_q4_1_native(
             }
         });
 
+    if let Some(t) = _t {
+        log::trace!("[perf] quant::matmul_f32_q4_1_native [{}x{}]x[{}x{}] {:.3}ms",
+            m, in_features, out_features, in_features, t.elapsed().as_secs_f64() * 1000.0);
+    }
     Ok(output)
 }
 

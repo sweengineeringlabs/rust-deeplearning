@@ -227,6 +227,7 @@ fn run_generation(
 }
 
 fn main() -> Result<()> {
+    env_logger::init();
     let cli = Cli::parse();
     let batch_contents = validate_args(&cli)?;
 

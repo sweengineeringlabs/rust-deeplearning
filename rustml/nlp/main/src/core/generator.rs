@@ -363,8 +363,17 @@ impl<'a> Generator<'a> {
         let mut cache = self.make_cache();
         let mut sampling_buf = sampling::SamplingBuffer::new(self.model.vocab_size());
 
+        let _t_prefill = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
         let last_logits = self.prefill(&tokens, &mut cache)?;
+        if let Some(t) = _t_prefill {
+            log::debug!("[perf] generator::prefill tokens={} {:.3}ms", tokens.len(), t.elapsed().as_secs_f64() * 1000.0);
+        }
+
+        let _t_sample = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
         let mut next_token = self.sample_token(&last_logits, &tokens, &mut sampling_buf);
+        if let Some(t) = _t_sample {
+            log::debug!("[perf] generator::sample {:.3}ms", t.elapsed().as_secs_f64() * 1000.0);
+        }
 
         if let Some(eos) = self.eos_token_id {
             if next_token == eos {
@@ -375,8 +384,20 @@ impl<'a> Generator<'a> {
 
         for _ in 1..max_tokens {
             self.check_deadline()?;
+            let _t_step = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
+
+            let _t_model = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
             let logits = self.decode_step(next_token, &mut cache)?;
+            let model_ms = _t_model.map(|t| t.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+
+            let _t_s = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
             next_token = self.sample_token(&logits, &tokens, &mut sampling_buf);
+            let sample_ms = _t_s.map(|t| t.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+
+            if let Some(t) = _t_step {
+                log::debug!("[perf] generator::decode_step token={} model={:.3}ms sample={:.3}ms total={:.3}ms",
+                    tokens.len(), model_ms, sample_ms, t.elapsed().as_secs_f64() * 1000.0);
+            }
 
             if let Some(eos) = self.eos_token_id {
                 if next_token == eos {
@@ -405,8 +426,17 @@ impl<'a> Generator<'a> {
         let mut cache = self.make_cache();
         let mut sampling_buf = sampling::SamplingBuffer::new(self.model.vocab_size());
 
+        let _t_prefill = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
         let last_logits = self.prefill(&tokens, &mut cache)?;
+        if let Some(t) = _t_prefill {
+            log::debug!("[perf] generator::prefill tokens={} {:.3}ms", tokens.len(), t.elapsed().as_secs_f64() * 1000.0);
+        }
+
+        let _t_sample = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
         let mut next_token = self.sample_token(&last_logits, &tokens, &mut sampling_buf);
+        if let Some(t) = _t_sample {
+            log::debug!("[perf] generator::sample {:.3}ms", t.elapsed().as_secs_f64() * 1000.0);
+        }
 
         if let Some(eos) = self.eos_token_id {
             if next_token == eos {
@@ -420,8 +450,20 @@ impl<'a> Generator<'a> {
 
         for _ in 1..max_tokens {
             self.check_deadline()?;
+            let _t_step = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
+
+            let _t_model = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
             let logits = self.decode_step(next_token, &mut cache)?;
+            let model_ms = _t_model.map(|t| t.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+
+            let _t_s = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
             next_token = self.sample_token(&logits, &tokens, &mut sampling_buf);
+            let sample_ms = _t_s.map(|t| t.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+
+            if let Some(t) = _t_step {
+                log::debug!("[perf] generator::decode_step token={} model={:.3}ms sample={:.3}ms total={:.3}ms",
+                    tokens.len(), model_ms, sample_ms, t.elapsed().as_secs_f64() * 1000.0);
+            }
 
             if let Some(eos) = self.eos_token_id {
                 if next_token == eos {

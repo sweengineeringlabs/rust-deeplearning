@@ -1,5 +1,6 @@
 //! Embedding layer implementation
 
+use std::time::Instant;
 use crate::api::error::NnResult;
 use rustml_core::Tensor;
 
@@ -48,6 +49,8 @@ impl Embedding {
     /// Input shape: [...] (tensor of integer indices)
     /// Output shape: [..., embedding_dim]
     pub fn forward(&self, indices: &Tensor) -> NnResult<Tensor> {
+        let _t = if log::log_enabled!(log::Level::Trace) { Some(Instant::now()) } else { None };
+
         let input_shape = indices.shape();
         let numel = indices.numel();
 
@@ -72,7 +75,12 @@ impl Embedding {
         let mut output_shape = input_shape.to_vec();
         output_shape.push(self.embedding_dim);
 
-        Ok(Tensor::from_vec(output_data, output_shape)?)
+        let result = Tensor::from_vec(output_data, output_shape)?;
+        if let Some(t) = _t {
+            log::trace!("[perf] embedding::forward {:?}->{:?} {:.3}ms",
+                input_shape, result.shape(), t.elapsed().as_secs_f64() * 1000.0);
+        }
+        Ok(result)
     }
 }
 

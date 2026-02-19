@@ -7,6 +7,7 @@ use crate::core::kv_cache::KVCache;
 use crate::core::linear::Linear;
 use crate::core::rms_norm::RMSNorm;
 use crate::core::rope::{alibi_bias, compute_alibi_slopes, RoPEFreqs};
+use std::time::Instant;
 use rustml_core::Tensor;
 
 /// Multi-head attention with GQA, RoPE, ALiBi, and KV-cache support.
@@ -370,6 +371,21 @@ impl MultiHeadAttention {
 
     /// Forward pass with KV cache for autoregressive decoding.
     pub fn forward_with_cache(
+        &self,
+        input: &Tensor,
+        cache: &mut KVCache,
+        layer_idx: usize,
+    ) -> NnResult<Tensor> {
+        let _t = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
+        let result = self.forward_with_cache_inner(input, cache, layer_idx);
+        if let Some(t) = _t {
+            log::debug!("[perf] attention::forward layer={} {:?} {:.3}ms",
+                layer_idx, input.shape(), t.elapsed().as_secs_f64() * 1000.0);
+        }
+        result
+    }
+
+    fn forward_with_cache_inner(
         &self,
         input: &Tensor,
         cache: &mut KVCache,

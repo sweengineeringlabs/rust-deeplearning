@@ -2,6 +2,7 @@
 
 use crate::api::error::NnResult;
 use crate::api::traits::Freezable;
+use std::time::Instant;
 use rustml_core::{DType, Tensor};
 
 /// A fully connected linear layer: y = xW^T + b
@@ -117,6 +118,7 @@ impl Linear {
     /// `rustml_quant::matmul_f32_q8`.  All other dtypes fall back to the
     /// standard dequantize-then-matmul path.
     pub fn forward(&self, x: &Tensor) -> NnResult<Tensor> {
+        let _t = if log::log_enabled!(log::Level::Trace) { Some(Instant::now()) } else { None };
         let output = if self.weight.dtype() == DType::Q4_0 {
             let x_f32 = x.to_f32()?;
             let x_data = x_f32.data()?;
@@ -169,11 +171,18 @@ impl Linear {
             x.matmul(&weight_t)?
         };
 
-        if let Some(ref bias) = self.bias {
-            Ok(output.add(bias)?)
+        let result = if let Some(ref bias) = self.bias {
+            output.add(bias)?
         } else {
-            Ok(output)
+            output
+        };
+
+        if let Some(t) = _t {
+            log::trace!("[perf] linear::forward {:?}->[{},{}] {:?} {:.3}ms",
+                x.shape(), self.in_features, self.out_features, self.weight.dtype(), t.elapsed().as_secs_f64() * 1000.0);
         }
+
+        Ok(result)
     }
 }
 

@@ -19,3 +19,5 @@ rustml-nlp.workspace = true
 rustml-gguf.workspace = true
 rustml-hub.workspace = true
 rustml-tokenizer.workspace = true
+log.workspace = true
+env_logger.workspace = true

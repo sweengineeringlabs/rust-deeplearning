@@ -1,5 +1,6 @@
 //! Rotary Position Encoding (RoPE) and Attention with Linear Biases (ALiBi).
 
+use std::time::Instant;
 use crate::api::error::NnResult;
 use rustml_core::{DType, Tensor, f32_vec_to_bytes};
 
@@ -132,6 +133,7 @@ impl RoPEFreqs {
     /// Apply RoPE to tensor [B, H, S, D] starting from position `start_pos`.
     /// SIMD-accelerated on x86_64 (AVX2) and aarch64 (NEON).
     pub fn apply(&self, x: &Tensor, start_pos: usize) -> NnResult<Tensor> {
+        let _t = if log::log_enabled!(log::Level::Trace) { Some(Instant::now()) } else { None };
         let shape = x.shape();
         if shape.len() != 4 {
             return Err(crate::api::error::NnError::ShapeMismatch(format!(
@@ -194,7 +196,11 @@ impl RoPEFreqs {
         }
 
         let out_bytes = f32_vec_to_bytes(out);
-        Ok(Tensor::new(out_bytes, shape.to_vec(), DType::F32))
+        let result = Tensor::new(out_bytes, shape.to_vec(), DType::F32);
+        if let Some(t) = _t {
+            log::trace!("[perf] rope::apply {:?} pos={} {:.3}ms", shape, start_pos, t.elapsed().as_secs_f64() * 1000.0);
+        }
+        Ok(result)
     }
 }
 
