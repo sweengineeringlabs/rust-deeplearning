@@ -52,7 +52,7 @@
 ## Tasks
 
 ### 1. Add trace-level profiling for matmul operations
-**Priority**: High | **Status**: Pending | **Blocks**: #2, #4, #6
+**Priority**: High | **Status**: Done | **Blocks**: #2, #4, #6
 
 Add `RUST_LOG=rustml=trace` output for each matmul call with dimensions, timing, and memory bandwidth.
 

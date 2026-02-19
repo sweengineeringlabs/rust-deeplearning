@@ -822,8 +822,15 @@ impl Tensor {
         let _t = if log::log_enabled!(log::Level::Trace) { Some(Instant::now()) } else { None };
         let result = self.matmul_inner(other);
         if let Some(t) = _t {
-            log::trace!("[perf] matmul {:?}x{:?} {:.3}ms",
-                self.shape(), other.shape(), t.elapsed().as_secs_f64() * 1000.0);
+            let elapsed_ms = t.elapsed().as_secs_f64() * 1000.0;
+            // Compute bandwidth for 2D matmul: A[M,K] x B[K,N] -> C[M,N]
+            let a_elems = self.numel();
+            let b_elems = other.numel();
+            let c_elems = result.as_ref().map(|r| r.numel()).unwrap_or(0);
+            let total_bytes = (a_elems + b_elems + c_elems) * 4; // f32 = 4 bytes
+            let bandwidth_gbs = (total_bytes as f64) / (elapsed_ms / 1000.0) / 1e9;
+            log::trace!("[perf] matmul {:?}x{:?} {:.3}ms ({:.1} GB/s)",
+                self.shape(), other.shape(), elapsed_ms, bandwidth_gbs);
         }
         result
     }

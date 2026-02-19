@@ -300,8 +300,15 @@ pub fn matmul_f32_q8(
     }
 
     if let Some(t) = _t {
-        log::trace!("[perf] quant::matmul_f32_q8 [{}x{}]x[{}x{}] {:.3}ms",
-            m, in_features, out_features, in_features, t.elapsed().as_secs_f64() * 1000.0);
+        let elapsed_ms = t.elapsed().as_secs_f64() * 1000.0;
+        // Memory traffic: input (f32) + weights (Q8_0) + output (f32)
+        let input_bytes = m * in_features * 4;
+        let weight_bytes = out_features * blocks_per_row * Q8_0_BLOCK_BYTES;
+        let output_bytes = m * out_features * 4;
+        let total_bytes = input_bytes + weight_bytes + output_bytes;
+        let bandwidth_gbs = (total_bytes as f64) / (elapsed_ms / 1000.0) / 1e9;
+        log::trace!("[perf] quant::matmul_f32_q8 [{}x{}]x[{}x{}] {:.3}ms ({:.1} GB/s)",
+            m, in_features, out_features, in_features, elapsed_ms, bandwidth_gbs);
     }
     Ok(output)
 }
@@ -404,8 +411,14 @@ pub fn matmul_f32_q4(
     }
 
     if let Some(t) = _t {
-        log::trace!("[perf] quant::matmul_f32_q4 [{}x{}]x[{}x{}] {:.3}ms",
-            m, in_features, out_features, in_features, t.elapsed().as_secs_f64() * 1000.0);
+        let elapsed_ms = t.elapsed().as_secs_f64() * 1000.0;
+        let input_bytes = m * in_features * 4;
+        let weight_bytes = out_features * blocks_per_row * Q4_0_BLOCK_BYTES;
+        let output_bytes = m * out_features * 4;
+        let total_bytes = input_bytes + weight_bytes + output_bytes;
+        let bandwidth_gbs = (total_bytes as f64) / (elapsed_ms / 1000.0) / 1e9;
+        log::trace!("[perf] quant::matmul_f32_q4 [{}x{}]x[{}x{}] {:.3}ms ({:.1} GB/s)",
+            m, in_features, out_features, in_features, elapsed_ms, bandwidth_gbs);
     }
     Ok(output)
 }
@@ -530,8 +543,14 @@ pub fn matmul_f32_q4_native(
     }
 
     if let Some(t) = _t {
-        log::trace!("[perf] quant::matmul_f32_q4_native [{}x{}]x[{}x{}] {:.3}ms",
-            m, in_features, out_features, in_features, t.elapsed().as_secs_f64() * 1000.0);
+        let elapsed_ms = t.elapsed().as_secs_f64() * 1000.0;
+        let input_bytes = m * in_features * 4;
+        let weight_bytes = out_features * blocks_per_row * Q4_0_BLOCK_BYTES;
+        let output_bytes = m * out_features * 4;
+        let total_bytes = input_bytes + weight_bytes + output_bytes;
+        let bandwidth_gbs = (total_bytes as f64) / (elapsed_ms / 1000.0) / 1e9;
+        log::trace!("[perf] quant::matmul_f32_q4_native [{}x{}]x[{}x{}] {:.3}ms ({:.1} GB/s)",
+            m, in_features, out_features, in_features, elapsed_ms, bandwidth_gbs);
     }
     Ok(output)
 }
@@ -684,8 +703,14 @@ pub fn matmul_f32_q4_1(
     }
 
     if let Some(t) = _t {
-        log::trace!("[perf] quant::matmul_f32_q4_1 [{}x{}]x[{}x{}] {:.3}ms",
-            m, in_features, out_features, in_features, t.elapsed().as_secs_f64() * 1000.0);
+        let elapsed_ms = t.elapsed().as_secs_f64() * 1000.0;
+        let input_bytes = m * in_features * 4;
+        let weight_bytes = out_features * blocks_per_row * Q4_1_BLOCK_BYTES;
+        let output_bytes = m * out_features * 4;
+        let total_bytes = input_bytes + weight_bytes + output_bytes;
+        let bandwidth_gbs = (total_bytes as f64) / (elapsed_ms / 1000.0) / 1e9;
+        log::trace!("[perf] quant::matmul_f32_q4_1 [{}x{}]x[{}x{}] {:.3}ms ({:.1} GB/s)",
+            m, in_features, out_features, in_features, elapsed_ms, bandwidth_gbs);
     }
     Ok(output)
 }
@@ -816,8 +841,14 @@ pub fn matmul_f32_q4_1_native(
     }
 
     if let Some(t) = _t {
-        log::trace!("[perf] quant::matmul_f32_q4_1_native [{}x{}]x[{}x{}] {:.3}ms",
-            m, in_features, out_features, in_features, t.elapsed().as_secs_f64() * 1000.0);
+        let elapsed_ms = t.elapsed().as_secs_f64() * 1000.0;
+        let input_bytes = m * in_features * 4;
+        let weight_bytes = out_features * blocks_per_row * Q4_1_BLOCK_BYTES;
+        let output_bytes = m * out_features * 4;
+        let total_bytes = input_bytes + weight_bytes + output_bytes;
+        let bandwidth_gbs = (total_bytes as f64) / (elapsed_ms / 1000.0) / 1e9;
+        log::trace!("[perf] quant::matmul_f32_q4_1_native [{}x{}]x[{}x{}] {:.3}ms ({:.1} GB/s)",
+            m, in_features, out_features, in_features, elapsed_ms, bandwidth_gbs);
     }
     Ok(output)
 }
