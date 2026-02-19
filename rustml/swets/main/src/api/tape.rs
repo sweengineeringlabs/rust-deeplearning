@@ -117,6 +117,12 @@ pub fn grad(tensor: &Tensor) -> Option<Tensor> {
     TAPE.with(|tape| tape.borrow().grad(tensor.id()).cloned())
 }
 
+pub fn set_grad(tensor: &Tensor, grad: Tensor) {
+    TAPE.with(|tape| {
+        tape.borrow_mut().grads.insert(tensor.id(), grad);
+    });
+}
+
 pub fn no_grad<F, R>(f: F) -> R
 where
     F: FnOnce() -> R,

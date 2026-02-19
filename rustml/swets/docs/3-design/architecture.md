@@ -31,6 +31,14 @@ swets/
 
 Operations record onto a `GradientTape` during the forward pass. `backward()` replays in reverse, accumulating gradients in `HashMap<TensorId, Tensor>`. Tensors carry no gradient state; the tape owns all gradient information externally.
 
+### Scoped `no_grad` Guard
+
+`tape::no_grad(|| { ... })` temporarily disables tape recording so that forward passes inside the closure produce no tape entries. This is the standard mechanism for running inference (validation, prediction, serving) without the overhead of gradient tracking.
+
+**Implementation**: `no_grad` saves the current `enabled` state before disabling the tape, then restores the previous state on exit rather than unconditionally re-enabling. This means nested calls stack correctly — an inner `no_grad` exiting will not re-enable recording while an outer `no_grad` scope is still active, matching PyTorch's `torch.no_grad()` semantics.
+
+**Primary use site**: `Trainer::validate()` wraps its entire eval loop in `no_grad` to avoid polluting the tape between training steps.
+
 ### Shared Types with rustml-core
 
 | Type | Shared |

@@ -149,8 +149,21 @@ impl Tensor {
         Tensor::new(self.inner.pow(exp), false)
     }
 
+    pub fn div_raw(&self, other: &Tensor) -> TensorResult<Tensor> {
+        let result = self.inner.div(&other.inner)?;
+        Ok(Tensor::new(result, false))
+    }
+
     pub fn div_scalar_raw(&self, scalar: f32) -> Tensor {
         Tensor::new(self.inner.div_scalar(scalar), false)
+    }
+
+    pub fn add_scalar_raw(&self, scalar: f32) -> Tensor {
+        Tensor::new(self.inner.add_scalar(scalar), false)
+    }
+
+    pub fn sqrt_raw(&self) -> Tensor {
+        Tensor::new(self.inner.sqrt(), false)
     }
 
     pub fn reshape_raw(&self, shape: &[usize]) -> TensorResult<Tensor> {
