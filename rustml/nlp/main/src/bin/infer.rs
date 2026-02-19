@@ -279,12 +279,12 @@ fn run_safetensors(
     let mut model = rustml_nlp::build_safetensors_model(&model_type, &config, weights)
         .with_context(|| format!("Failed to build {} model", if model_type.is_empty() { "gpt2" } else { &model_type }))?;
 
-    // Quantize F32 lm_head to Q8_0 for reduced memory bandwidth on large vocabularies
+    // Quantize all F32 linear layers to Q8_0 for reduced memory bandwidth
     if !model.output.is_quantized() {
-        if let Err(e) = model.quantize_lm_head() {
-            eprintln!("  [warn] lm_head quantization skipped: {}", e);
-        } else if model.output.is_quantized() {
-            eprintln!("  lm_head quantized F32 -> Q8_0");
+        match model.quantize_all_weights() {
+            Ok(n) if n > 0 => eprintln!("  Quantized {} linear layers F32 -> Q8_0", n),
+            Ok(_) => {}
+            Err(e) => eprintln!("  [warn] weight quantization failed: {}", e),
         }
     }
 

@@ -13,6 +13,15 @@
 - [x] **GPT-2 lm_head projection overhead (50K vocab)** — The `[1,768]x[768,50257]` matmul costs ~13ms/step, consuming 20% of decode time. Fixed: same lm_head Q8_0 quantization and parallel gemv path as Gemma 3 fix.
   - Files: `rustml/nlp/main/src/core/model.rs`, `rustml/nn/main/src/core/linear.rs`, `rustml/core/main/src/core/tensor/ops.rs`
 
+- [x] **All F32 linear layers remain unquantized at runtime** — Only lm_head was quantized to Q8_0. The 7 linear layers per transformer block (q/k/v/out_proj + up/gate/down_proj) remained F32, dominating per-layer decode time for SafeTensors models. Fixed: `LlmModel::quantize_all_weights()` quantizes every F32 linear layer at load time; CLI wiring replaced lm_head-only path.
+  - Files: `rustml/nlp/main/src/core/model.rs`, `rustml/nlp/main/src/bin/infer.rs`, `rustml/cli/src/cmd/infer.rs`
+
+- [x] **Q8_0 SIMD kernel uses scalar i8→f32 conversion** — `dot_q8_block_avx2()` converted i8→f32 via scalar loop + stack array instead of register-based intrinsics. Fixed: AVX2 uses `_mm256_cvtepi8_epi32` + `_mm256_cvtepi32_ps`, new SSE4.1 kernel uses `_mm_cvtepi8_epi32`, NEON uses `vmovl_s8` + `vmovl_s16` + `vcvtq_f32_s32`.
+  - Files: `rustml/quant/main/src/core/simd.rs`
+
+- [x] **No LTO in release profile** — No `[profile.release]` section existed in workspace Cargo.toml. The hot cross-crate call chain (`rustml-nn` → `rustml-quant` → simd) could not be inlined. Fixed: thin LTO enabled in release profile.
+  - Files: `Cargo.toml`
+
 ## Model Format Support
 
 - [ ] **ONNX runtime/loading is not implemented** — No `.onnx` model loading exists in the production crates. SafeTensors and GGUF are supported; ONNX is not. Requires adding an ONNX parser or integrating an ONNX runtime (e.g., `ort` crate) to load and execute ONNX graphs.

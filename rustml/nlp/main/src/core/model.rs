@@ -853,6 +853,43 @@ impl LlmModel {
         Ok(())
     }
 
+    /// Quantize all F32 linear layers to Q8_0 at load time.
+    /// Covers attention projections, FFN projections, MoE experts, and lm_head.
+    /// Returns the number of layers successfully quantized.
+    /// Safe no-op for non-F32 or already-quantized weights.
+    pub fn quantize_all_weights(&mut self) -> NlpResult<usize> {
+        let mut count = 0usize;
+        fn try_q(l: &mut Linear, c: &mut usize) {
+            let was = l.is_quantized();
+            if l.quantize_weight_q8().is_ok() && !was && l.is_quantized() {
+                *c += 1;
+            }
+        }
+        for layer in &mut self.layers {
+            try_q(&mut layer.attention.q_proj, &mut count);
+            try_q(&mut layer.attention.k_proj, &mut count);
+            try_q(&mut layer.attention.v_proj, &mut count);
+            try_q(&mut layer.attention.out_proj, &mut count);
+            try_q(&mut layer.feed_forward.up_proj, &mut count);
+            try_q(&mut layer.feed_forward.down_proj, &mut count);
+            if let Some(ref mut g) = layer.feed_forward.gate_proj {
+                try_q(g, &mut count);
+            }
+            if let Some(ref mut moe) = layer.moe {
+                try_q(&mut moe.gate, &mut count);
+                for expert in &mut moe.experts {
+                    try_q(&mut expert.up_proj, &mut count);
+                    try_q(&mut expert.down_proj, &mut count);
+                    if let Some(ref mut g) = expert.gate_proj {
+                        try_q(g, &mut count);
+                    }
+                }
+            }
+        }
+        try_q(&mut self.output, &mut count);
+        Ok(count)
+    }
+
     /// Apply an optimization profile across all layers.
     ///
     /// Sets `use_inplace_ops` on each TransformerBlock and

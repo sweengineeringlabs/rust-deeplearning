@@ -69,34 +69,20 @@ mod x86 {
     pub(super) unsafe fn dot_q8_block_avx2(input: &[f32], quantized: &[i8], scale: f32) -> f32 {
         use std::arch::x86_64::*;
 
-        let mut acc0 = _mm256_setzero_ps();
-        let mut acc1 = _mm256_setzero_ps();
-        let mut acc2 = _mm256_setzero_ps();
-        let mut acc3 = _mm256_setzero_ps();
+        let mut acc = _mm256_setzero_ps();
 
         for chunk in 0..4 {
             let base = chunk * 8;
             let inp = _mm256_loadu_ps(input.as_ptr().add(base));
-            let mut q_f32 = [0.0f32; 8];
-            for j in 0..8 {
-                q_f32[j] = quantized[base + j] as f32;
-            }
-            let q_vec = _mm256_loadu_ps(q_f32.as_ptr());
-            let prod = _mm256_mul_ps(inp, q_vec);
-            match chunk {
-                0 => acc0 = prod,
-                1 => acc1 = prod,
-                2 => acc2 = prod,
-                _ => acc3 = prod,
-            }
+            // Register-based i8→f32: load 8 bytes, sign-extend to i32, convert to f32
+            let q_i8 = _mm_loadl_epi64(quantized.as_ptr().add(base) as *const __m128i);
+            let q_i32 = _mm256_cvtepi8_epi32(q_i8);
+            let q_vec = _mm256_cvtepi32_ps(q_i32);
+            acc = _mm256_add_ps(acc, _mm256_mul_ps(inp, q_vec));
         }
 
-        let sum01 = _mm256_add_ps(acc0, acc1);
-        let sum23 = _mm256_add_ps(acc2, acc3);
-        let sum = _mm256_add_ps(sum01, sum23);
-
-        let hi = _mm256_extractf128_ps(sum, 1);
-        let lo = _mm256_castps256_ps128(sum);
+        let hi = _mm256_extractf128_ps(acc, 1);
+        let lo = _mm256_castps256_ps128(acc);
         let sum128 = _mm_add_ps(lo, hi);
         let shuf = _mm_movehdup_ps(sum128);
         let sums = _mm_add_ps(sum128, shuf);
@@ -235,6 +221,29 @@ mod x86 {
         let q8_sum = _mm_cvtsi128_si32(q8_sum32);
 
         (unsigned_dot, q8_sum)
+    }
+
+    #[target_feature(enable = "sse4.1")]
+    pub(super) unsafe fn dot_q8_block_sse41(input: &[f32], quantized: &[i8], scale: f32) -> f32 {
+        use std::arch::x86_64::*;
+
+        let mut acc = _mm_setzero_ps();
+        for chunk in 0..8 {
+            let base = chunk * 4;
+            let inp = _mm_loadu_ps(input.as_ptr().add(base));
+            // Register-based i8→f32: load 4 bytes, sign-extend to i32, convert to f32
+            let q_i8 = _mm_cvtsi32_si128(*(quantized.as_ptr().add(base) as *const i32));
+            let q_i32 = _mm_cvtepi8_epi32(q_i8);
+            let q_vec = _mm_cvtepi32_ps(q_i32);
+            acc = _mm_add_ps(acc, _mm_mul_ps(inp, q_vec));
+        }
+
+        let shuf = _mm_movehdup_ps(acc);
+        let sums = _mm_add_ps(acc, shuf);
+        let shuf2 = _mm_movehl_ps(sums, sums);
+        let result = _mm_add_ss(sums, shuf2);
+
+        _mm_cvtss_f32(result) * scale
     }
 
     #[target_feature(enable = "sse2")]
@@ -384,13 +393,12 @@ mod arm {
         for chunk in 0..8 {
             let base = chunk * 4;
             let inp = vld1q_f32(input.as_ptr().add(base));
-            let q_f32 = [
-                quantized[base] as f32,
-                quantized[base + 1] as f32,
-                quantized[base + 2] as f32,
-                quantized[base + 3] as f32,
-            ];
-            let q_vec = vld1q_f32(q_f32.as_ptr());
+            // Register-based i8→f32: load 4 bytes, widen i8→i16→i32, convert to f32
+            let q_i8_raw = *(quantized.as_ptr().add(base) as *const i32);
+            let q_i8x8 = vreinterpret_s8_s32(vdup_n_s32(q_i8_raw));
+            let q_i16 = vmovl_s8(q_i8x8);
+            let q_i32 = vmovl_s16(vget_low_s16(q_i16));
+            let q_vec = vcvtq_f32_s32(q_i32);
             if chunk % 2 == 0 {
                 acc0 = vfmaq_f32(acc0, inp, q_vec);
             } else {
@@ -523,6 +531,9 @@ pub fn dot_q8_block(input: &[f32], quantized: &[i8], scale: f32) -> f32 {
     {
         if is_x86_feature_detected!("avx2") {
             return unsafe { x86::dot_q8_block_avx2(input, quantized, scale) };
+        }
+        if is_x86_feature_detected!("sse4.1") {
+            return unsafe { x86::dot_q8_block_sse41(input, quantized, scale) };
         }
         return unsafe { x86::dot_q8_block_sse2(input, quantized, scale) };
     }

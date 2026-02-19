@@ -80,3 +80,6 @@ smallvec = { version = "1.11", features = ["const_generics"] }
 safetensors = "0.3"
 tokenizers = "0.21"
 components = { path = "components" }
+
+[profile.release]
+lto = "thin"
