@@ -605,9 +605,10 @@ impl Tensor {
                 }
             };
 
-            if total < 4096 {
+            let threshold = crate::core::runtime::SOFTMAX_PAR_THRESHOLD.load(std::sync::atomic::Ordering::Relaxed);
+            if total < threshold {
                 // Sequential path: avoid rayon scheduling overhead for small tensors
-                // (e.g. attention softmax during decode: [1, H, 1, T] with H*T < 4096)
+                // (e.g. attention softmax during decode: [1, H, 1, T] with H*T < threshold)
                 for (out_row, in_row) in out_data.chunks_mut(last_dim_size).zip(input_data.chunks(last_dim_size)) {
                     softmax_body(out_row, in_row);
                 }
@@ -893,7 +894,8 @@ impl Tensor {
         let rhs_data = rhs.as_slice_f32()?;
 
         let total_output = batch_count * M * N;
-        if total_output < 4096 {
+        let threshold = crate::core::runtime::BATCHED_MATMUL_PAR_THRESHOLD.load(std::sync::atomic::Ordering::Relaxed);
+        if total_output < threshold {
             // Sequential path: avoid rayon scheduling overhead for small batched matmuls
             // (e.g. attention Q@K^T and attn@V during decode with M=1)
             for ((out_chunk, lhs_chunk), rhs_chunk) in out_data
@@ -1449,5 +1451,59 @@ mod tests {
         assert_eq!(c.shape(), &[1, 4, 1, 16]);
         let flat = c.as_slice_f32().unwrap();
         assert!(flat.iter().all(|v| v.is_finite()));
+    }
+
+    // ==================== Configurable threshold tests ====================
+
+    #[test]
+    fn test_softmax_same_result_with_threshold_0_vs_max() {
+        use std::sync::atomic::Ordering;
+        let data: Vec<f32> = (0..8192).map(|i| (i as f32) * 0.001 - 4.0).collect();
+
+        // Force sequential (threshold=MAX)
+        crate::core::runtime::SOFTMAX_PAR_THRESHOLD.store(usize::MAX, Ordering::Relaxed);
+        let t = Tensor::from_vec(data.clone(), vec![128, 64]).unwrap();
+        let seq = t.softmax(-1).unwrap();
+        let seq_flat = seq.as_slice_f32().unwrap().to_vec();
+
+        // Force parallel (threshold=0)
+        crate::core::runtime::SOFTMAX_PAR_THRESHOLD.store(0, Ordering::Relaxed);
+        let par = t.softmax(-1).unwrap();
+        let par_flat = par.as_slice_f32().unwrap();
+
+        for i in 0..seq_flat.len() {
+            assert!((seq_flat[i] - par_flat[i]).abs() < 1e-6,
+                "softmax mismatch at {}: seq={} par={}", i, seq_flat[i], par_flat[i]);
+        }
+
+        // Restore default
+        crate::core::runtime::SOFTMAX_PAR_THRESHOLD.store(4096, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn test_batched_matmul_same_result_with_threshold_0_vs_max() {
+        use std::sync::atomic::Ordering;
+        let a_data: Vec<f32> = (0..16 * 32 * 64).map(|i| (i as f32) * 0.0001).collect();
+        let b_data: Vec<f32> = (0..16 * 64 * 32).map(|i| (i as f32) * 0.0001).collect();
+        let a = Tensor::from_vec(a_data, vec![16, 32, 64]).unwrap();
+        let b = Tensor::from_vec(b_data, vec![16, 64, 32]).unwrap();
+
+        // Force sequential
+        crate::core::runtime::BATCHED_MATMUL_PAR_THRESHOLD.store(usize::MAX, Ordering::Relaxed);
+        let seq = a.batched_matmul(&b).unwrap();
+        let seq_flat = seq.as_slice_f32().unwrap().to_vec();
+
+        // Force parallel
+        crate::core::runtime::BATCHED_MATMUL_PAR_THRESHOLD.store(0, Ordering::Relaxed);
+        let par = a.batched_matmul(&b).unwrap();
+        let par_flat = par.as_slice_f32().unwrap();
+
+        for i in 0..seq_flat.len() {
+            assert!((seq_flat[i] - par_flat[i]).abs() < 1e-4,
+                "batched_matmul mismatch at {}: seq={} par={}", i, seq_flat[i], par_flat[i]);
+        }
+
+        // Restore default
+        crate::core::runtime::BATCHED_MATMUL_PAR_THRESHOLD.store(4096, Ordering::Relaxed);
     }
 }

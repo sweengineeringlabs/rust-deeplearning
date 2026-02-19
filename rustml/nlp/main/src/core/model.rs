@@ -844,6 +844,18 @@ impl LlmModel {
         })
     }
 
+    /// Apply an optimization profile across all layers.
+    ///
+    /// Sets `use_inplace_ops` on each TransformerBlock and
+    /// `use_inplace_scaling` on each attention layer.
+    pub fn set_optimization_profile(&mut self, profile: rustml_core::OptProfile) {
+        let inplace = profile.use_inplace_ops();
+        for layer in &mut self.layers {
+            layer.set_use_inplace_ops(inplace);
+            layer.attention.set_use_inplace_scaling(inplace);
+        }
+    }
+
     /// Forward pass without KV cache.
     pub fn forward_pass(&self, input_ids: &Tensor) -> NlpResult<Tensor> {
         let x_emb = self.token_embedding.forward(input_ids)?;
@@ -1587,5 +1599,90 @@ mod tests {
         let input = Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![1, 4]).unwrap();
         let logits = model.forward(&input).unwrap();
         assert_eq!(logits.shape(), &[1, 4, vocab]);
+    }
+
+    // ==================== OptProfile integration tests ====================
+
+    #[test]
+    fn test_set_optimization_profile_baseline() {
+        use rustml_core::OptProfile;
+        let config = tiny_config();
+        let mut model = LlmModel::new(&config).unwrap();
+        model.set_optimization_profile(OptProfile::Baseline);
+
+        // Verify model still produces valid output with baseline profile
+        let input = Tensor::from_vec(
+            (0..4).map(|i| (i % 100) as f32).collect(),
+            vec![1, 4],
+        ).unwrap();
+        let logits = model.forward(&input).unwrap();
+        assert_eq!(logits.shape(), &[1, 4, 100]);
+        let flat = logits.as_slice_f32().unwrap();
+        assert!(flat.iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn test_set_optimization_profile_baseline_with_cache() {
+        use rustml_core::OptProfile;
+        let config = tiny_config();
+        let mut model = LlmModel::new(&config).unwrap();
+        model.set_optimization_profile(OptProfile::Baseline);
+
+        let mut cache = KVCache::new(
+            config.n_layers, config.max_seq_len,
+            model.head_dim(), model.num_kv_heads(),
+        );
+
+        // Prefill
+        let input = Tensor::from_vec(
+            (0..4).map(|i| (i % 100) as f32).collect(),
+            vec![1, 4],
+        ).unwrap();
+        let logits = model.forward_with_cache(&input, &mut cache).unwrap();
+        assert_eq!(logits.shape(), &[1, 4, 100]);
+        cache.advance(4);
+
+        // Decode
+        let input = Tensor::from_vec(vec![5.0], vec![1, 1]).unwrap();
+        let logits = model.forward_with_cache(&input, &mut cache).unwrap();
+        assert_eq!(logits.shape(), &[1, 1, 100]);
+        let flat = logits.as_slice_f32().unwrap();
+        assert!(flat.iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn test_optimization_profiles_produce_same_greedy_output() {
+        use rustml_core::OptProfile;
+        let config = tiny_config();
+
+        let input = Tensor::from_vec(
+            (0..4).map(|i| (i % 100) as f32).collect(),
+            vec![1, 4],
+        ).unwrap();
+
+        // Optimized profile
+        let mut model_opt = LlmModel::new(&config).unwrap();
+        model_opt.set_optimization_profile(OptProfile::Optimized);
+        let mut cache_opt = KVCache::new(
+            config.n_layers, config.max_seq_len,
+            model_opt.head_dim(), model_opt.num_kv_heads(),
+        );
+        let logits_opt = model_opt.forward_with_cache(&input, &mut cache_opt).unwrap();
+
+        // Baseline profile (same model instance, just toggle)
+        model_opt.set_optimization_profile(OptProfile::Baseline);
+        let mut cache_base = KVCache::new(
+            config.n_layers, config.max_seq_len,
+            model_opt.head_dim(), model_opt.num_kv_heads(),
+        );
+        let logits_base = model_opt.forward_with_cache(&input, &mut cache_base).unwrap();
+
+        let d1 = logits_opt.as_slice_f32().unwrap();
+        let d2 = logits_base.as_slice_f32().unwrap();
+        assert_eq!(d1.len(), d2.len());
+        for i in 0..d1.len() {
+            assert!((d1[i] - d2[i]).abs() < 1e-3,
+                "profile mismatch at {}: opt={} base={}", i, d1[i], d2[i]);
+        }
     }
 }

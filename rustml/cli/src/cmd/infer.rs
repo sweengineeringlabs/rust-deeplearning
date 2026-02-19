@@ -9,7 +9,7 @@ use clap::Args;
 use rustml_gguf::GGUFFile;
 use rustml_hub::HubApi;
 use rustml_nlp::{
-    Generator, LanguageModel, LlmModel, convert_tensors,
+    Generator, LanguageModel, LlmModel, OptProfile, convert_tensors,
     gguf_config_to_model_config,
 };
 use rustml_tokenizer::{BpeTokenizer, GgufTokenizer, HFTokenizer, Tokenizer};
@@ -67,6 +67,10 @@ pub struct InferArgs {
     /// KV cache context length. Auto-sized from prompt + max_tokens if omitted.
     #[arg(long)]
     context_len: Option<usize>,
+
+    /// Optimization profile: optimized (default), baseline (all opts off), aggressive (lower thresholds).
+    #[arg(long, default_value = "optimized")]
+    opt_profile: String,
 }
 
 fn read_prompt(args: &InferArgs) -> Result<String> {
@@ -135,6 +139,15 @@ fn validate_args(args: &InferArgs) -> Result<Option<String>> {
     Ok(batch_contents)
 }
 
+fn parse_opt_profile(s: &str) -> Result<OptProfile> {
+    match s {
+        "optimized" => Ok(OptProfile::Optimized),
+        "baseline" => Ok(OptProfile::Baseline),
+        "aggressive" => Ok(OptProfile::Aggressive),
+        other => bail!("Unknown --opt-profile '{}' (expected: optimized, baseline, aggressive)", other),
+    }
+}
+
 fn run_generation(
     model: &(dyn LanguageModel + Sync),
     tokenizer: &(dyn Tokenizer + Sync),
@@ -143,6 +156,7 @@ fn run_generation(
     eos_token_id: Option<u32>,
     bos_token_id: Option<u32>,
     chat_template: Option<String>,
+    profile: OptProfile,
 ) -> Result<()> {
     // Read prompt(s) early so we can compute effective KV cache context length.
     let (prompts, is_batch) = if let Some(ref contents) = batch_contents {
@@ -186,6 +200,7 @@ fn run_generation(
 
     let mut generator = Generator::new(model, tokenizer, args.temperature);
     generator = generator.with_context_len(effective_ctx);
+    generator = generator.with_optimization_profile(profile);
 
     if let Some(k) = args.top_k {
         generator = generator.with_top_k(k);
@@ -276,12 +291,18 @@ fn run_generation(
 
 pub fn run(args: InferArgs) -> Result<()> {
     let batch_contents = validate_args(&args)?;
+    let profile = parse_opt_profile(&args.opt_profile)?;
+
+    // Apply runtime config (rayon thresholds) for this profile
+    profile.runtime_config().apply()
+        .map_err(|e| anyhow::anyhow!("Failed to apply runtime config: {}", e))?;
+    eprintln!("  Optimization profile: {:?}", profile);
 
     if let Some(ref model_id) = args.safetensors {
-        run_safetensors(model_id, &args, batch_contents)
+        run_safetensors(model_id, &args, batch_contents, profile)
     } else {
         let gguf_path = args.gguf_path.as_ref().unwrap();
-        run_gguf(gguf_path, &args, batch_contents)
+        run_gguf(gguf_path, &args, batch_contents, profile)
     }
 }
 
@@ -289,6 +310,7 @@ fn run_safetensors(
     model_id: &str,
     args: &InferArgs,
     batch_contents: Option<String>,
+    profile: OptProfile,
 ) -> Result<()> {
     let hub = HubApi::new();
     let bundle = match hub.get_cached(model_id) {
@@ -322,8 +344,9 @@ fn run_safetensors(
     eprintln!("  {} tensors loaded", weights.len());
 
     eprintln!("  Building model...");
-    let model = rustml_nlp::build_safetensors_model(&model_type, &config, weights)
+    let mut model = rustml_nlp::build_safetensors_model(&model_type, &config, weights)
         .with_context(|| format!("Failed to build {} model", if model_type.is_empty() { "gpt2" } else { &model_type }))?;
+    model.set_optimization_profile(profile);
     let (total_params, _) = model.parameter_count();
     eprintln!("  Model ready: {:.1}M params", total_params as f64 / 1e6);
 
@@ -358,6 +381,7 @@ fn run_safetensors(
         eos,
         config.bos_token_id,
         config.chat_template.clone(),
+        profile,
     )
 }
 
@@ -365,6 +389,7 @@ fn run_gguf(
     gguf_path: &PathBuf,
     args: &InferArgs,
     batch_contents: Option<String>,
+    profile: OptProfile,
 ) -> Result<()> {
     eprintln!("Loading GGUF: {}", gguf_path.display());
     let gguf = GGUFFile::parse_header(gguf_path)
@@ -402,13 +427,14 @@ fn run_gguf(
     eprintln!("  {} tensors loaded", tensors.len());
 
     eprintln!("  Building model...");
-    let model = if is_gemma3 {
+    let mut model = if is_gemma3 {
         LlmModel::from_pretrained_gemma3(&config, tensors)
             .with_context(|| "Failed to build gemma3 model")?
     } else {
         LlmModel::from_pretrained(&config, tensors)
             .with_context(|| "Failed to build model")?
     };
+    model.set_optimization_profile(profile);
     let (total_params, _) = model.parameter_count();
     eprintln!("  Model ready: {:.1}M params", total_params as f64 / 1e6);
 
@@ -420,5 +446,6 @@ fn run_gguf(
         config.eos_token_id,
         config.bos_token_id,
         config.chat_template.clone(),
+        profile,
     )
 }

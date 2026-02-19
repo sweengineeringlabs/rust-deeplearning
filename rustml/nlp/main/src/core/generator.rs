@@ -81,6 +81,9 @@ pub struct Generator<'a> {
     chat_template: Option<String>,
     deadline: Option<Instant>,
     context_len_override: Option<usize>,
+    /// Use pre-allocated SamplingBuffer for top-p (default true).
+    /// When false, allocates fresh Vec each token (baseline path).
+    use_buffered_sampling: bool,
 }
 
 impl<'a> Generator<'a> {
@@ -101,6 +104,7 @@ impl<'a> Generator<'a> {
             chat_template: None,
             deadline: None,
             context_len_override: None,
+            use_buffered_sampling: true,
         }
     }
 
@@ -147,6 +151,19 @@ impl<'a> Generator<'a> {
     pub fn with_context_len(mut self, context_len: usize) -> Self {
         self.context_len_override = Some(context_len);
         self
+    }
+
+    /// Toggle buffered sampling. When true (default), reuses pre-allocated
+    /// buffers for logits and top-p sorting. When false, allocates fresh
+    /// each token (baseline path for A/B benchmarking).
+    pub fn with_buffered_sampling(mut self, enabled: bool) -> Self {
+        self.use_buffered_sampling = enabled;
+        self
+    }
+
+    /// Apply an optimization profile to this generator's sampling behavior.
+    pub fn with_optimization_profile(self, profile: rustml_core::OptProfile) -> Self {
+        self.with_buffered_sampling(profile.use_buffered_sampling())
     }
 
     /// Encode a prompt, applying the chat template if configured.
@@ -197,35 +214,60 @@ impl<'a> Generator<'a> {
 
     /// Full sampling pipeline: rep_penalty → temperature → top_k → top_p → categorical/argmax.
     ///
-    /// Uses a pre-allocated `SamplingBuffer` to avoid per-token heap allocations
-    /// for the logits copy and top-p sort buffer.
+    /// When `use_buffered_sampling` is true (default), reuses the pre-allocated
+    /// `SamplingBuffer` to avoid per-token heap allocations.
+    /// When false, allocates fresh each call (baseline path).
     fn sample_token(&self, logits: &[f32], past_tokens: &[u32], buf: &mut sampling::SamplingBuffer) -> u32 {
         if self.temperature < 1e-7 {
             return sampling::argmax(logits);
         }
 
-        // Reuse pre-allocated logits buffer instead of allocating a new Vec each token
-        buf.logits.clear();
-        buf.logits.extend_from_slice(logits);
+        if self.use_buffered_sampling {
+            // Reuse pre-allocated logits buffer instead of allocating a new Vec each token
+            buf.logits.clear();
+            buf.logits.extend_from_slice(logits);
 
-        if let Some(penalty) = self.repetition_penalty {
-            sampling::apply_repetition_penalty(&mut buf.logits, past_tokens, penalty);
+            if let Some(penalty) = self.repetition_penalty {
+                sampling::apply_repetition_penalty(&mut buf.logits, past_tokens, penalty);
+            }
+
+            for v in buf.logits.iter_mut() {
+                *v /= self.temperature;
+            }
+
+            if let Some(k) = self.top_k {
+                sampling::apply_top_k(&mut buf.logits, k);
+            }
+
+            if let Some(p) = self.top_p {
+                sampling::apply_top_p_buffered(&mut buf.logits, p, &mut buf.sort_buf);
+            }
+
+            let mut rng = rand::thread_rng();
+            sampling::sample_categorical(&buf.logits, &mut rng)
+        } else {
+            // Allocating baseline path
+            let mut logits_copy = logits.to_vec();
+
+            if let Some(penalty) = self.repetition_penalty {
+                sampling::apply_repetition_penalty(&mut logits_copy, past_tokens, penalty);
+            }
+
+            for v in logits_copy.iter_mut() {
+                *v /= self.temperature;
+            }
+
+            if let Some(k) = self.top_k {
+                sampling::apply_top_k(&mut logits_copy, k);
+            }
+
+            if let Some(p) = self.top_p {
+                sampling::apply_top_p(&mut logits_copy, p);
+            }
+
+            let mut rng = rand::thread_rng();
+            sampling::sample_categorical(&logits_copy, &mut rng)
         }
-
-        for v in buf.logits.iter_mut() {
-            *v /= self.temperature;
-        }
-
-        if let Some(k) = self.top_k {
-            sampling::apply_top_k(&mut buf.logits, k);
-        }
-
-        if let Some(p) = self.top_p {
-            sampling::apply_top_p_buffered(&mut buf.logits, p, &mut buf.sort_buf);
-        }
-
-        let mut rng = rand::thread_rng();
-        sampling::sample_categorical(&buf.logits, &mut rng)
     }
 
     fn make_cache(&self) -> KVCache {
@@ -633,5 +675,55 @@ mod tests {
             .with_repetition_penalty(1.1);
         let result = generator.generate("AB", 4).unwrap();
         assert!(result.len() >= 2);
+    }
+
+    // ==================== Configurable buffered sampling tests ====================
+
+    #[test]
+    fn test_generator_buffered_vs_unbuffered_greedy() {
+        // Greedy (temperature=0) should produce identical output regardless of
+        // use_buffered_sampling — argmax doesn't go through the buffer path.
+        let model = tiny_model();
+        let tokenizer = ByteTokenizer;
+
+        let gen_buf = Generator::new(&model, &tokenizer, 0.0)
+            .with_buffered_sampling(true);
+        let gen_alloc = Generator::new(&model, &tokenizer, 0.0)
+            .with_buffered_sampling(false);
+
+        let out1 = gen_buf.generate("AB", 8).unwrap();
+        let out2 = gen_alloc.generate("AB", 8).unwrap();
+        assert_eq!(out1, out2, "greedy output differs between buffered and unbuffered");
+    }
+
+    #[test]
+    fn test_generator_unbuffered_basic() {
+        // Ensure the unbuffered path doesn't crash
+        let model = tiny_model();
+        let tokenizer = ByteTokenizer;
+        let generator = Generator::new(&model, &tokenizer, 0.7)
+            .with_buffered_sampling(false)
+            .with_top_p(0.9);
+        let result = generator.generate("AB", 4).unwrap();
+        assert!(result.len() >= 2);
+    }
+
+    #[test]
+    fn test_generator_with_optimization_profile() {
+        use rustml_core::OptProfile;
+        let model = tiny_model();
+        let tokenizer = ByteTokenizer;
+
+        // Baseline profile disables buffered sampling
+        let generator_base = Generator::new(&model, &tokenizer, 0.0)
+            .with_optimization_profile(OptProfile::Baseline);
+        let out = generator_base.generate("AB", 4).unwrap();
+        assert!(out.len() >= 2);
+
+        // Optimized profile enables buffered sampling
+        let generator_opt = Generator::new(&model, &tokenizer, 0.0)
+            .with_optimization_profile(OptProfile::Optimized);
+        let out2 = generator_opt.generate("AB", 4).unwrap();
+        assert_eq!(out, out2, "optimized vs baseline greedy output should match");
     }
 }

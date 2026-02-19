@@ -6,3 +6,4 @@ pub use crate::core::tensor::{Tensor, Storage, f32_vec_to_bytes, f32_slice_to_by
 pub use crate::core::shape::Shape;
 pub use crate::core::arena::TensorPool;
 pub use crate::core::runtime::RuntimeConfig;
+pub use crate::core::runtime::OptProfile;

@@ -69,6 +69,9 @@ pub struct TransformerBlock {
     pub parallel_residual: bool,
     /// Optional MoE layer (Mixtral): replaces feed_forward when present
     pub moe: Option<MoeLayer>,
+    /// Use in-place operations in forward_with_cache (default true).
+    /// When false, uses allocating `forward()` + `add()` for debugging/benchmarking.
+    pub use_inplace_ops: bool,
 }
 
 impl TransformerBlock {
@@ -105,6 +108,7 @@ impl TransformerBlock {
             post_ffn_norm: None,
             parallel_residual: false,
             moe: None,
+            use_inplace_ops: true,
         })
     }
 
@@ -126,6 +130,7 @@ impl TransformerBlock {
             post_ffn_norm: None,
             parallel_residual: false,
             moe: None,
+            use_inplace_ops: true,
         }
     }
 
@@ -147,6 +152,7 @@ impl TransformerBlock {
             post_ffn_norm: None,
             parallel_residual: false,
             moe: None,
+            use_inplace_ops: true,
         }
     }
 
@@ -172,6 +178,7 @@ impl TransformerBlock {
             post_ffn_norm: Some(NormLayer::RMSNorm(post_ffn_norm)),
             parallel_residual: false,
             moe: None,
+            use_inplace_ops: true,
         }
     }
 
@@ -195,12 +202,20 @@ impl TransformerBlock {
             post_ffn_norm: None,
             parallel_residual: false,
             moe: None,
+            use_inplace_ops: true,
         }
     }
 
     /// Set parallel residual mode (Falcon-style).
     pub fn set_parallel_residual(&mut self, parallel: bool) {
         self.parallel_residual = parallel;
+    }
+
+    /// Toggle in-place operations in `forward_with_cache`.
+    /// When true (default), uses `clone` + `forward_inplace` + `add_inplace`.
+    /// When false, uses allocating `forward()` + `add()`.
+    pub fn set_use_inplace_ops(&mut self, enabled: bool) {
+        self.use_inplace_ops = enabled;
     }
 
     /// Access the self-attention layer (e.g. for cache sizing queries).
@@ -305,8 +320,9 @@ impl TransformerBlock {
 
     /// Forward pass with KV cache for autoregressive decoding.
     ///
-    /// Uses in-place operations for residual connections and normalization
-    /// to minimize allocation overhead in the decode loop.
+    /// When `use_inplace_ops` is true (default), uses in-place operations for
+    /// residual connections and normalization to minimize allocation overhead.
+    /// When false, uses allocating paths (for debugging/benchmarking).
     pub fn forward_with_cache(
         &self,
         input: &Tensor,
@@ -314,6 +330,10 @@ impl TransformerBlock {
         cache: &mut KVCache,
         layer_idx: usize,
     ) -> NnResult<Tensor> {
+        if !self.use_inplace_ops {
+            return self.forward_with_cache_allocating(input, encoder_output, cache, layer_idx);
+        }
+
         if self.parallel_residual {
             // Falcon: x = input + attn(norm1(input)) + ffn(norm2(input))
             let mut norm_1 = input.clone();
@@ -371,6 +391,59 @@ impl TransformerBlock {
             // x += ffn_out (in-place on x, which is uniquely owned)
             x.add_inplace(&ffn_out)?;
             Ok(x)
+        }
+    }
+
+    /// Allocating variant of forward_with_cache (baseline path).
+    fn forward_with_cache_allocating(
+        &self,
+        input: &Tensor,
+        encoder_output: Option<&Tensor>,
+        cache: &mut KVCache,
+        layer_idx: usize,
+    ) -> NnResult<Tensor> {
+        if self.parallel_residual {
+            let norm_1 = self.attention_norm.forward(input)?;
+            let attn_out = self.attention.forward_with_cache(&norm_1, cache, layer_idx)?;
+            let norm_2 = self.ffn_norm.forward(input)?;
+            let ffn_out = self.feed_forward.forward(&norm_2)?;
+            let x = input.add(&attn_out)?;
+            x.add(&ffn_out).map_err(Into::into)
+        } else if let Some(ref moe) = self.moe {
+            let norm_1 = self.attention_norm.forward(input)?;
+            let attn_out = self.attention.forward_with_cache(&norm_1, cache, layer_idx)?;
+            let x = input.add(&attn_out)?;
+            let norm_2 = self.ffn_norm.forward(&x)?;
+            let moe_out = moe.forward(&norm_2)?;
+            x.add(&moe_out).map_err(Into::into)
+        } else {
+            let norm_1 = self.attention_norm.forward(input)?;
+            let attn_out = self.attention.forward_with_cache(&norm_1, cache, layer_idx)?;
+            let attn_out = if let Some(ref pan) = self.post_attention_norm {
+                pan.forward(&attn_out)?
+            } else { attn_out };
+            let x = input.add(&attn_out)?;
+
+            if let (Some(cross_attn), Some(cross_norm), Some(enc_out)) =
+                (&self.cross_attention, &self.cross_attention_norm, encoder_output)
+            {
+                let norm_cross = cross_norm.forward(&x)?;
+                let cross_out = cross_attn.forward(&norm_cross, enc_out)?;
+                let x = x.add(&cross_out)?;
+                let norm_2 = self.ffn_norm.forward(&x)?;
+                let ffn_out = self.feed_forward.forward(&norm_2)?;
+                let ffn_out = if let Some(ref pfn) = self.post_ffn_norm {
+                    pfn.forward(&ffn_out)?
+                } else { ffn_out };
+                x.add(&ffn_out).map_err(Into::into)
+            } else {
+                let norm_2 = self.ffn_norm.forward(&x)?;
+                let ffn_out = self.feed_forward.forward(&norm_2)?;
+                let ffn_out = if let Some(ref pfn) = self.post_ffn_norm {
+                    pfn.forward(&ffn_out)?
+                } else { ffn_out };
+                x.add(&ffn_out).map_err(Into::into)
+            }
         }
     }
 }
@@ -608,6 +681,69 @@ mod tests {
         let y2 = block.forward_with_cache(&x2, None, &mut cache, 0).unwrap();
         assert_eq!(y2.shape(), &[1, 1, 64]);
         let flat = y2.as_slice_f32().unwrap();
+        assert!(flat.iter().all(|v| v.is_finite()));
+    }
+
+    // ==================== Configurable inplace ops tests ====================
+
+    #[test]
+    fn test_transformer_block_inplace_vs_allocating_with_cache() {
+        // Build two identical blocks, one with inplace ops, one without
+        let mut block_inplace = TransformerBlock::new(
+            64, 4, None, 256, false, 1e-5, true,
+            PositionEncoding::None, 128, 10000.0,
+        ).unwrap();
+        block_inplace.set_use_inplace_ops(true);
+
+        let mut block_alloc = TransformerBlock::new(
+            64, 4, None, 256, false, 1e-5, true,
+            PositionEncoding::None, 128, 10000.0,
+        ).unwrap();
+        block_alloc.set_use_inplace_ops(false);
+
+        // Copy weights from inplace to allocating block so they match
+        // (new() creates random weights, so we need identical blocks)
+        // Instead: use the same block and toggle the flag
+        let mut block = TransformerBlock::new(
+            64, 4, None, 256, false, 1e-5, true,
+            PositionEncoding::None, 128, 10000.0,
+        ).unwrap();
+
+        let x = Tensor::randn(vec![1, 4, 64]);
+
+        // Run with inplace
+        block.set_use_inplace_ops(true);
+        let mut cache1 = KVCache::new(1, 128, 16, 4);
+        let y_inplace = block.forward_with_cache(&x, None, &mut cache1, 0).unwrap();
+
+        // Run with allocating
+        block.set_use_inplace_ops(false);
+        let mut cache2 = KVCache::new(1, 128, 16, 4);
+        let y_alloc = block.forward_with_cache(&x, None, &mut cache2, 0).unwrap();
+
+        let d1 = y_inplace.as_slice_f32().unwrap();
+        let d2 = y_alloc.as_slice_f32().unwrap();
+        assert_eq!(d1.len(), d2.len());
+        for i in 0..d1.len() {
+            assert!((d1[i] - d2[i]).abs() < 1e-4,
+                "inplace vs alloc block mismatch at {}: {} vs {}", i, d1[i], d2[i]);
+        }
+    }
+
+    #[test]
+    fn test_transformer_block_allocating_forward_with_cache_basic() {
+        // Ensure the allocating path produces finite output
+        let mut block = TransformerBlock::new(
+            64, 4, None, 256, false, 1e-5, true,
+            PositionEncoding::None, 128, 10000.0,
+        ).unwrap();
+        block.set_use_inplace_ops(false);
+
+        let mut cache = KVCache::new(1, 128, 16, 4);
+        let x = Tensor::randn(vec![1, 8, 64]);
+        let y = block.forward_with_cache(&x, None, &mut cache, 0).unwrap();
+        assert_eq!(y.shape(), &[1, 8, 64]);
+        let flat = y.as_slice_f32().unwrap();
         assert!(flat.iter().all(|v| v.is_finite()));
     }
 }

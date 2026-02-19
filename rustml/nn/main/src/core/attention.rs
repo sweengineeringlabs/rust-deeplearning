@@ -32,6 +32,10 @@ pub struct MultiHeadAttention {
     q_norm: Option<RMSNorm>,
     k_norm: Option<RMSNorm>,
 
+    /// Use in-place scalar multiplication for attention score scaling (default true).
+    /// When false, uses allocating `div_scalar` instead.
+    use_inplace_scaling: bool,
+
     pub q_proj: Linear,
     pub k_proj: Linear,
     pub v_proj: Linear,
@@ -104,6 +108,7 @@ impl MultiHeadAttention {
             attn_scale: None,
             q_norm: None,
             k_norm: None,
+            use_inplace_scaling: true,
             q_proj: Linear::with_bias(d_model, d_model, bias),
             k_proj: Linear::with_bias(d_model, kv_dim, bias),
             v_proj: Linear::with_bias(d_model, kv_dim, bias),
@@ -160,6 +165,7 @@ impl MultiHeadAttention {
             attn_scale: None,
             q_norm: None,
             k_norm: None,
+            use_inplace_scaling: true,
             q_proj,
             k_proj,
             v_proj,
@@ -207,6 +213,7 @@ impl MultiHeadAttention {
             attn_scale,
             q_norm: None,
             k_norm: None,
+            use_inplace_scaling: true,
             q_proj,
             k_proj,
             v_proj,
@@ -269,6 +276,13 @@ impl MultiHeadAttention {
         self.k_norm = Some(k_norm);
     }
 
+    /// Toggle in-place attention score scaling.
+    /// When true (default), uses `mul_scalar_inplace` (zero-alloc).
+    /// When false, uses allocating `div_scalar`.
+    pub fn set_use_inplace_scaling(&mut self, enabled: bool) {
+        self.use_inplace_scaling = enabled;
+    }
+
     /// Forward pass without KV cache.
     ///
     /// Input: [B, S, d_model] -> Output: [B, S, d_model]
@@ -314,8 +328,12 @@ impl MultiHeadAttention {
         let k_t = k.transpose(2, 3)?;
         let mut scores = q.matmul(&k_t)?;
         let scale = self.attn_scale.unwrap_or_else(|| (self.head_dim as f32).sqrt());
-        // In-place scaling avoids allocating a new tensor (matmul result has refcount 1)
-        scores.mul_scalar_inplace(1.0 / scale)?;
+        if self.use_inplace_scaling {
+            // In-place scaling avoids allocating a new tensor (matmul result has refcount 1)
+            scores.mul_scalar_inplace(1.0 / scale)?;
+        } else {
+            scores = scores.div_scalar(scale);
+        }
 
         // Logit soft-capping
         let scores = if let Some(cap) = self.attn_logit_cap {
@@ -414,8 +432,12 @@ impl MultiHeadAttention {
         let k_t = k_full.transpose(2, 3)?;
         let mut scores = q.matmul(&k_t)?;
         let scale = self.attn_scale.unwrap_or_else(|| (self.head_dim as f32).sqrt());
-        // In-place scaling avoids allocating a new tensor (matmul result has refcount 1)
-        scores.mul_scalar_inplace(1.0 / scale)?;
+        if self.use_inplace_scaling {
+            // In-place scaling avoids allocating a new tensor (matmul result has refcount 1)
+            scores.mul_scalar_inplace(1.0 / scale)?;
+        } else {
+            scores = scores.div_scalar(scale);
+        }
 
         // Logit soft-capping
         let scores = if let Some(cap) = self.attn_logit_cap {
@@ -913,5 +935,86 @@ mod tests {
         assert_eq!(y.shape(), &[1, 4, d_model]);
         let flat = y.as_slice_f32().unwrap();
         assert!(flat.iter().all(|v| v.is_finite()));
+    }
+
+    // ==================== Configurable inplace scaling tests ====================
+
+    #[test]
+    fn test_attention_inplace_vs_allocating_scaling_match() {
+        // Same weights, same input → inplace and allocating scaling must match
+        let d_model = 64;
+        let num_heads = 4;
+
+        let q_proj = Linear::new_no_bias(d_model, d_model);
+        let k_proj = Linear::new_no_bias(d_model, d_model);
+        let v_proj = Linear::new_no_bias(d_model, d_model);
+        let out_proj = Linear::new_no_bias(d_model, d_model);
+
+        let mut mha_inplace = MultiHeadAttention::from_weights(
+            d_model, num_heads, None,
+            q_proj.clone(), k_proj.clone(), v_proj.clone(), out_proj.clone(),
+            true, PositionEncoding::None, 128, 10000.0,
+        ).unwrap();
+        mha_inplace.set_use_inplace_scaling(true);
+
+        let mut mha_alloc = MultiHeadAttention::from_weights(
+            d_model, num_heads, None,
+            q_proj, k_proj, v_proj, out_proj,
+            true, PositionEncoding::None, 128, 10000.0,
+        ).unwrap();
+        mha_alloc.set_use_inplace_scaling(false);
+
+        let x = Tensor::randn(vec![1, 6, d_model]);
+        let y_inplace = mha_inplace.forward(&x).unwrap();
+        let y_alloc = mha_alloc.forward(&x).unwrap();
+
+        let d1 = y_inplace.as_slice_f32().unwrap();
+        let d2 = y_alloc.as_slice_f32().unwrap();
+        assert_eq!(d1.len(), d2.len());
+        for i in 0..d1.len() {
+            assert!((d1[i] - d2[i]).abs() < 1e-5,
+                "inplace vs alloc scaling mismatch at {}: {} vs {}", i, d1[i], d2[i]);
+        }
+    }
+
+    #[test]
+    fn test_attention_inplace_vs_allocating_with_cache() {
+        let d_model = 64;
+        let num_heads = 4;
+        let head_dim = d_model / num_heads;
+
+        let q_proj = Linear::new_no_bias(d_model, d_model);
+        let k_proj = Linear::new_no_bias(d_model, d_model);
+        let v_proj = Linear::new_no_bias(d_model, d_model);
+        let out_proj = Linear::new_no_bias(d_model, d_model);
+
+        let mut mha_inplace = MultiHeadAttention::from_weights(
+            d_model, num_heads, None,
+            q_proj.clone(), k_proj.clone(), v_proj.clone(), out_proj.clone(),
+            true, PositionEncoding::None, 128, 10000.0,
+        ).unwrap();
+        mha_inplace.set_use_inplace_scaling(true);
+
+        let mut mha_alloc = MultiHeadAttention::from_weights(
+            d_model, num_heads, None,
+            q_proj, k_proj, v_proj, out_proj,
+            true, PositionEncoding::None, 128, 10000.0,
+        ).unwrap();
+        mha_alloc.set_use_inplace_scaling(false);
+
+        let x = Tensor::randn(vec![1, 4, d_model]);
+
+        let mut cache1 = KVCache::new(1, 128, head_dim, num_heads);
+        let mut cache2 = KVCache::new(1, 128, head_dim, num_heads);
+
+        let y1 = mha_inplace.forward_with_cache(&x, &mut cache1, 0).unwrap();
+        let y2 = mha_alloc.forward_with_cache(&x, &mut cache2, 0).unwrap();
+
+        let d1 = y1.as_slice_f32().unwrap();
+        let d2 = y2.as_slice_f32().unwrap();
+        for i in 0..d1.len() {
+            assert!((d1[i] - d2[i]).abs() < 1e-5,
+                "cache inplace vs alloc mismatch at {}: {} vs {}", i, d1[i], d2[i]);
+        }
     }
 }
