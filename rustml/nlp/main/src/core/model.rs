@@ -896,6 +896,18 @@ impl LlmModel {
         Ok(count)
     }
 
+    /// Fuse gate+up projection weights in all FFN layers.
+    /// Call after `quantize_all_weights()`. Returns number of layers fused.
+    pub fn fuse_gate_up_weights(&mut self) -> usize {
+        let mut count = 0;
+        for layer in &mut self.layers {
+            if layer.feed_forward.fuse_gate_up_weights() {
+                count += 1;
+            }
+        }
+        count
+    }
+
     /// Apply an optimization profile across all layers.
     ///
     /// Sets `use_inplace_ops` on each TransformerBlock and

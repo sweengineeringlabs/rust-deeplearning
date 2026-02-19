@@ -4,7 +4,7 @@ use crate::api::error::NnResult;
 use crate::api::types::Activation;
 use crate::core::linear::Linear;
 use std::time::Instant;
-use rustml_core::Tensor;
+use rustml_core::{DType, Tensor};
 
 /// Feed-forward network (MLP) used in transformer blocks.
 ///
@@ -15,6 +15,9 @@ pub struct FeedForward {
     pub gate_proj: Option<Linear>,
     pub hidden_dim: usize,
     pub activation: Activation,
+    /// Fused gate+up projection for gated activations (SwiGLU, GeGLU).
+    /// Created by `fuse_gate_up_weights()` — halves matmul dispatch overhead.
+    pub fused_gate_up: Option<Linear>,
 }
 
 impl FeedForward {
@@ -26,6 +29,7 @@ impl FeedForward {
             gate_proj: None,
             hidden_dim,
             activation: Activation::Gelu,
+            fused_gate_up: None,
         }
     }
 
@@ -47,6 +51,7 @@ impl FeedForward {
             gate_proj,
             hidden_dim,
             activation,
+            fused_gate_up: None,
         }
     }
 
@@ -58,13 +63,14 @@ impl FeedForward {
             gate_proj: Some(Linear::with_bias(d_model, hidden_dim, bias)),
             hidden_dim,
             activation: Activation::SwiGLU,
+            fused_gate_up: None,
         }
     }
 
     /// Construct from pre-loaded projection layers (GELU default).
     pub fn from_weights(up_proj: Linear, down_proj: Linear) -> Self {
         let hidden_dim = up_proj.out_features;
-        Self { up_proj, down_proj, gate_proj: None, hidden_dim, activation: Activation::Gelu }
+        Self { up_proj, down_proj, gate_proj: None, hidden_dim, activation: Activation::Gelu, fused_gate_up: None }
     }
 
     /// Construct from pre-loaded projection layers with a specified activation.
@@ -74,7 +80,7 @@ impl FeedForward {
         activation: Activation,
     ) -> Self {
         let hidden_dim = up_proj.out_features;
-        Self { up_proj, down_proj, gate_proj: None, hidden_dim, activation }
+        Self { up_proj, down_proj, gate_proj: None, hidden_dim, activation, fused_gate_up: None }
     }
 
     /// Construct a SwiGLU feed-forward from pre-loaded weights.
@@ -90,6 +96,7 @@ impl FeedForward {
             gate_proj: Some(gate_proj),
             hidden_dim,
             activation: Activation::SwiGLU,
+            fused_gate_up: None,
         }
     }
 
@@ -108,6 +115,7 @@ impl FeedForward {
             gate_proj: Some(gate_proj),
             hidden_dim,
             activation: Activation::GeGLU,
+            fused_gate_up: None,
         }
     }
 
@@ -136,6 +144,47 @@ impl FeedForward {
         }
     }
 
+    /// Fuse gate_proj and up_proj Q8_0 weights into a single `[2*hidden_dim, in_features]` tensor.
+    /// Halves matmul dispatch overhead for gated activations (SwiGLU, GeGLU).
+    /// No-op if gate_proj is absent, weights are not both Q8_0, or biases are present.
+    pub fn fuse_gate_up_weights(&mut self) -> bool {
+        let gate = match self.gate_proj.as_ref() {
+            Some(g) if g.weight.dtype() == DType::Q8_0 => g,
+            _ => return false,
+        };
+        if self.up_proj.weight.dtype() != DType::Q8_0 { return false; }
+        if gate.bias.is_some() || self.up_proj.bias.is_some() { return false; }
+        if gate.in_features != self.up_proj.in_features { return false; }
+        if gate.out_features != self.up_proj.out_features { return false; }
+
+        let gate_bytes = match gate.weight.as_raw_bytes() {
+            Ok(b) => b,
+            Err(_) => return false,
+        };
+        let up_bytes = match self.up_proj.weight.as_raw_bytes() {
+            Ok(b) => b,
+            Err(_) => return false,
+        };
+
+        let mut fused_bytes = Vec::with_capacity(gate_bytes.len() + up_bytes.len());
+        fused_bytes.extend_from_slice(gate_bytes);
+        fused_bytes.extend_from_slice(up_bytes);
+
+        let in_features = gate.in_features;
+        let out_features = gate.out_features + self.up_proj.out_features;
+
+        let fused_weight = Tensor::new(fused_bytes, vec![out_features, in_features], DType::Q8_0);
+        self.fused_gate_up = Some(Linear {
+            weight: fused_weight,
+            bias: None,
+            in_features,
+            out_features,
+            frozen: true,
+            use_native_q4: false,
+        });
+        true
+    }
+
     pub fn forward(&self, input: &Tensor) -> NnResult<Tensor> {
         let _t = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
         let result = self.forward_inner(input);
@@ -148,26 +197,44 @@ impl FeedForward {
     fn forward_inner(&self, input: &Tensor) -> NnResult<Tensor> {
         match self.activation {
             Activation::SwiGLU => {
-                let gate = self
-                    .gate_proj
-                    .as_ref()
-                    .expect("SwiGLU requires gate_proj")
-                    .forward(input)?;
-                let gate = gate.silu();
-                let up = self.up_proj.forward(input)?;
-                let h = gate.mul(&up)?;
-                self.down_proj.forward(&h)
+                if let Some(ref fused) = self.fused_gate_up {
+                    let fused_out = fused.forward(input)?;
+                    let half = self.hidden_dim;
+                    let gate = fused_out.slice(-1, 0, half)?.contiguous()?.silu();
+                    let up = fused_out.slice(-1, half, 2 * half)?.contiguous()?;
+                    let h = gate.mul(&up)?;
+                    self.down_proj.forward(&h)
+                } else {
+                    let gate = self
+                        .gate_proj
+                        .as_ref()
+                        .expect("SwiGLU requires gate_proj")
+                        .forward(input)?;
+                    let gate = gate.silu();
+                    let up = self.up_proj.forward(input)?;
+                    let h = gate.mul(&up)?;
+                    self.down_proj.forward(&h)
+                }
             }
             Activation::GeGLU => {
-                let gate = self
-                    .gate_proj
-                    .as_ref()
-                    .expect("GeGLU requires gate_proj")
-                    .forward(input)?;
-                let gate = gate.gelu();
-                let up = self.up_proj.forward(input)?;
-                let h = gate.mul(&up)?;
-                self.down_proj.forward(&h)
+                if let Some(ref fused) = self.fused_gate_up {
+                    let fused_out = fused.forward(input)?;
+                    let half = self.hidden_dim;
+                    let gate = fused_out.slice(-1, 0, half)?.contiguous()?.gelu();
+                    let up = fused_out.slice(-1, half, 2 * half)?.contiguous()?;
+                    let h = gate.mul(&up)?;
+                    self.down_proj.forward(&h)
+                } else {
+                    let gate = self
+                        .gate_proj
+                        .as_ref()
+                        .expect("GeGLU requires gate_proj")
+                        .forward(input)?;
+                    let gate = gate.gelu();
+                    let up = self.up_proj.forward(input)?;
+                    let h = gate.mul(&up)?;
+                    self.down_proj.forward(&h)
+                }
             }
             _ => {
                 let h = self.up_proj.forward(input)?;

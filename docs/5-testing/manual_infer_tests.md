@@ -25,7 +25,8 @@
 - [SafeTensors Multi-Architecture](#11-safetensors-multi-architecture)
 - [SafeTensors Diagnostics](#12-safetensors-diagnostics)
 - [Optimization Profiles](#14-optimization-profiles)
-- [Error Cases](#15-error-cases)
+- [Performance Profiling (RUST_LOG)](#15-performance-profiling-rust_log)
+- [Error Cases](#16-error-cases)
 
 ---
 
@@ -181,6 +182,8 @@
 | Tokenizer (BPE) | stderr when no tokenizer.json | `Tokenizer: <N> tokens (BPE)` |
 | Metrics (stream) | stderr after streaming | `<N> tokens in <T>s (<R> tokens/sec)` |
 | Metrics (non-stream) | stderr after generation | `Generated in <T>s` |
+| Quantization | stderr during load | `Quantized <N> linear layers F32 -> Q8_0` (N depends on model dimensions; layers with max dim < 1024 are skipped) |
+| Gate+up fusion | stderr during load | `Fused <N> gate+up projection pairs` (N = number of SwiGLU/GeGLU layers; absent for models without gate_proj like GPT-2) |
 
 ## 14. Optimization Profiles
 
@@ -200,7 +203,65 @@
 | Stream with profile | `rustml-infer --safetensors openai-community/gpt2 --prompt "Hello" --stream --max-tokens 20 --opt-profile baseline` | Streaming works with baseline profile |
 | Unknown profile | `rustml-infer --safetensors openai-community/gpt2 --prompt "Hello" --opt-profile unknown` | Falls back to `optimized` (default); generates text |
 
-## 15. Error Cases
+## 15. Performance Profiling (RUST_LOG)
+
+> **What:** Setting `RUST_LOG=rustml=debug` or `RUST_LOG=rustml=trace` enables hierarchical performance tracing, printing per-step and per-layer timing breakdowns to stderr. Useful for identifying bottlenecks after optimization changes.
+>
+> **Build:** Always use `cargo build --release -p rustml-nlp` (or `-p rustml-cli`) — debug builds are too slow for meaningful profiling.
+
+### Debug level (per-step breakdown)
+
+| Test | Command | Expected |
+|------|---------|----------|
+| GPT-2 debug | `RUST_LOG=rustml=debug cargo run --release -p rustml-nlp --bin rustml-infer -- --safetensors openai-community/gpt2 --prompt "Hello" --max-tokens 10 --temperature 0` | Per-step timings on stderr showing Embedding, Layers, Norm, Projection columns |
+| GPT-2 quantization | (same as above) | stderr: `Quantized 25 linear layers F32 -> Q8_0` (768-dim attention skipped, FFN + lm_head quantized) |
+| GPT-2 no fusion | (same as above) | No `Fused` message (GPT-2 has no gate_proj) |
+| GPT-2 output | (same as above) | `Hello, I'm sorry. I'm sorry. I` (deterministic at temp=0) |
+| Gemma 3 debug | `RUST_LOG=rustml=debug cargo run --release -p rustml-nlp --bin rustml-infer -- --safetensors google/gemma-3-1b-it --prompt "Hello" --max-tokens 5 --temperature 0` | Per-step timings; all 183 layers quantized (all dims ≥ 1152) |
+| Gemma 3 fusion | (same as above) | stderr: `Fused 26 gate+up projection pairs` (all 26 GeGLU layers fused) |
+| Gemma 3 output | (same as above) | Generates 5 tokens; `Generated in <T>s` |
+
+### Expected debug output format
+
+```
+[DEBUG rustml...] [perf] Step N forward: <T>ms (embed=<T>ms, layers=<T>ms, norm=<T>ms, proj=<T>ms)
+```
+
+### Typical per-step timings (release build, x86_64 AVX2)
+
+| Model | Step | Embedding | Layers | Norm | Projection | Total |
+|-------|------|-----------|--------|------|------------|-------|
+| GPT-2 (25 Q8_0) | prefill | ~0.1ms | ~65ms | ~0.7ms | ~7ms | ~73ms |
+| GPT-2 (25 Q8_0) | decode (avg) | ~0.1ms | ~60ms | ~0.6ms | ~5ms | ~66ms |
+| Gemma 3 1B (183 Q8_0, 26 fused) | prefill | ~4ms | ~430ms | <0.1ms | ~48ms | ~483ms |
+| Gemma 3 1B (183 Q8_0, 26 fused) | decode (avg) | ~0.2ms | ~215ms | <0.1ms | ~28ms | ~243ms |
+
+> **Note:** Timings vary with system load and CPU cache state. First decode step is typically 1.2-1.5x slower than steady state. The numbers above are approximate baselines for comparison, not strict pass/fail thresholds.
+>
+> **Round 3 change:** Gemma 3 decode improved from ~280ms to ~240ms/step via fused gate+up matmul (26 GeGLU layers). FFN reduced from ~6ms to ~4.7ms/layer by eliminating one rayon dispatch per layer.
+
+### Trace level (per-layer breakdown)
+
+| Test | Command | Expected |
+|------|---------|----------|
+| Gemma 3 trace | `RUST_LOG=rustml=trace cargo run --release -p rustml-nlp --bin rustml-infer -- --safetensors google/gemma-3-1b-it --prompt "Hello" --max-tokens 3 --temperature 0` | Per-layer timing showing attention and FFN time per layer |
+
+### Expected trace output format
+
+```
+[TRACE rustml...] [perf] Layer N: <T>ms (attn=<T>ms, ffn=<T>ms)
+```
+
+### Dimension threshold behavior
+
+The runtime Q8_0 quantization applies a dimension threshold (`min_dim = 1024`): layers where `max(in_features, out_features) < 1024` remain F32. After quantization, gate+up projection pairs in SwiGLU/GeGLU layers are fused into single matmuls.
+
+| Model | d_model | Layers quantized | Layers skipped | Gate+up fused | Reason |
+|-------|---------|------------------|----------------|---------------|--------|
+| GPT-2 | 768 | 25 (FFN + lm_head) | 48 (attention Q/K/V/O) | 0 (no gate_proj) | 768 < 1024 |
+| Gemma 3 1B | 1152 | 183 (all) | 0 | 26 (all GeGLU) | 1152 ≥ 1024 |
+
+## 16. Error Cases
 
 | Test | Command | Expected |
 |------|---------|----------|

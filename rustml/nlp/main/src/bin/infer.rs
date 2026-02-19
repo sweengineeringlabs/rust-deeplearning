@@ -288,6 +288,12 @@ fn run_safetensors(
         }
     }
 
+    // Fuse gate+up projections for gated activations (SwiGLU, GeGLU)
+    let fused = model.fuse_gate_up_weights();
+    if fused > 0 {
+        eprintln!("  Fused {} gate+up projection pairs", fused);
+    }
+
     let (total_params, _) = model.parameter_count();
     eprintln!("  Model ready: {:.1}M params", total_params as f64 / 1e6);
 
