@@ -94,7 +94,7 @@ The `sweai` binary is a single facade over all four standalone CLIs. Every stand
 | [Tokenizer Tests](manual_tokenizer_tests.md) | Tokenizer encode/decode, backends, vocab info | 28 |
 | [GGUF Inspector Tests](manual_gguf_inspect_tests.md) | GGUF metadata, tensor listing, model info | 25 |
 | [Hub CLI Tests](manual_hub_cli_tests.md) | Model download, cache listing, config display, SafeTensors inference | 30 |
-| [Inference Tests](manual_infer_tests.md) | GGUF and SafeTensors model loading, multi-arch dispatch, text generation, streaming, batch, timeout | 83 |
+| [Inference Tests](manual_infer_tests.md) | GGUF and SafeTensors model loading, multi-arch dispatch, text generation, streaming, batch, timeout, optimization profiles | 92 |
 
 > **Note:** Each test document lists standalone binary commands. All commands can also be run via the unified `sweai` binary — see the equivalence table above.
 
@@ -117,15 +117,17 @@ cargo test -p rustml-tokenizer
 
 | Suite | Location | Count |
 |-------|----------|-------|
+| Core unit tests | `rustml/core/main/src/` | 44 |
+| NN unit tests | `rustml/nn/main/src/` | 69 |
 | GGUF unit tests | `rustml/gguf/main/src/` | 5 |
 | GGUF CLI integration | `rustml/gguf/tests/cli.rs` | 27 |
 | Hub unit tests | `rustml/hub/main/src/` | 8 |
 | Hub CLI integration | `rustml/hub/tests/cli.rs` | 15 |
-| NLP unit tests | `rustml/nlp/main/src/` | 57 |
+| NLP unit tests | `rustml/nlp/main/src/` | 69 |
 | NLP integration tests | `rustml/nlp/tests/` | 4 |
 | Infer CLI integration | `rustml/nlp/tests/infer_cli.rs` | 14 |
 | Tokenizer CLI integration | `rustml/tokenizer/tests/cli.rs` | 18 |
-| **Total** | | **148** |
+| **Total** | | **273** |
 
 ---
 

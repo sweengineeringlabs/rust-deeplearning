@@ -24,7 +24,8 @@
 - [SafeTensors Generation (GPT-2)](#10-safetensors-generation-gpt-2)
 - [SafeTensors Multi-Architecture](#11-safetensors-multi-architecture)
 - [SafeTensors Diagnostics](#12-safetensors-diagnostics)
-- [Error Cases](#13-error-cases)
+- [Optimization Profiles](#14-optimization-profiles)
+- [Error Cases](#15-error-cases)
 
 ---
 
@@ -38,7 +39,7 @@
 
 | Test | Command | Expected |
 |------|---------|----------|
-| Help flag | `rustml-infer --help` | Lists `GGUF_PATH` positional, `--safetensors`, `--prompt`, `--batch-file`, `--max-tokens`, `--temperature`, `--top-k`, `--top-p`, `--repetition-penalty`, `--stream`, `--chat`, `--timeout` |
+| Help flag | `rustml-infer --help` | Lists `GGUF_PATH` positional, `--safetensors`, `--prompt`, `--batch-file`, `--max-tokens`, `--temperature`, `--top-k`, `--top-p`, `--repetition-penalty`, `--stream`, `--chat`, `--timeout`, `--opt-profile` |
 | Version flag | `rustml-infer --version` | Prints version string |
 | No args | `rustml-infer` | Error: `Provide a GGUF model path or --safetensors <MODEL_ID>` |
 | Unified help | `sweai infer --help` | Same flags as `rustml-infer --help` |
@@ -181,7 +182,25 @@
 | Metrics (stream) | stderr after streaming | `<N> tokens in <T>s (<R> tokens/sec)` |
 | Metrics (non-stream) | stderr after generation | `Generated in <T>s` |
 
-## 13. Error Cases
+## 14. Optimization Profiles
+
+> **What:** The `--opt-profile` flag selects a runtime optimization profile that toggles rayon parallelism thresholds, in-place tensor ops, and buffered sampling. Profiles: `optimized` (default), `baseline` (all optimizations off), `aggressive` (lower parallelism thresholds).
+>
+> **Why:** Enables A/B benchmarking, debugging correctness issues, and tuning thresholds for different hardware.
+
+| Test | Command | Expected |
+|------|---------|----------|
+| Default profile | `rustml-infer --safetensors openai-community/gpt2 --prompt "Hello" --max-tokens 20` | stderr shows `Optimization profile: optimized`; generates text |
+| Optimized profile | `rustml-infer --safetensors openai-community/gpt2 --prompt "Hello" --max-tokens 20 --opt-profile optimized` | stderr shows `Optimization profile: optimized`; generates text |
+| Baseline profile | `rustml-infer --safetensors openai-community/gpt2 --prompt "Hello" --max-tokens 20 --opt-profile baseline` | stderr shows `Optimization profile: baseline`; generates text |
+| Aggressive profile | `rustml-infer --safetensors openai-community/gpt2 --prompt "Hello" --max-tokens 20 --opt-profile aggressive` | stderr shows `Optimization profile: aggressive`; generates text |
+| Greedy parity (optimized vs baseline) | Compare greedy output (`--temperature 0`) between `--opt-profile optimized` and `--opt-profile baseline` | Identical output text (both profiles produce the same numerical results) |
+| Greedy parity (optimized vs aggressive) | Compare greedy output (`--temperature 0`) between `--opt-profile optimized` and `--opt-profile aggressive` | Identical output text |
+| GGUF with profile | `rustml-infer model.gguf --prompt "Hello" --max-tokens 20 --opt-profile baseline` | Accepts `--opt-profile` with GGUF models; generates text |
+| Stream with profile | `rustml-infer --safetensors openai-community/gpt2 --prompt "Hello" --stream --max-tokens 20 --opt-profile baseline` | Streaming works with baseline profile |
+| Unknown profile | `rustml-infer --safetensors openai-community/gpt2 --prompt "Hello" --opt-profile unknown` | Falls back to `optimized` (default); generates text |
+
+## 15. Error Cases
 
 | Test | Command | Expected |
 |------|---------|----------|
