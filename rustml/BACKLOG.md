@@ -122,46 +122,48 @@ Attention optimization is model-dependent:
 ---
 
 ### 5. Fix lm_head projection variance
-**Priority**: **High** | **Status**: Pending
+**Priority**: Medium | **Status**: Resolved (trace analysis)
 
 Projection times show significant variance, especially on larger models:
 - GPT-2: 2.0-3.9ms (2x variance)
 - Gemma 3: 17-64ms (**3.7x variance!**)
 
-**Root cause hypothesis**: Cold cache on first access, memory bandwidth saturation.
+**Root cause (confirmed via trace)**: Variance is between prefill (multi-token) and decode (single-token), not cold cache.
 
-**Solutions**:
-1. Add warm-up pass through lm_head during model load
-2. Prefetch weights before first decode
-3. Investigate memory layout for cache efficiency
+**Trace-level findings**:
+- Warmup: 20.5ms @ 15.7 GB/s
+- Prefill (2 tokens): 41.8ms @ 7.7 GB/s (expected: ~2x for 2 tokens)
+- Decode: 17.8ms @ 18.0 GB/s (excellent bandwidth)
+
+**Conclusion**: No optimization needed. The 3.7x variance was comparing 2-token prefill vs 1-token decode. Single-token decode is consistent at ~18ms with excellent bandwidth (18 GB/s).
 
 **Files**: `rustml/nlp/main/src/core/model.rs`, `rustml/nn/main/src/core/linear.rs`
-
-**Success criteria**:
-- GPT-2: Consistent ~3ms
-- Gemma 3: Consistent ~20ms (<1.5x variance)
 
 ---
 
 ### 6. Optimize FFN for large models
-**Priority**: High | **Status**: Pending | **Blocked by**: #1
+**Priority**: High | **Status**: Ready | **Blocked by**: ~~#1~~ (done)
 
 FFN dominates layer time on Gemma 3 (85% vs 15% attention). Gate+up fusion helps but FFN is still the bottleneck.
 
-**Gemma 3 FFN profile**:
-- Per-layer: ~10ms (fused gate+up)
-- Dimensions: 1152 -> 6912 -> 1152 (6x expansion)
-- Total: 26 layers x 10ms = 260ms
+**Trace-level findings (per layer)**:
+| Operation | Avg Time | Bandwidth | Variance |
+|-----------|----------|-----------|----------|
+| Gate+Up fused | 1.299ms | 13.9 GB/s | 3.1x |
+| Down proj | 0.794ms | 11.1 GB/s | 2.8x |
+| **Total FFN** | **2.09ms** | — | — |
+
+**Key insight**: Gate+up achieves good bandwidth (13.9 GB/s, peak 20.3 GB/s). Down proj is slower (11.1 GB/s) — memory access pattern issue.
 
 **Optimization candidates**:
-1. Improve Q8_0 matmul memory access patterns
-2. Tune rayon chunk sizes for 6912-wide rows
+1. ~~Improve Q8_0 matmul memory access patterns~~ → Focus on down_proj
+2. Tune rayon chunk sizes for 6912-wide rows (down_proj input)
 3. Investigate SIMD utilization at these dimensions
-4. Consider down_proj fusion with activation
+4. Consider down_proj fusion with residual add
 
 **Files**: `rustml/nn/main/src/core/feed_forward.rs`, `rustml/quant/main/src/core/quantize.rs`
 
-**Success criteria**: Reduce FFN to <8ms/layer on Gemma 3 (20% improvement)
+**Success criteria**: Reduce FFN to <1.7ms/layer on Gemma 3 (20% improvement)
 
 ---
 
@@ -183,25 +185,25 @@ Prefill is slower than decode on a per-token basis:
 
 ## Recommended Order
 
-1. **#1** - Foundation for data-driven decisions
-2. **#5** - Quick win, huge impact on Gemma 3 (3.7x variance)
-3. **#6** - FFN is 85% of Gemma 3 layer time
-4. **#2** - Enable Q8_0 for GPT-2 attention
+1. ~~**#1** - Foundation for data-driven decisions~~ ✓ Done
+2. ~~**#5** - Quick win, huge impact on Gemma 3~~ ✓ Resolved (no action needed)
+3. **#6** - FFN is 85% of Gemma 3 layer time (ready)
+4. **#2** - Enable Q8_0 for GPT-2 attention (ready)
 5. **#3** - Reduce timing jitter
 6. **#4** - Attention optimizations (lower priority since fusion works)
 7. **#7** - Prefill optimization (context-dependent)
 
 ## Expected Impact
 
-| Task | Model | Expected Improvement |
-|------|-------|---------------------|
-| #1 Trace profiling | All | Enables data-driven optimization |
-| #2 Lower Q8_0 threshold | GPT-2 | 10-20% layer speedup |
-| #3 Jitter fix | GPT-2 | More predictable latency |
-| #4 Attention optimization | GPT-2 | 5-10% layer speedup |
-| #5 lm_head warmup | Gemma 3 | ~40ms faster early steps |
-| #6 FFN optimization | Gemma 3 | 20% layer speedup (~35ms/step) |
-| #7 Prefill optimization | All | Faster time-to-first-token |
+| Task | Model | Status | Expected Improvement |
+|------|-------|--------|---------------------|
+| #1 Trace profiling | All | ✓ Done | Enables data-driven optimization |
+| #2 Lower Q8_0 threshold | GPT-2 | Ready | 10-20% layer speedup |
+| #3 Jitter fix | GPT-2 | Pending | More predictable latency |
+| #4 Attention optimization | GPT-2 | Pending | 5-10% layer speedup |
+| #5 lm_head variance | Gemma 3 | ✓ Resolved | N/A (was measurement artifact) |
+| #6 FFN optimization | Gemma 3 | Ready | 20% layer speedup (~10ms/step) |
+| #7 Prefill optimization | All | Pending | Faster time-to-first-token |
 
 ## Test Commands
 
