@@ -456,6 +456,8 @@ impl MultiHeadAttention {
         cache: &mut KVCache,
         layer_idx: usize,
     ) -> NnResult<Tensor> {
+        let trace = log::log_enabled!(log::Level::Trace);
+
         if cache.head_dim() != self.head_dim {
             return Err(NnError::InvalidConfig(format!(
                 "KVCache head_dim ({}) does not match attention head_dim ({})",
@@ -469,6 +471,7 @@ impl MultiHeadAttention {
         let start_pos = cache.current_len;
 
         // Project
+        let t_proj = if trace { Some(Instant::now()) } else { None };
         let (q, k, v) = if let Some(ref fused) = self.fused_qkv {
             let fused_out = fused.forward(input)?;
             let q_end = self.fused_q_dim;
@@ -484,6 +487,7 @@ impl MultiHeadAttention {
             let v = self.v_proj.forward(input)?;
             (q, k, v)
         };
+        let proj_ms = t_proj.map(|t| t.elapsed().as_secs_f64() * 1000.0);
 
         // Reshape Q: [B, S, num_heads, D] -> [B, num_heads, S, D]
         let q = q
@@ -499,15 +503,19 @@ impl MultiHeadAttention {
             .transpose(1, 2)?;
 
         // QK normalization (Gemma 3)
+        let t_norm = if trace { Some(Instant::now()) } else { None };
         let q = if let Some(ref qn) = self.q_norm { qn.forward(&q)? } else { q };
         let k = if let Some(ref kn) = self.k_norm { kn.forward(&k)? } else { k };
+        let norm_ms = t_norm.map(|t| t.elapsed().as_secs_f64() * 1000.0);
 
         // Apply RoPE before cache update
+        let t_rope = if trace { Some(Instant::now()) } else { None };
         let (q, k) = if let Some(ref rope) = self.rope_freqs {
             (rope.apply(&q, start_pos)?, rope.apply(&k, start_pos)?)
         } else {
             (q, k)
         };
+        let rope_ms = t_rope.map(|t| t.elapsed().as_secs_f64() * 1000.0);
 
         // Update cache
         cache.update(layer_idx, k.clone(), v.clone())?;
@@ -521,7 +529,8 @@ impl MultiHeadAttention {
         let k_full = k_full.repeat_kv(n_rep)?;
         let v_full = v_full.repeat_kv(n_rep)?;
 
-        // Attention scores
+        // Attention scores: Q @ K^T
+        let t_qkt = if trace { Some(Instant::now()) } else { None };
         let k_t = k_full.transpose(2, 3)?;
         let mut scores = q.matmul(&k_t)?;
         let scale = self.attn_scale.unwrap_or_else(|| (self.head_dim as f32).sqrt());
@@ -531,6 +540,7 @@ impl MultiHeadAttention {
         } else {
             scores = scores.div_scalar(scale);
         }
+        let qkt_ms = t_qkt.map(|t| t.elapsed().as_secs_f64() * 1000.0);
 
         // Logit soft-capping
         let scores = if let Some(cap) = self.attn_logit_cap {
@@ -555,14 +565,40 @@ impl MultiHeadAttention {
             scores
         };
 
+        // Softmax
+        let t_softmax = if trace { Some(Instant::now()) } else { None };
         let attn = scores.softmax(-1)?;
+        let softmax_ms = t_softmax.map(|t| t.elapsed().as_secs_f64() * 1000.0);
+
+        // Attention @ V
+        let t_av = if trace { Some(Instant::now()) } else { None };
         let context = attn.matmul(&v_full)?;
+        let av_ms = t_av.map(|t| t.elapsed().as_secs_f64() * 1000.0);
 
         let context = context
             .transpose(1, 2)?
             .reshape(&[batch_size, seq_len, self.num_heads * self.head_dim])?;
 
-        self.out_proj.forward(&context)
+        // Output projection
+        let t_out = if trace { Some(Instant::now()) } else { None };
+        let output = self.out_proj.forward(&context)?;
+        let out_ms = t_out.map(|t| t.elapsed().as_secs_f64() * 1000.0);
+
+        if trace {
+            log::trace!(
+                "[attn] layer={} QKV={:.3}ms QKnorm={:.3}ms RoPE={:.3}ms QK^T={:.3}ms softmax={:.3}ms A*V={:.3}ms out={:.3}ms",
+                layer_idx,
+                proj_ms.unwrap_or(0.0),
+                norm_ms.unwrap_or(0.0),
+                rope_ms.unwrap_or(0.0),
+                qkt_ms.unwrap_or(0.0),
+                softmax_ms.unwrap_or(0.0),
+                av_ms.unwrap_or(0.0),
+                out_ms.unwrap_or(0.0),
+            );
+        }
+
+        Ok(output)
     }
 }
 

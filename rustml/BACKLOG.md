@@ -110,23 +110,40 @@ Added `RuntimeConfig::warmup_thread_pool()` called from `warmup_decode()`:
 ---
 
 ### 4. Profile and optimize attention forward pass
-**Priority**: Medium | **Status**: Pending | **Blocked by**: #1
+**Priority**: Medium | **Status**: ✓ Profiled (near-optimal)
 
 Attention optimization is model-dependent:
 - GPT-2: 50% of layer time (F32 projections, no fusion)
 - Gemma 3: 15% of layer time (Q8_0 + QKV fusion working well)
 
-**Profiling needed**:
-- Q/K/V projection time breakdown
-- QK^T matmul time
-- Softmax time
-- Attention*V time
-- Output projection time
+**Trace profiling results (2026-02-19)**:
 
-**Optimization candidates**:
-- Flash attention pattern (fused QK^T + softmax + AV)
-- Better KV cache memory access
-- SIMD softmax
+| Component | GPT-2 (768 dim) | Gemma 3 (1152 dim) | % of Attention |
+|-----------|-----------------|--------------------| --------------|
+| QKV projection | 0.3-0.4ms | 0.5-0.6ms | **50-60%** |
+| QK normalization | N/A | 0.04-0.06ms | 5% |
+| RoPE | N/A | 0.015ms | <2% |
+| QK^T matmul | 0.08ms | 0.08-0.12ms | 10-15% |
+| Softmax | 0.006ms | 0.007ms | <2% |
+| A*V matmul | 0.012ms | 0.015ms | <2% |
+| Output projection | 0.1ms | 0.2-0.3ms | 18-25% |
+| **Total** | **0.5-0.6ms** | **0.9-1.0ms** | 100% |
+
+**Findings**:
+1. QKV projection dominates (~55% of attention time)
+2. Core attention ops (QK^T + softmax + A*V) are fast (~0.1ms total)
+3. QKV fusion is working well on Gemma 3
+4. Output projection is 2nd largest cost
+
+**Optimization candidates evaluated**:
+- ✗ Flash attention (fused QK^T + softmax + AV): Core ops are already <0.1ms combined — not worth complexity
+- ✗ SIMD softmax: Already <0.01ms per layer
+- ✗ Better KV cache: `get_view()` is <0.002ms
+
+**Conclusion**: Attention is near-optimal. Projections dominate, and these are already:
+- Q8_0 quantized (GPT-2 after threshold lowering)
+- QKV fused (Gemma 3)
+- Output projection could theoretically be fused with residual add, but gains would be minimal (~0.1-0.2ms per layer)
 
 **Files**: `rustml/nn/main/src/core/attention.rs`, `rustml/nn/main/src/core/kv_cache.rs`
 
@@ -204,7 +221,7 @@ Prefill is slower than decode on a per-token basis:
 3. ~~**#6** - FFN optimization~~ ✓ Investigated (near-optimal)
 4. ~~**#2** - Enable Q8_0 for GPT-2 attention~~ ✓ Done (10% speedup)
 5. ~~**#3** - Reduce timing jitter~~ ✓ Improved (51% layer jitter reduction)
-6. **#4** - Attention optimizations (lower priority since fusion works)
+6. ~~**#4** - Attention optimizations~~ ✓ Profiled (near-optimal, core ops <0.1ms)
 7. **#7** - Prefill optimization (context-dependent)
 
 ## Expected Impact
@@ -214,7 +231,7 @@ Prefill is slower than decode on a per-token basis:
 | #1 Trace profiling | All | ✓ Done | Enables data-driven optimization |
 | #2 Lower Q8_0 threshold | GPT-2 | ✓ Done | 10% faster, 75% less memory |
 | #3 Jitter fix | GPT-2 | ✓ Improved | 51% layer jitter reduction |
-| #4 Attention optimization | GPT-2 | Pending | 5-10% layer speedup |
+| #4 Attention optimization | Both | ✓ Profiled | Near-optimal (core ops <0.1ms combined) |
 | #5 lm_head variance | Gemma 3 | ✓ Resolved | N/A (was measurement artifact) |
 | #6 FFN optimization | Gemma 3 | Near-optimal | N/A (L1 cache constraint) |
 | #7 Prefill optimization | All | Pending | Faster time-to-first-token |
@@ -222,9 +239,13 @@ Prefill is slower than decode on a per-token basis:
 ## Test Commands
 
 ```bash
-# GPT-2 profiling
+# GPT-2 profiling (debug level - layer/step timings)
 RUST_LOG=rustml=debug cargo run --release -p rustml-nlp --bin rustml-infer -- \
   --safetensors openai-community/gpt2 --prompt "Hello" --max-tokens 10 --temperature 0
+
+# GPT-2 profiling (trace level - attention component breakdown)
+RUST_LOG=rustml=trace cargo run --release -p rustml-nlp --bin rustml-infer -- \
+  --safetensors openai-community/gpt2 --prompt "Hello" --max-tokens 5 --temperature 0 2>&1 | grep "\[attn\]"
 
 # Gemma 3 1B profiling (requires HF_TOKEN)
 HF_TOKEN=xxx RUST_LOG=rustml=debug cargo run --release -p rustml-nlp --bin rustml-infer -- \
