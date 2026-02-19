@@ -281,7 +281,7 @@ fn run_safetensors(
 
     // Quantize all F32 linear layers to Q8_0 for reduced memory bandwidth
     if !model.output.is_quantized() {
-        match model.quantize_all_weights() {
+        match model.quantize_all_weights(None) {
             Ok(n) if n > 0 => eprintln!("  Quantized {} linear layers F32 -> Q8_0", n),
             Ok(_) => {}
             Err(e) => eprintln!("  [warn] weight quantization failed: {}", e),

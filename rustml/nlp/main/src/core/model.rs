@@ -855,13 +855,15 @@ impl LlmModel {
 
     /// Quantize F32 linear layers to Q8_0 at load time.
     /// Covers attention projections, FFN projections, MoE experts, and lm_head.
-    /// Skips layers where max(in_features, out_features) < 768 — at very small
-    /// dimensions the quantize/dequantize overhead exceeds bandwidth savings.
-    /// Tested: GPT-2 (768 dim) shows ~10% speedup with Q8_0 attention vs F32.
+    ///
+    /// # Arguments
+    /// * `min_dim` - Minimum dimension threshold. Layers where max(in, out) < min_dim
+    ///   are skipped. Pass `None` to use model's d_model (recommended).
+    ///
     /// Returns the number of layers successfully quantized.
     /// Safe no-op for non-F32 or already-quantized weights.
-    pub fn quantize_all_weights(&mut self) -> NlpResult<usize> {
-        const MIN_DIM: usize = 768;
+    pub fn quantize_all_weights(&mut self, min_dim: Option<usize>) -> NlpResult<usize> {
+        let min_dim = min_dim.unwrap_or(self.config.dim);
         let mut count = 0usize;
         fn try_q(l: &mut Linear, c: &mut usize, min_dim: usize) {
             if l.in_features.max(l.out_features) < min_dim {
@@ -873,27 +875,27 @@ impl LlmModel {
             }
         }
         for layer in &mut self.layers {
-            try_q(&mut layer.attention.q_proj, &mut count, MIN_DIM);
-            try_q(&mut layer.attention.k_proj, &mut count, MIN_DIM);
-            try_q(&mut layer.attention.v_proj, &mut count, MIN_DIM);
-            try_q(&mut layer.attention.out_proj, &mut count, MIN_DIM);
-            try_q(&mut layer.feed_forward.up_proj, &mut count, MIN_DIM);
-            try_q(&mut layer.feed_forward.down_proj, &mut count, MIN_DIM);
+            try_q(&mut layer.attention.q_proj, &mut count, min_dim);
+            try_q(&mut layer.attention.k_proj, &mut count, min_dim);
+            try_q(&mut layer.attention.v_proj, &mut count, min_dim);
+            try_q(&mut layer.attention.out_proj, &mut count, min_dim);
+            try_q(&mut layer.feed_forward.up_proj, &mut count, min_dim);
+            try_q(&mut layer.feed_forward.down_proj, &mut count, min_dim);
             if let Some(ref mut g) = layer.feed_forward.gate_proj {
-                try_q(g, &mut count, MIN_DIM);
+                try_q(g, &mut count, min_dim);
             }
             if let Some(ref mut moe) = layer.moe {
-                try_q(&mut moe.gate, &mut count, MIN_DIM);
+                try_q(&mut moe.gate, &mut count, min_dim);
                 for expert in &mut moe.experts {
-                    try_q(&mut expert.up_proj, &mut count, MIN_DIM);
-                    try_q(&mut expert.down_proj, &mut count, MIN_DIM);
+                    try_q(&mut expert.up_proj, &mut count, min_dim);
+                    try_q(&mut expert.down_proj, &mut count, min_dim);
                     if let Some(ref mut g) = expert.gate_proj {
-                        try_q(g, &mut count, MIN_DIM);
+                        try_q(g, &mut count, min_dim);
                     }
                 }
             }
         }
-        try_q(&mut self.output, &mut count, MIN_DIM);
+        try_q(&mut self.output, &mut count, min_dim);
         Ok(count)
     }
 
