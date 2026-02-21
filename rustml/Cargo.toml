@@ -1,3 +1,56 @@
 [workspace]
-members = ["core", "nn", "hub", "nlp", "tokenizer", "swets"]
+members = ["core", "nn", "hub", "nlp", "tokenizer", "quant", "gguf", "swets"]
 resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = []
+repository = "https://github.com/sweengineeringlabs/rust-ui"
+
+[workspace.dependencies]
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Async
+tokio = { version = "1", features = ["full"] }
+# Error handling
+thiserror = "2"
+anyhow = "1"
+# CLI
+clap = { version = "4", features = ["derive"] }
+# Utilities
+rand = "0.8"
+regex = "1"
+dirs = "6"
+# HTTP
+reqwest = { version = "0.12", features = ["json"] }
+futures-util = "0.3"
+# Testing
+approx = "0.5"
+# Logging
+log = "0.4"
+env_logger = "0.11"
+# Internal crates
+rustml-core = { path = "core" }
+rustml-nn = { path = "nn" }
+rustml-hub = { path = "hub" }
+rustml-nlp = { path = "nlp" }
+rustml-tokenizer = { path = "tokenizer" }
+rustml-quant = { path = "quant" }
+rustml-gguf = { path = "gguf" }
+rustml-swets = { path = "swets" }
+# Shared deps for quant/gguf crates
+bytemuck = { version = "1", features = ["extern_crate_alloc"] }
+half = { version = "2.3", features = ["bytemuck"] }
+rayon = "1.8"
+memmap2 = "0.9"
+crc32fast = "1.3"
+hf-hub = "0.4"
+smallvec = { version = "1.11", features = ["const_generics"] }
+safetensors = "0.3"
+tokenizers = "0.21"
+
+[profile.release]
+lto = "thin"

@@ -84,3 +84,8 @@
 
 - [x] **No prefix caching** — Added `KVCache::snapshot()` and `KVCache::restore_from()` methods with dimension validation, enabling reuse of prefilled KV state across requests with shared prompts.
   - File: `rustml/nn/main/src/core/kv_cache.rs`
+
+## Testing Infrastructure
+
+- [ ] **`bench_all_optimizations` blocks `cargo test --workspace` for ~76 minutes** — `rustml/nn/tests/bench_optimizations.rs::bench_all_optimizations` runs 2M–500K iterations of SIMD/tensor micro-benchmarks designed for `--release`. In debug mode (standard `cargo test`) it consumed 4,589s (76 min) of a 83-minute full workspace run. Fix options: (a) add `#[ignore]` so it is skipped by default and must be run explicitly with `cargo test --release -p rustml-nn --test bench_optimizations -- --ignored --nocapture`; or (b) scale iteration counts based on `cfg!(debug_assertions)` to keep debug runs under 1s. Option (a) is simpler and matches the test file's own doc comment which already states `--release` is required.
+  - File: `rustml/nn/tests/bench_optimizations.rs`
