@@ -7,18 +7,20 @@
 use crate::api::error::{NlpError, NlpResult};
 use crate::api::types::{LanguageModel, ModelConfig};
 use crate::core::weight_map::WeightMap;
-use std::time::Instant;
-use rustml_core::{DType, Tensor, f32_vec_to_bytes, RuntimeConfig};
+use rustml_core::{DType, RuntimeConfig, Tensor, f32_vec_to_bytes};
 use rustml_nn::{
-    Activation, Embedding, FeedForward, KVCache, LayerNorm, Linear, MoeLayer,
-    MultiHeadAttention, NormLayer, PositionEncoding, RMSNorm, RoPEFreqs, TransformerBlock,
+    Activation, Embedding, FeedForward, KVCache, LayerNorm, Linear, MoeLayer, MultiHeadAttention,
+    NormLayer, PoolingStrategy, PositionEncoding, RMSNorm, RoPEFreqs, TransformerBlock,
 };
 use std::collections::HashMap;
+use std::time::Instant;
 
 /// Unified language model supporting multiple architectures.
 pub struct LlmModel {
     pub token_embedding: Embedding,
     pub pos_embedding: Option<Embedding>,
+    /// Embedding LayerNorm (BERT: applied after token + position embedding sum).
+    pub embd_norm: Option<NormLayer>,
     pub layers: Vec<TransformerBlock>,
     pub norm: NormLayer,
     pub output: Linear,
@@ -65,6 +67,7 @@ impl LlmModel {
         Ok(Self {
             token_embedding: Embedding::new(vocab_size, d_model),
             pos_embedding,
+            embd_norm: None,
             layers,
             norm: NormLayer::LayerNorm(LayerNorm::with_eps(d_model, eps)),
             output: Linear::new_no_bias(d_model, vocab_size),
@@ -125,24 +128,31 @@ impl LlmModel {
         };
 
         let has_attn_bias = config.attention_bias == Some(true);
-        let get_bias_opt = |key: &str| -> Option<Tensor> {
-            weights.get(key).and_then(|t| t.to_f32().ok())
-        };
+        let get_bias_opt =
+            |key: &str| -> Option<Tensor> { weights.get(key).and_then(|t| t.to_f32().ok()) };
 
         let mut layers = Vec::with_capacity(num_layers);
         for i in 0..num_layers {
             let q_bias = if has_attn_bias {
                 get_bias_opt(&format!("layers.{}.attention.q_proj.bias", i))
-            } else { None };
+            } else {
+                None
+            };
             let k_bias = if has_attn_bias {
                 get_bias_opt(&format!("layers.{}.attention.k_proj.bias", i))
-            } else { None };
+            } else {
+                None
+            };
             let v_bias = if has_attn_bias {
                 get_bias_opt(&format!("layers.{}.attention.v_proj.bias", i))
-            } else { None };
+            } else {
+                None
+            };
             let o_bias = if has_attn_bias {
                 get_bias_opt(&format!("layers.{}.attention.out_proj.bias", i))
-            } else { None };
+            } else {
+                None
+            };
 
             let q_proj = Linear::from_weights(
                 get_weight(&format!("layers.{}.attention.q_proj.weight", i))?,
@@ -176,11 +186,19 @@ impl LlmModel {
 
             // Sliding window (Mistral: all layers; Gemma-2: even layers only)
             if let Some(window) = config.sliding_window {
-                let apply = if config.attn_logit_cap.is_some() { i % 2 == 0 } else { true };
-                if apply { attention.set_window_size(window); }
+                let apply = if config.attn_logit_cap.is_some() {
+                    i % 2 == 0
+                } else {
+                    true
+                };
+                if apply {
+                    attention.set_window_size(window);
+                }
             }
             // Logit capping (Gemma-2)
-            if let Some(cap) = config.attn_logit_cap { attention.set_attn_logit_cap(cap); }
+            if let Some(cap) = config.attn_logit_cap {
+                attention.set_attn_logit_cap(cap);
+            }
 
             let up_proj = Linear::from_weights(
                 get_weight(&format!("layers.{}.feed_forward.up_proj.weight", i))?,
@@ -227,6 +245,7 @@ impl LlmModel {
         Ok(Self {
             token_embedding,
             pos_embedding,
+            embd_norm: None,
             layers,
             norm,
             output,
@@ -262,9 +281,8 @@ impl LlmModel {
                 .and_then(|t| Ok(t.to_f32()?))
         };
 
-        let get_tensor_opt = |key: &str| -> Option<Tensor> {
-            weights.get(key).and_then(|t| t.to_f32().ok())
-        };
+        let get_tensor_opt =
+            |key: &str| -> Option<Tensor> { weights.get(key).and_then(|t| t.to_f32().ok()) };
 
         let token_embedding = Embedding::from_weights(get_tensor("token_embedding.weight")?)?;
 
@@ -284,8 +302,7 @@ impl LlmModel {
             let c_attn_weight = get_tensor(&format!("layers.{}.attention.c_attn.weight", i))?
                 .transpose(0, 1)?
                 .contiguous()?;
-            let c_attn_bias =
-                get_tensor_opt(&format!("layers.{}.attention.c_attn.bias", i));
+            let c_attn_bias = get_tensor_opt(&format!("layers.{}.attention.c_attn.bias", i));
 
             // Split fused QKV
             let (q_w, k_w, v_w) = split_qkv(&c_attn_weight, d_model)?;
@@ -300,10 +317,9 @@ impl LlmModel {
             let k_proj = Linear::from_weights(k_w, k_b)?;
             let v_proj = Linear::from_weights(v_w, v_b)?;
 
-            let out_proj_weight =
-                get_tensor(&format!("layers.{}.attention.out_proj.weight", i))?
-                    .transpose(0, 1)?
-                    .contiguous()?;
+            let out_proj_weight = get_tensor(&format!("layers.{}.attention.out_proj.weight", i))?
+                .transpose(0, 1)?
+                .contiguous()?;
             let out_proj = Linear::from_weights(
                 out_proj_weight,
                 get_tensor_opt(&format!("layers.{}.attention.out_proj.bias", i)),
@@ -324,10 +340,9 @@ impl LlmModel {
             )?;
 
             // FFN (GELU, no gate_proj) — also transpose Conv1D weights
-            let up_proj_weight =
-                get_tensor(&format!("layers.{}.feed_forward.up_proj.weight", i))?
-                    .transpose(0, 1)?
-                    .contiguous()?;
+            let up_proj_weight = get_tensor(&format!("layers.{}.feed_forward.up_proj.weight", i))?
+                .transpose(0, 1)?
+                .contiguous()?;
             let up_proj = Linear::from_weights(
                 up_proj_weight,
                 get_tensor_opt(&format!("layers.{}.feed_forward.up_proj.bias", i)),
@@ -376,6 +391,7 @@ impl LlmModel {
         Ok(Self {
             token_embedding,
             pos_embedding,
+            embd_norm: None,
             layers,
             norm,
             output,
@@ -414,9 +430,8 @@ impl LlmModel {
                 .and_then(|t| Ok(t.to_f32()?))
         };
 
-        let get_tensor_opt = |key: &str| -> Option<Tensor> {
-            weights.get(key).and_then(|t| t.to_f32().ok())
-        };
+        let get_tensor_opt =
+            |key: &str| -> Option<Tensor> { weights.get(key).and_then(|t| t.to_f32().ok()) };
 
         let token_embedding = Embedding::from_weights(get_tensor("token_embedding.weight")?)?;
 
@@ -494,12 +509,8 @@ impl LlmModel {
                 eps,
             )?;
 
-            let mut block = TransformerBlock::from_weights(
-                attention,
-                feed_forward,
-                attention_norm,
-                ffn_norm,
-            );
+            let mut block =
+                TransformerBlock::from_weights(attention, feed_forward, attention_norm, ffn_norm);
             block.set_parallel_residual(config.parallel_residual.unwrap_or(true));
 
             layers.push(block);
@@ -522,6 +533,7 @@ impl LlmModel {
         Ok(Self {
             token_embedding,
             pos_embedding: None,
+            embd_norm: None,
             layers,
             norm,
             output,
@@ -608,10 +620,8 @@ impl LlmModel {
             }
 
             // MoE: router gate + expert FFNs
-            let gate = Linear::from_weights(
-                get_weight(&format!("layers.{}.moe.gate.weight", i))?,
-                None,
-            )?;
+            let gate =
+                Linear::from_weights(get_weight(&format!("layers.{}.moe.gate.weight", i))?, None)?;
 
             let mut experts = Vec::with_capacity(num_experts);
             for j in 0..num_experts {
@@ -627,7 +637,9 @@ impl LlmModel {
                     get_weight(&format!("layers.{}.moe.experts.{}.down_proj.weight", i, j))?,
                     None,
                 )?;
-                experts.push(FeedForward::from_weights_swiglu(up_proj, gate_proj, down_proj));
+                experts.push(FeedForward::from_weights_swiglu(
+                    up_proj, gate_proj, down_proj,
+                ));
             }
 
             let moe_layer = MoeLayer::from_weights(gate, experts, num_experts_per_tok);
@@ -637,10 +649,8 @@ impl LlmModel {
                 get_tensor(&format!("layers.{}.attention_norm.weight", i))?,
                 eps,
             );
-            let ffn_norm = RMSNorm::from_weight(
-                get_tensor(&format!("layers.{}.ffn_norm.weight", i))?,
-                eps,
-            );
+            let ffn_norm =
+                RMSNorm::from_weight(get_tensor(&format!("layers.{}.ffn_norm.weight", i))?, eps);
 
             // Placeholder feed_forward (unused — MoE path takes precedence)
             let placeholder_ff = FeedForward::swiglu(d_model, config.hidden_dim, false);
@@ -662,6 +672,7 @@ impl LlmModel {
         Ok(Self {
             token_embedding,
             pos_embedding: None,
+            embd_norm: None,
             layers,
             norm,
             output,
@@ -725,7 +736,11 @@ impl LlmModel {
         let mut layers = Vec::with_capacity(num_layers);
         for i in 0..num_layers {
             let is_global = (i + 1) % pattern == 0;
-            let rope = if is_global { global_rope.clone() } else { local_rope.clone() };
+            let rope = if is_global {
+                global_rope.clone()
+            } else {
+                local_rope.clone()
+            };
 
             let q_proj = Linear::from_weights(
                 get_weight(&format!("layers.{}.attention.q_proj.weight", i))?,
@@ -838,11 +853,341 @@ impl LlmModel {
         Ok(Self {
             token_embedding,
             pos_embedding: None,
+            embd_norm: None,
             layers,
             norm,
             output,
             config: config.clone(),
         })
+    }
+
+    /// Construct BERT encoder model from weights (already remapped to internal names).
+    ///
+    /// Handles BERT specifics:
+    /// - LayerNorm with bias (not RMSNorm)
+    /// - Separate Q/K/V projections with bias
+    /// - GELU activation, no gate_proj
+    /// - Learned position embeddings + embedding LayerNorm
+    /// - Post-norm transformer blocks (norm AFTER residual add)
+    /// - Tied output (dummy — embedding models don't use lm_head)
+    /// - Identity final norm (BERT has no output_norm; each block ends with norm)
+    pub fn from_pretrained_bert(
+        config: &ModelConfig,
+        weights: HashMap<String, Tensor>,
+    ) -> NlpResult<Self> {
+        let d_model = config.dim;
+        let num_heads = config.n_heads;
+        let num_layers = config.n_layers;
+        let max_seq_len = config.max_seq_len;
+        let eps = config.norm_eps;
+        let position_encoding = config.position_encoding;
+        let causal = config.causal;
+        let rope_theta = config.rope_theta;
+
+        let get_tensor = |key: &str| -> NlpResult<Tensor> {
+            weights
+                .get(key)
+                .ok_or_else(|| NlpError::ModelError(format!("Missing weight: {}", key)))
+                .and_then(|t| Ok(t.to_f32()?))
+        };
+
+        let get_tensor_opt =
+            |key: &str| -> Option<Tensor> { weights.get(key).and_then(|t| t.to_f32().ok()) };
+
+        let token_embedding = Embedding::from_weights(get_tensor("token_embedding.weight")?)?;
+
+        let pos_embedding = if let Ok(pos_weight) = get_tensor("pos_embedding.weight") {
+            Some(Embedding::from_weights(pos_weight)?)
+        } else {
+            Some(Embedding::new(max_seq_len, d_model))
+        };
+
+        // Embedding LayerNorm (token_embd_norm)
+        let embd_norm = if let (Ok(w), Ok(b)) =
+            (get_tensor("embd_norm.weight"), get_tensor("embd_norm.bias"))
+        {
+            Some(NormLayer::LayerNorm(LayerNorm::from_weights(w, b, eps)?))
+        } else {
+            None
+        };
+
+        let mut layers = Vec::with_capacity(num_layers);
+        for i in 0..num_layers {
+            // Separate Q/K/V with bias
+            let q_proj = Linear::from_weights(
+                get_tensor(&format!("layers.{}.attention.q_proj.weight", i))?,
+                get_tensor_opt(&format!("layers.{}.attention.q_proj.bias", i)),
+            )?;
+            let k_proj = Linear::from_weights(
+                get_tensor(&format!("layers.{}.attention.k_proj.weight", i))?,
+                get_tensor_opt(&format!("layers.{}.attention.k_proj.bias", i)),
+            )?;
+            let v_proj = Linear::from_weights(
+                get_tensor(&format!("layers.{}.attention.v_proj.weight", i))?,
+                get_tensor_opt(&format!("layers.{}.attention.v_proj.bias", i)),
+            )?;
+            let out_proj = Linear::from_weights(
+                get_tensor(&format!("layers.{}.attention.out_proj.weight", i))?,
+                get_tensor_opt(&format!("layers.{}.attention.out_proj.bias", i)),
+            )?;
+
+            let attention = MultiHeadAttention::from_weights(
+                d_model,
+                num_heads,
+                config.n_kv_heads,
+                q_proj,
+                k_proj,
+                v_proj,
+                out_proj,
+                causal,
+                position_encoding,
+                max_seq_len,
+                rope_theta,
+            )?;
+
+            // GELU FFN with bias, no gate_proj
+            let up_proj = Linear::from_weights(
+                get_tensor(&format!("layers.{}.feed_forward.up_proj.weight", i))?,
+                get_tensor_opt(&format!("layers.{}.feed_forward.up_proj.bias", i)),
+            )?;
+            let down_proj = Linear::from_weights(
+                get_tensor(&format!("layers.{}.feed_forward.down_proj.weight", i))?,
+                get_tensor_opt(&format!("layers.{}.feed_forward.down_proj.bias", i)),
+            )?;
+            let feed_forward =
+                FeedForward::from_weights_with_activation(up_proj, down_proj, Activation::Gelu);
+
+            // Post-attention LayerNorm with bias
+            let attention_norm = LayerNorm::from_weights(
+                get_tensor(&format!("layers.{}.attention_norm.weight", i))?,
+                get_tensor(&format!("layers.{}.attention_norm.bias", i))?,
+                eps,
+            )?;
+            // Post-FFN LayerNorm with bias
+            let ffn_norm = LayerNorm::from_weights(
+                get_tensor(&format!("layers.{}.ffn_norm.weight", i))?,
+                get_tensor(&format!("layers.{}.ffn_norm.bias", i))?,
+                eps,
+            )?;
+
+            layers.push(TransformerBlock::from_weights_post_norm(
+                attention,
+                feed_forward,
+                attention_norm,
+                ffn_norm,
+            ));
+        }
+
+        // BERT has no final output_norm — use identity LayerNorm (weight=1, bias=0)
+        let norm = NormLayer::LayerNorm(LayerNorm::with_eps(d_model, eps));
+
+        // Embedding models don't use lm_head — tie to token_embedding
+        let output = Linear::from_weights(token_embedding.weight.clone(), None)?;
+
+        Ok(Self {
+            token_embedding,
+            pos_embedding,
+            embd_norm,
+            layers,
+            norm,
+            output,
+            config: config.clone(),
+        })
+    }
+
+    /// Construct from Nomic-BERT GGUF weights (already remapped to internal names).
+    ///
+    /// Nomic-BERT differs from standard BERT:
+    /// - Fused QKV weight (`layers.{i}.attention.qkv.weight`) split at load time
+    /// - No bias on attention projections
+    /// - SwiGLU FFN (gate + up + down, no bias)
+    /// - RoPE position encoding (no learned position embeddings)
+    /// - Post-norm LayerNorm with bias
+    /// - Embedding LayerNorm (`embd_norm`)
+    pub fn from_pretrained_nomic_bert(
+        config: &ModelConfig,
+        weights: HashMap<String, Tensor>,
+    ) -> NlpResult<Self> {
+        let d_model = config.dim;
+        let num_heads = config.n_heads;
+        let num_layers = config.n_layers;
+        let max_seq_len = config.max_seq_len;
+        let eps = config.norm_eps;
+        let position_encoding = config.position_encoding;
+        let causal = config.causal;
+        let rope_theta = config.rope_theta;
+
+        let get_tensor = |key: &str| -> NlpResult<Tensor> {
+            weights
+                .get(key)
+                .ok_or_else(|| NlpError::ModelError(format!("Missing weight: {}", key)))
+                .and_then(|t| Ok(t.to_f32()?))
+        };
+
+        let token_embedding = Embedding::from_weights(get_tensor("token_embedding.weight")?)?;
+
+        // No position embeddings — Nomic-BERT uses RoPE
+        let pos_embedding: Option<Embedding> = None;
+
+        // Embedding LayerNorm (token_embd_norm)
+        let embd_norm = if let (Ok(w), Ok(b)) =
+            (get_tensor("embd_norm.weight"), get_tensor("embd_norm.bias"))
+        {
+            Some(NormLayer::LayerNorm(LayerNorm::from_weights(w, b, eps)?))
+        } else {
+            None
+        };
+
+        let mut layers = Vec::with_capacity(num_layers);
+        for i in 0..num_layers {
+            // Fused QKV → split into separate Q, K, V (no bias)
+            let qkv = get_tensor(&format!("layers.{}.attention.qkv.weight", i))?;
+            let (q_w, k_w, v_w) = split_qkv(&qkv, d_model)?;
+            let q_proj = Linear::from_weights(q_w, None)?;
+            let k_proj = Linear::from_weights(k_w, None)?;
+            let v_proj = Linear::from_weights(v_w, None)?;
+            let out_proj = Linear::from_weights(
+                get_tensor(&format!("layers.{}.attention.out_proj.weight", i))?,
+                None,
+            )?;
+
+            let attention = MultiHeadAttention::from_weights(
+                d_model,
+                num_heads,
+                config.n_kv_heads,
+                q_proj,
+                k_proj,
+                v_proj,
+                out_proj,
+                causal,
+                position_encoding,
+                max_seq_len,
+                rope_theta,
+            )?;
+
+            // SwiGLU FFN (gate + up + down, no bias)
+            let gate_proj = Linear::from_weights(
+                get_tensor(&format!("layers.{}.feed_forward.gate_proj.weight", i))?,
+                None,
+            )?;
+            let up_proj = Linear::from_weights(
+                get_tensor(&format!("layers.{}.feed_forward.up_proj.weight", i))?,
+                None,
+            )?;
+            let down_proj = Linear::from_weights(
+                get_tensor(&format!("layers.{}.feed_forward.down_proj.weight", i))?,
+                None,
+            )?;
+            let feed_forward = FeedForward::from_weights_swiglu(up_proj, gate_proj, down_proj);
+
+            // Post-attention LayerNorm with bias
+            let attention_norm = LayerNorm::from_weights(
+                get_tensor(&format!("layers.{}.attention_norm.weight", i))?,
+                get_tensor(&format!("layers.{}.attention_norm.bias", i))?,
+                eps,
+            )?;
+            // Post-FFN LayerNorm with bias
+            let ffn_norm = LayerNorm::from_weights(
+                get_tensor(&format!("layers.{}.ffn_norm.weight", i))?,
+                get_tensor(&format!("layers.{}.ffn_norm.bias", i))?,
+                eps,
+            )?;
+
+            layers.push(TransformerBlock::from_weights_post_norm(
+                attention,
+                feed_forward,
+                attention_norm,
+                ffn_norm,
+            ));
+        }
+
+        // No final output_norm — use identity LayerNorm (same as BERT)
+        let norm = NormLayer::LayerNorm(LayerNorm::with_eps(d_model, eps));
+
+        // Embedding models don't use lm_head — tie to token_embedding
+        let output = Linear::from_weights(token_embedding.weight.clone(), None)?;
+
+        Ok(Self {
+            token_embedding,
+            pos_embedding,
+            embd_norm,
+            layers,
+            norm,
+            output,
+            config: config.clone(),
+        })
+    }
+
+    /// Encode input tokens to hidden states `[B, S, dim]` without the LM head projection.
+    ///
+    /// Runs the full transformer stack (embedding → positional encoding → layers → norm)
+    /// but stops before the output projection. Use this to extract contextualised hidden
+    /// states for dense retrieval or downstream pooling via [`LlmModel::embed`].
+    ///
+    /// Works with both causal (decoder) and bidirectional (encoder) models — the attention
+    /// mask is controlled by `ModelConfig::causal`.
+    pub fn encode(&self, input_ids: &Tensor) -> NlpResult<Tensor> {
+        let x_emb = self.token_embedding.forward(input_ids)?;
+        let x_emb = if let Some(scale) = self.config.embedding_scale {
+            x_emb.mul_scalar(scale)
+        } else {
+            x_emb
+        };
+
+        let batch_size = input_ids.shape()[0];
+        let seq_len = input_ids.shape()[input_ids.ndim() - 1];
+
+        if seq_len > self.config.max_seq_len {
+            return Err(NlpError::ModelError(format!(
+                "Sequence length {} exceeds maximum {}",
+                seq_len, self.config.max_seq_len
+            )));
+        }
+
+        let mut x = if let Some(ref pos_emb) = self.pos_embedding {
+            let mut pos_data = Vec::with_capacity(batch_size * seq_len);
+            for _ in 0..batch_size {
+                for i in 0..seq_len {
+                    pos_data.push(i as f32);
+                }
+            }
+            let pos_bytes = f32_vec_to_bytes(pos_data);
+            let pos_ids = Tensor::new(pos_bytes, vec![batch_size, seq_len], DType::F32);
+            let p_emb = pos_emb.forward(&pos_ids)?;
+            x_emb.add(&p_emb)?
+        } else {
+            x_emb
+        };
+
+        // Embedding LayerNorm (BERT)
+        if let Some(ref embd_norm) = self.embd_norm {
+            x = embd_norm.forward(&x)?;
+        }
+
+        for layer in &self.layers {
+            x = layer.forward(&x)?;
+        }
+
+        Ok(self.norm.forward(&x)?)
+    }
+
+    /// Embed input tokens to a single dense vector per batch item: `[B, S, dim]` → `[B, dim]`.
+    ///
+    /// Runs [`encode`][LlmModel::encode] then applies `strategy` to pool across the
+    /// sequence dimension:
+    ///
+    /// | Strategy | Description | Typical use |
+    /// |---|---|---|
+    /// | `Cls`  | Hidden state of token 0 | BERT / encoder models |
+    /// | `Mean` | Average over all positions | Sentence-transformers, decoder mean-pool |
+    /// | `Max`  | Element-wise max over positions | Retrieval fine-tuned models |
+    ///
+    /// For bidirectional encoder models (`causal: false`) loaded from BERT/RoBERTa
+    /// weights, use `PoolingStrategy::Cls`. For decoder-only models (Llama, Mistral)
+    /// repurposed as embedding models, use `PoolingStrategy::Mean`.
+    pub fn embed(&self, input_ids: &Tensor, strategy: PoolingStrategy) -> NlpResult<Tensor> {
+        let hidden = self.encode(input_ids)?;
+        pool_hidden_states(&hidden, strategy)
     }
 
     /// Quantize the lm_head (output projection) weight from F32 to Q8_0.
@@ -945,7 +1290,10 @@ impl LlmModel {
         RuntimeConfig::warmup_thread_pool();
 
         let n_kv_heads = self.config.n_kv_heads.unwrap_or(self.config.n_heads);
-        let head_dim = self.config.head_dim.unwrap_or(self.config.dim / self.config.n_heads);
+        let head_dim = self
+            .config
+            .head_dim
+            .unwrap_or(self.config.dim / self.config.n_heads);
         let mut cache = KVCache::new(self.config.n_layers, 4, head_dim, n_kv_heads);
 
         let dummy_bytes = 0.0f32.to_ne_bytes().to_vec();
@@ -990,6 +1338,11 @@ impl LlmModel {
             x_emb
         };
 
+        // Embedding LayerNorm (BERT)
+        if let Some(ref embd_norm) = self.embd_norm {
+            x = embd_norm.forward(&x)?;
+        }
+
         for layer in &self.layers {
             x = layer.forward(&x)?;
         }
@@ -1004,16 +1357,26 @@ impl LlmModel {
         input_ids: &Tensor,
         cache: &mut KVCache,
     ) -> NlpResult<Tensor> {
-        let _t_total = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
+        let _t_total = if log::log_enabled!(log::Level::Debug) {
+            Some(Instant::now())
+        } else {
+            None
+        };
 
-        let _t_emb = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
+        let _t_emb = if log::log_enabled!(log::Level::Debug) {
+            Some(Instant::now())
+        } else {
+            None
+        };
         let x_emb = self.token_embedding.forward(input_ids)?;
         let x_emb = if let Some(scale) = self.config.embedding_scale {
             x_emb.mul_scalar(scale)
         } else {
             x_emb
         };
-        let emb_ms = _t_emb.map(|t| t.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+        let emb_ms = _t_emb
+            .map(|t| t.elapsed().as_secs_f64() * 1000.0)
+            .unwrap_or(0.0);
 
         let batch_size = input_ids.shape()[0];
         let seq_len = input_ids.shape()[input_ids.ndim() - 1];
@@ -1044,27 +1407,64 @@ impl LlmModel {
             x_emb
         };
 
-        let _t_layers = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
+        // Embedding LayerNorm (BERT)
+        if let Some(ref embd_norm) = self.embd_norm {
+            x = embd_norm.forward(&x)?;
+        }
+
+        let _t_layers = if log::log_enabled!(log::Level::Debug) {
+            Some(Instant::now())
+        } else {
+            None
+        };
         for (i, layer) in self.layers.iter().enumerate() {
-            let _t_layer = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
+            let _t_layer = if log::log_enabled!(log::Level::Debug) {
+                Some(Instant::now())
+            } else {
+                None
+            };
             x = layer.forward_with_cache(&x, None, cache, i)?;
             if let Some(t) = _t_layer {
-                log::debug!("[perf] model::forward layer={} total={:.3}ms", i, t.elapsed().as_secs_f64() * 1000.0);
+                log::debug!(
+                    "[perf] model::forward layer={} total={:.3}ms",
+                    i,
+                    t.elapsed().as_secs_f64() * 1000.0
+                );
             }
         }
-        let layers_ms = _t_layers.map(|t| t.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+        let layers_ms = _t_layers
+            .map(|t| t.elapsed().as_secs_f64() * 1000.0)
+            .unwrap_or(0.0);
 
-        let _t_norm = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
+        let _t_norm = if log::log_enabled!(log::Level::Debug) {
+            Some(Instant::now())
+        } else {
+            None
+        };
         let x = self.norm.forward(&x)?;
-        let norm_ms = _t_norm.map(|t| t.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+        let norm_ms = _t_norm
+            .map(|t| t.elapsed().as_secs_f64() * 1000.0)
+            .unwrap_or(0.0);
 
-        let _t_proj = if log::log_enabled!(log::Level::Debug) { Some(Instant::now()) } else { None };
+        let _t_proj = if log::log_enabled!(log::Level::Debug) {
+            Some(Instant::now())
+        } else {
+            None
+        };
         let out = self.output.forward(&x)?;
-        let proj_ms = _t_proj.map(|t| t.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+        let proj_ms = _t_proj
+            .map(|t| t.elapsed().as_secs_f64() * 1000.0)
+            .unwrap_or(0.0);
 
         if let Some(t) = _t_total {
-            log::debug!("[perf] model::forward embedding={:.3}ms layers={:.3}ms norm={:.3}ms projection={:.3}ms total={:.3}ms",
-                emb_ms, layers_ms, norm_ms, proj_ms, t.elapsed().as_secs_f64() * 1000.0);
+            log::debug!(
+                "[perf] model::forward embedding={:.3}ms layers={:.3}ms norm={:.3}ms projection={:.3}ms total={:.3}ms",
+                emb_ms,
+                layers_ms,
+                norm_ms,
+                proj_ms,
+                t.elapsed().as_secs_f64() * 1000.0
+            );
         }
 
         Ok(out)
@@ -1079,6 +1479,12 @@ impl LlmModel {
 
         if let Some(ref pos_emb) = self.pos_embedding {
             total += pos_emb.weight.numel();
+        }
+
+        if let Some(ref embd_norm) = self.embd_norm {
+            let (t, f) = embd_norm.parameter_count();
+            total += t;
+            frozen += f;
         }
 
         for layer in &self.layers {
@@ -1129,7 +1535,9 @@ impl LanguageModel for LlmModel {
     }
 
     fn head_dim(&self) -> usize {
-        self.config.head_dim.unwrap_or(self.config.dim / self.config.n_heads)
+        self.config
+            .head_dim
+            .unwrap_or(self.config.dim / self.config.n_heads)
     }
 }
 
@@ -1178,15 +1586,11 @@ fn split_qkv_bias(qkv_bias: &Tensor, d_model: usize) -> NlpResult<(Tensor, Tenso
 /// | transformer.h.{i}.mlp.c_fc.weight           | layers.{i}.feed_forward.up_proj.weight          |
 /// | transformer.h.{i}.mlp.c_proj.weight         | layers.{i}.feed_forward.down_proj.weight        |
 /// | transformer.ln_f.weight                     | norm.weight                                   |
-pub fn map_gpt2_weights(
-    weights: HashMap<String, Tensor>,
-) -> HashMap<String, Tensor> {
+pub fn map_gpt2_weights(weights: HashMap<String, Tensor>) -> HashMap<String, Tensor> {
     let mut mapped = HashMap::new();
 
     for (name, tensor) in weights {
-        let stripped = name
-            .strip_prefix("transformer.")
-            .unwrap_or(&name);
+        let stripped = name.strip_prefix("transformer.").unwrap_or(&name);
 
         let new_name = if stripped == "wte.weight" {
             "token_embedding.weight".to_string()
@@ -1238,6 +1642,72 @@ pub fn map_gpt2_weights(
     mapped
 }
 
+/// Pool a `[B, S, dim]` hidden-state tensor to `[B, dim]` using the given strategy.
+///
+/// Data is read via the tensor's `iter()` in row-major order:
+/// `data[(b * seq_len + s) * dim + d]`.
+fn pool_hidden_states(hidden: &Tensor, strategy: PoolingStrategy) -> NlpResult<Tensor> {
+    let shape = hidden.shape();
+    if shape.len() != 3 {
+        return Err(NlpError::ModelError(format!(
+            "pool_hidden_states: expected [B, S, dim] tensor, got {:?}",
+            shape
+        )));
+    }
+    let batch_size = shape[0];
+    let seq_len = shape[1];
+    let dim = shape[2];
+
+    let data: Vec<f32> = hidden.iter().collect();
+    let mut output = vec![0.0f32; batch_size * dim];
+
+    match strategy {
+        PoolingStrategy::Cls => {
+            // First token per batch item.
+            for b in 0..batch_size {
+                let src = b * seq_len * dim;
+                let dst = b * dim;
+                output[dst..dst + dim].copy_from_slice(&data[src..src + dim]);
+            }
+        }
+        PoolingStrategy::Mean => {
+            let scale = 1.0 / seq_len as f32;
+            for b in 0..batch_size {
+                let dst = b * dim;
+                for s in 0..seq_len {
+                    let src = (b * seq_len + s) * dim;
+                    for d in 0..dim {
+                        output[dst + d] += data[src + d];
+                    }
+                }
+                for d in 0..dim {
+                    output[dst + d] *= scale;
+                }
+            }
+        }
+        PoolingStrategy::Max => {
+            for b in 0..batch_size {
+                let dst = b * dim;
+                // Initialise from first token.
+                let src0 = b * seq_len * dim;
+                output[dst..dst + dim].copy_from_slice(&data[src0..src0 + dim]);
+                // Element-wise max over remaining tokens.
+                for s in 1..seq_len {
+                    let src = (b * seq_len + s) * dim;
+                    for d in 0..dim {
+                        if data[src + d] > output[dst + d] {
+                            output[dst + d] = data[src + d];
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let bytes = f32_vec_to_bytes(output);
+    Ok(Tensor::new(bytes, vec![batch_size, dim], DType::F32))
+}
+
 /// Build a SafeTensors model by dispatching on `model_type` from config.json.
 ///
 /// Handles weight remapping and constructor selection for all supported architectures.
@@ -1281,9 +1751,10 @@ pub fn build_safetensors_model(
             let weights = wm.remap(weights);
             LlmModel::from_pretrained_mixtral(config, weights)
         }
-        other => Err(NlpError::ModelError(
-            format!("Unsupported SafeTensors model_type: '{}'", other),
-        )),
+        other => Err(NlpError::ModelError(format!(
+            "Unsupported SafeTensors model_type: '{}'",
+            other
+        ))),
     }
 }
 
@@ -1304,6 +1775,7 @@ mod tests {
             use_bias: Some(false),
             position_encoding: PositionEncoding::Learned,
             causal: true,
+            pooling_strategy: None,
             rope_theta: 10000.0,
             bos_token_id: None,
             eos_token_id: None,
@@ -1346,11 +1818,8 @@ mod tests {
         let config = tiny_config();
         let model = LlmModel::new(&config).unwrap();
 
-        let input = Tensor::from_vec(
-            (0..8).map(|i| (i % 100) as f32).collect(),
-            vec![1, 8],
-        )
-        .unwrap();
+        let input =
+            Tensor::from_vec((0..8).map(|i| (i % 100) as f32).collect(), vec![1, 8]).unwrap();
 
         let logits = model.forward(&input).unwrap();
         assert_eq!(logits.shape(), &[1, 8, 100]);
@@ -1361,11 +1830,8 @@ mod tests {
         let config = tiny_rope_config();
         let model = LlmModel::new(&config).unwrap();
 
-        let input = Tensor::from_vec(
-            (0..8).map(|i| (i % 100) as f32).collect(),
-            vec![1, 8],
-        )
-        .unwrap();
+        let input =
+            Tensor::from_vec((0..8).map(|i| (i % 100) as f32).collect(), vec![1, 8]).unwrap();
 
         let logits = model.forward(&input).unwrap();
         assert_eq!(logits.shape(), &[1, 8, 100]);
@@ -1384,11 +1850,8 @@ mod tests {
         );
 
         // Prefill with 4 tokens
-        let input = Tensor::from_vec(
-            (0..4).map(|i| (i % 100) as f32).collect(),
-            vec![1, 4],
-        )
-        .unwrap();
+        let input =
+            Tensor::from_vec((0..4).map(|i| (i % 100) as f32).collect(), vec![1, 4]).unwrap();
         let logits = model.forward_with_cache(&input, &mut cache).unwrap();
         assert_eq!(logits.shape(), &[1, 4, 100]);
         cache.advance(4);
@@ -1504,10 +1967,8 @@ mod tests {
         };
         let model = LlmModel::new(&config).unwrap();
 
-        let input = Tensor::from_vec(
-            (0..4).map(|i| (i % 100) as f32).collect(),
-            vec![1, 4],
-        ).unwrap();
+        let input =
+            Tensor::from_vec((0..4).map(|i| (i % 100) as f32).collect(), vec![1, 4]).unwrap();
 
         // Should not panic — embedding scale applied in forward
         let logits = model.forward(&input).unwrap();
@@ -1547,24 +2008,63 @@ mod tests {
         let qkv_total = q_dim + 2 * kv_dim;
 
         let mut weights: HashMap<String, Tensor> = HashMap::new();
-        weights.insert("token_embedding.weight".into(), Tensor::randn(vec![vocab, d]));
+        weights.insert(
+            "token_embedding.weight".into(),
+            Tensor::randn(vec![vocab, d]),
+        );
         weights.insert("norm.weight".into(), Tensor::ones(vec![d]));
         weights.insert("norm.bias".into(), Tensor::zeros(vec![d]));
         weights.insert("output.weight".into(), Tensor::randn(vec![vocab, d]));
 
         for i in 0..n_layers {
-            weights.insert(format!("layers.{}.attention.qkv.weight", i), Tensor::randn(vec![qkv_total, d]));
-            weights.insert(format!("layers.{}.attention.qkv.bias", i), Tensor::zeros(vec![qkv_total]));
-            weights.insert(format!("layers.{}.attention.out_proj.weight", i), Tensor::randn(vec![d, d]));
-            weights.insert(format!("layers.{}.attention.out_proj.bias", i), Tensor::zeros(vec![d]));
-            weights.insert(format!("layers.{}.feed_forward.up_proj.weight", i), Tensor::randn(vec![hidden, d]));
-            weights.insert(format!("layers.{}.feed_forward.up_proj.bias", i), Tensor::zeros(vec![hidden]));
-            weights.insert(format!("layers.{}.feed_forward.down_proj.weight", i), Tensor::randn(vec![d, hidden]));
-            weights.insert(format!("layers.{}.feed_forward.down_proj.bias", i), Tensor::zeros(vec![d]));
-            weights.insert(format!("layers.{}.attention_norm.weight", i), Tensor::ones(vec![d]));
-            weights.insert(format!("layers.{}.attention_norm.bias", i), Tensor::zeros(vec![d]));
-            weights.insert(format!("layers.{}.ffn_norm.weight", i), Tensor::ones(vec![d]));
-            weights.insert(format!("layers.{}.ffn_norm.bias", i), Tensor::zeros(vec![d]));
+            weights.insert(
+                format!("layers.{}.attention.qkv.weight", i),
+                Tensor::randn(vec![qkv_total, d]),
+            );
+            weights.insert(
+                format!("layers.{}.attention.qkv.bias", i),
+                Tensor::zeros(vec![qkv_total]),
+            );
+            weights.insert(
+                format!("layers.{}.attention.out_proj.weight", i),
+                Tensor::randn(vec![d, d]),
+            );
+            weights.insert(
+                format!("layers.{}.attention.out_proj.bias", i),
+                Tensor::zeros(vec![d]),
+            );
+            weights.insert(
+                format!("layers.{}.feed_forward.up_proj.weight", i),
+                Tensor::randn(vec![hidden, d]),
+            );
+            weights.insert(
+                format!("layers.{}.feed_forward.up_proj.bias", i),
+                Tensor::zeros(vec![hidden]),
+            );
+            weights.insert(
+                format!("layers.{}.feed_forward.down_proj.weight", i),
+                Tensor::randn(vec![d, hidden]),
+            );
+            weights.insert(
+                format!("layers.{}.feed_forward.down_proj.bias", i),
+                Tensor::zeros(vec![d]),
+            );
+            weights.insert(
+                format!("layers.{}.attention_norm.weight", i),
+                Tensor::ones(vec![d]),
+            );
+            weights.insert(
+                format!("layers.{}.attention_norm.bias", i),
+                Tensor::zeros(vec![d]),
+            );
+            weights.insert(
+                format!("layers.{}.ffn_norm.weight", i),
+                Tensor::ones(vec![d]),
+            );
+            weights.insert(
+                format!("layers.{}.ffn_norm.bias", i),
+                Tensor::zeros(vec![d]),
+            );
         }
 
         let model = LlmModel::from_pretrained_falcon(&config, weights).unwrap();
@@ -1601,24 +2101,57 @@ mod tests {
 
         let kv_dim = 2 * (d / 4); // n_kv_heads * head_dim
         let mut weights: HashMap<String, Tensor> = HashMap::new();
-        weights.insert("token_embedding.weight".into(), Tensor::randn(vec![vocab, d]));
+        weights.insert(
+            "token_embedding.weight".into(),
+            Tensor::randn(vec![vocab, d]),
+        );
         weights.insert("norm.weight".into(), Tensor::ones(vec![d]));
         weights.insert("output.weight".into(), Tensor::randn(vec![vocab, d]));
 
         for i in 0..n_layers {
-            weights.insert(format!("layers.{}.attention.q_proj.weight", i), Tensor::randn(vec![d, d]));
-            weights.insert(format!("layers.{}.attention.k_proj.weight", i), Tensor::randn(vec![kv_dim, d]));
-            weights.insert(format!("layers.{}.attention.v_proj.weight", i), Tensor::randn(vec![kv_dim, d]));
-            weights.insert(format!("layers.{}.attention.out_proj.weight", i), Tensor::randn(vec![d, d]));
-            weights.insert(format!("layers.{}.attention_norm.weight", i), Tensor::ones(vec![d]));
-            weights.insert(format!("layers.{}.ffn_norm.weight", i), Tensor::ones(vec![d]));
+            weights.insert(
+                format!("layers.{}.attention.q_proj.weight", i),
+                Tensor::randn(vec![d, d]),
+            );
+            weights.insert(
+                format!("layers.{}.attention.k_proj.weight", i),
+                Tensor::randn(vec![kv_dim, d]),
+            );
+            weights.insert(
+                format!("layers.{}.attention.v_proj.weight", i),
+                Tensor::randn(vec![kv_dim, d]),
+            );
+            weights.insert(
+                format!("layers.{}.attention.out_proj.weight", i),
+                Tensor::randn(vec![d, d]),
+            );
+            weights.insert(
+                format!("layers.{}.attention_norm.weight", i),
+                Tensor::ones(vec![d]),
+            );
+            weights.insert(
+                format!("layers.{}.ffn_norm.weight", i),
+                Tensor::ones(vec![d]),
+            );
             // MoE gate
-            weights.insert(format!("layers.{}.moe.gate.weight", i), Tensor::randn(vec![num_experts, d]));
+            weights.insert(
+                format!("layers.{}.moe.gate.weight", i),
+                Tensor::randn(vec![num_experts, d]),
+            );
             // Expert FFNs
             for j in 0..num_experts {
-                weights.insert(format!("layers.{}.moe.experts.{}.gate_proj.weight", i, j), Tensor::randn(vec![hidden, d]));
-                weights.insert(format!("layers.{}.moe.experts.{}.up_proj.weight", i, j), Tensor::randn(vec![hidden, d]));
-                weights.insert(format!("layers.{}.moe.experts.{}.down_proj.weight", i, j), Tensor::randn(vec![d, hidden]));
+                weights.insert(
+                    format!("layers.{}.moe.experts.{}.gate_proj.weight", i, j),
+                    Tensor::randn(vec![hidden, d]),
+                );
+                weights.insert(
+                    format!("layers.{}.moe.experts.{}.up_proj.weight", i, j),
+                    Tensor::randn(vec![hidden, d]),
+                );
+                weights.insert(
+                    format!("layers.{}.moe.experts.{}.down_proj.weight", i, j),
+                    Tensor::randn(vec![d, hidden]),
+                );
             }
         }
 
@@ -1664,6 +2197,7 @@ mod tests {
             use_bias: Some(false),
             position_encoding: PositionEncoding::RoPE,
             causal: true,
+            pooling_strategy: None,
             rope_theta: 1000000.0,
             bos_token_id: Some(2),
             eos_token_id: Some(1),
@@ -1687,27 +2221,69 @@ mod tests {
         let kv_dim = num_kv * head_dim;
 
         let mut weights: HashMap<String, Tensor> = HashMap::new();
-        weights.insert("token_embedding.weight".into(), Tensor::randn(vec![vocab, d]));
+        weights.insert(
+            "token_embedding.weight".into(),
+            Tensor::randn(vec![vocab, d]),
+        );
         weights.insert("norm.weight".into(), Tensor::ones(vec![d]));
         weights.insert("output.weight".into(), Tensor::randn(vec![vocab, d]));
 
         for i in 0..n_layers {
-            weights.insert(format!("layers.{}.attention.q_proj.weight", i), Tensor::randn(vec![q_dim, d]));
-            weights.insert(format!("layers.{}.attention.k_proj.weight", i), Tensor::randn(vec![kv_dim, d]));
-            weights.insert(format!("layers.{}.attention.v_proj.weight", i), Tensor::randn(vec![kv_dim, d]));
-            weights.insert(format!("layers.{}.attention.out_proj.weight", i), Tensor::randn(vec![d, q_dim]));
+            weights.insert(
+                format!("layers.{}.attention.q_proj.weight", i),
+                Tensor::randn(vec![q_dim, d]),
+            );
+            weights.insert(
+                format!("layers.{}.attention.k_proj.weight", i),
+                Tensor::randn(vec![kv_dim, d]),
+            );
+            weights.insert(
+                format!("layers.{}.attention.v_proj.weight", i),
+                Tensor::randn(vec![kv_dim, d]),
+            );
+            weights.insert(
+                format!("layers.{}.attention.out_proj.weight", i),
+                Tensor::randn(vec![d, q_dim]),
+            );
             // QK norms
-            weights.insert(format!("layers.{}.attention.q_norm.weight", i), Tensor::ones(vec![head_dim]));
-            weights.insert(format!("layers.{}.attention.k_norm.weight", i), Tensor::ones(vec![head_dim]));
+            weights.insert(
+                format!("layers.{}.attention.q_norm.weight", i),
+                Tensor::ones(vec![head_dim]),
+            );
+            weights.insert(
+                format!("layers.{}.attention.k_norm.weight", i),
+                Tensor::ones(vec![head_dim]),
+            );
             // FFN
-            weights.insert(format!("layers.{}.feed_forward.up_proj.weight", i), Tensor::randn(vec![hidden, d]));
-            weights.insert(format!("layers.{}.feed_forward.gate_proj.weight", i), Tensor::randn(vec![hidden, d]));
-            weights.insert(format!("layers.{}.feed_forward.down_proj.weight", i), Tensor::randn(vec![d, hidden]));
+            weights.insert(
+                format!("layers.{}.feed_forward.up_proj.weight", i),
+                Tensor::randn(vec![hidden, d]),
+            );
+            weights.insert(
+                format!("layers.{}.feed_forward.gate_proj.weight", i),
+                Tensor::randn(vec![hidden, d]),
+            );
+            weights.insert(
+                format!("layers.{}.feed_forward.down_proj.weight", i),
+                Tensor::randn(vec![d, hidden]),
+            );
             // 4 norms (sandwich norm)
-            weights.insert(format!("layers.{}.attention_norm.weight", i), Tensor::ones(vec![d]));
-            weights.insert(format!("layers.{}.post_attention_norm.weight", i), Tensor::ones(vec![d]));
-            weights.insert(format!("layers.{}.ffn_norm.weight", i), Tensor::ones(vec![d]));
-            weights.insert(format!("layers.{}.post_ffn_norm.weight", i), Tensor::ones(vec![d]));
+            weights.insert(
+                format!("layers.{}.attention_norm.weight", i),
+                Tensor::ones(vec![d]),
+            );
+            weights.insert(
+                format!("layers.{}.post_attention_norm.weight", i),
+                Tensor::ones(vec![d]),
+            );
+            weights.insert(
+                format!("layers.{}.ffn_norm.weight", i),
+                Tensor::ones(vec![d]),
+            );
+            weights.insert(
+                format!("layers.{}.post_ffn_norm.weight", i),
+                Tensor::ones(vec![d]),
+            );
         }
 
         let model = LlmModel::from_pretrained_gemma3(&config, weights).unwrap();
@@ -1732,10 +2308,8 @@ mod tests {
         model.set_optimization_profile(OptProfile::Baseline);
 
         // Verify model still produces valid output with baseline profile
-        let input = Tensor::from_vec(
-            (0..4).map(|i| (i % 100) as f32).collect(),
-            vec![1, 4],
-        ).unwrap();
+        let input =
+            Tensor::from_vec((0..4).map(|i| (i % 100) as f32).collect(), vec![1, 4]).unwrap();
         let logits = model.forward(&input).unwrap();
         assert_eq!(logits.shape(), &[1, 4, 100]);
         let flat = logits.as_slice_f32().unwrap();
@@ -1750,15 +2324,15 @@ mod tests {
         model.set_optimization_profile(OptProfile::Baseline);
 
         let mut cache = KVCache::new(
-            config.n_layers, config.max_seq_len,
-            model.head_dim(), model.num_kv_heads(),
+            config.n_layers,
+            config.max_seq_len,
+            model.head_dim(),
+            model.num_kv_heads(),
         );
 
         // Prefill
-        let input = Tensor::from_vec(
-            (0..4).map(|i| (i % 100) as f32).collect(),
-            vec![1, 4],
-        ).unwrap();
+        let input =
+            Tensor::from_vec((0..4).map(|i| (i % 100) as f32).collect(), vec![1, 4]).unwrap();
         let logits = model.forward_with_cache(&input, &mut cache).unwrap();
         assert_eq!(logits.shape(), &[1, 4, 100]);
         cache.advance(4);
@@ -1776,34 +2350,45 @@ mod tests {
         use rustml_core::OptProfile;
         let config = tiny_config();
 
-        let input = Tensor::from_vec(
-            (0..4).map(|i| (i % 100) as f32).collect(),
-            vec![1, 4],
-        ).unwrap();
+        let input =
+            Tensor::from_vec((0..4).map(|i| (i % 100) as f32).collect(), vec![1, 4]).unwrap();
 
         // Optimized profile
         let mut model_opt = LlmModel::new(&config).unwrap();
         model_opt.set_optimization_profile(OptProfile::Optimized);
         let mut cache_opt = KVCache::new(
-            config.n_layers, config.max_seq_len,
-            model_opt.head_dim(), model_opt.num_kv_heads(),
+            config.n_layers,
+            config.max_seq_len,
+            model_opt.head_dim(),
+            model_opt.num_kv_heads(),
         );
-        let logits_opt = model_opt.forward_with_cache(&input, &mut cache_opt).unwrap();
+        let logits_opt = model_opt
+            .forward_with_cache(&input, &mut cache_opt)
+            .unwrap();
 
         // Baseline profile (same model instance, just toggle)
         model_opt.set_optimization_profile(OptProfile::Baseline);
         let mut cache_base = KVCache::new(
-            config.n_layers, config.max_seq_len,
-            model_opt.head_dim(), model_opt.num_kv_heads(),
+            config.n_layers,
+            config.max_seq_len,
+            model_opt.head_dim(),
+            model_opt.num_kv_heads(),
         );
-        let logits_base = model_opt.forward_with_cache(&input, &mut cache_base).unwrap();
+        let logits_base = model_opt
+            .forward_with_cache(&input, &mut cache_base)
+            .unwrap();
 
         let d1 = logits_opt.as_slice_f32().unwrap();
         let d2 = logits_base.as_slice_f32().unwrap();
         assert_eq!(d1.len(), d2.len());
         for i in 0..d1.len() {
-            assert!((d1[i] - d2[i]).abs() < 1e-3,
-                "profile mismatch at {}: opt={} base={}", i, d1[i], d2[i]);
+            assert!(
+                (d1[i] - d2[i]).abs() < 1e-3,
+                "profile mismatch at {}: opt={} base={}",
+                i,
+                d1[i],
+                d2[i]
+            );
         }
     }
 
@@ -1822,6 +2407,7 @@ mod tests {
             use_bias: Some(false),
             position_encoding: PositionEncoding::Learned,
             causal: true,
+            pooling_strategy: None,
             rope_theta: 10000.0,
             bos_token_id: None,
             eos_token_id: None,
@@ -1924,5 +2510,207 @@ mod tests {
 
         assert_eq!(count1, 13, "first quantization should quantize 13 layers");
         assert_eq!(count2, 0, "second quantization should be no-op");
+    }
+
+    // ── pool_hidden_states ───────────────────────────────────────────────────
+
+    fn make_hidden(data: Vec<f32>, batch: usize, seq: usize, dim: usize) -> Tensor {
+        Tensor::new(rustml_core::f32_vec_to_bytes(data), vec![batch, seq, dim], DType::F32)
+    }
+
+    #[test]
+    fn test_pool_cls_extracts_first_token() {
+        // batch=1, seq=3, dim=4; first token is [1,2,3,4]
+        let data = vec![
+            1.0, 2.0, 3.0, 4.0,  // token 0 (CLS)
+            5.0, 6.0, 7.0, 8.0,  // token 1
+            9.0,10.0,11.0,12.0,  // token 2
+        ];
+        let hidden = make_hidden(data, 1, 3, 4);
+        let out = pool_hidden_states(&hidden, PoolingStrategy::Cls).unwrap();
+        assert_eq!(out.shape(), &[1, 4]);
+        assert_eq!(out.get(&[0, 0]).unwrap(), 1.0);
+        assert_eq!(out.get(&[0, 3]).unwrap(), 4.0);
+    }
+
+    #[test]
+    fn test_pool_cls_batch2_each_selects_own_first_token() {
+        // batch=2, seq=2, dim=2
+        let data = vec![
+            10.0, 20.0,  // batch 0, token 0
+            30.0, 40.0,  // batch 0, token 1
+            50.0, 60.0,  // batch 1, token 0
+            70.0, 80.0,  // batch 1, token 1
+        ];
+        let hidden = make_hidden(data, 2, 2, 2);
+        let out = pool_hidden_states(&hidden, PoolingStrategy::Cls).unwrap();
+        assert_eq!(out.shape(), &[2, 2]);
+        assert_eq!(out.get(&[0, 0]).unwrap(), 10.0);
+        assert_eq!(out.get(&[0, 1]).unwrap(), 20.0);
+        assert_eq!(out.get(&[1, 0]).unwrap(), 50.0);
+        assert_eq!(out.get(&[1, 1]).unwrap(), 60.0);
+    }
+
+    #[test]
+    fn test_pool_mean_averages_tokens() {
+        // batch=1, seq=2, dim=2; tokens [0,4] and [2,6] → mean [1,5]
+        let data = vec![0.0, 4.0, 2.0, 6.0];
+        let hidden = make_hidden(data, 1, 2, 2);
+        let out = pool_hidden_states(&hidden, PoolingStrategy::Mean).unwrap();
+        assert_eq!(out.shape(), &[1, 2]);
+        let v0 = out.get(&[0, 0]).unwrap();
+        let v1 = out.get(&[0, 1]).unwrap();
+        assert!((v0 - 1.0).abs() < 1e-6, "mean d=0 expected 1.0, got {v0}");
+        assert!((v1 - 5.0).abs() < 1e-6, "mean d=1 expected 5.0, got {v1}");
+    }
+
+    #[test]
+    fn test_pool_mean_single_token_identity() {
+        // seq=1 → mean equals the single token
+        let data = vec![3.0, 7.0];
+        let hidden = make_hidden(data, 1, 1, 2);
+        let out = pool_hidden_states(&hidden, PoolingStrategy::Mean).unwrap();
+        assert!((out.get(&[0, 0]).unwrap() - 3.0).abs() < 1e-6);
+        assert!((out.get(&[0, 1]).unwrap() - 7.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_pool_max_selects_element_wise_max() {
+        // batch=1, seq=3, dim=2; max per dim: d0=max(1,5,3)=5, d1=max(9,2,7)=9
+        let data = vec![1.0, 9.0, 5.0, 2.0, 3.0, 7.0];
+        let hidden = make_hidden(data, 1, 3, 2);
+        let out = pool_hidden_states(&hidden, PoolingStrategy::Max).unwrap();
+        assert_eq!(out.shape(), &[1, 2]);
+        assert_eq!(out.get(&[0, 0]).unwrap(), 5.0);
+        assert_eq!(out.get(&[0, 1]).unwrap(), 9.0);
+    }
+
+    #[test]
+    fn test_pool_max_single_token_identity() {
+        let data = vec![-1.0, 2.0];
+        let hidden = make_hidden(data, 1, 1, 2);
+        let out = pool_hidden_states(&hidden, PoolingStrategy::Max).unwrap();
+        assert_eq!(out.get(&[0, 0]).unwrap(), -1.0);
+        assert_eq!(out.get(&[0, 1]).unwrap(), 2.0);
+    }
+
+    #[test]
+    fn test_pool_hidden_states_wrong_shape_returns_error() {
+        // 2-D tensor should fail
+        let bad =
+            Tensor::new(rustml_core::f32_vec_to_bytes(vec![1.0, 2.0]), vec![1, 2], DType::F32);
+        let r = pool_hidden_states(&bad, PoolingStrategy::Cls);
+        assert!(r.is_err(), "2-D input should return an error");
+    }
+
+    // ── LlmModel::encode and embed ───────────────────────────────────────────
+
+    #[test]
+    fn test_encode_output_shape() {
+        let config = tiny_config();
+        let model = LlmModel::new(&config).unwrap();
+        // input_ids [1, 5] → encode → [1, 5, dim]
+        let input =
+            Tensor::from_vec((0..5).map(|i| (i % 100) as f32).collect(), vec![1, 5]).unwrap();
+        let hidden = model.encode(&input).unwrap();
+        assert_eq!(hidden.shape(), &[1, 5, 64]);
+    }
+
+    #[test]
+    fn test_encode_batch_shape() {
+        let config = tiny_config();
+        let model = LlmModel::new(&config).unwrap();
+        // batch=2, seq=4 → [2, 4, dim]
+        let input =
+            Tensor::from_vec((0..8).map(|i| (i % 100) as f32).collect(), vec![2, 4]).unwrap();
+        let hidden = model.encode(&input).unwrap();
+        assert_eq!(hidden.shape(), &[2, 4, 64]);
+    }
+
+    #[test]
+    fn test_encode_exceeds_max_seq_len_returns_error() {
+        let config = tiny_config(); // max_seq_len = 32
+        let model = LlmModel::new(&config).unwrap();
+        let input =
+            Tensor::from_vec((0..33).map(|i| (i % 100) as f32).collect(), vec![1, 33]).unwrap();
+        let r = model.encode(&input);
+        assert!(r.is_err(), "seq_len > max_seq_len should fail");
+    }
+
+    #[test]
+    fn test_embed_cls_output_shape() {
+        let config = tiny_config();
+        let model = LlmModel::new(&config).unwrap();
+        let input =
+            Tensor::from_vec((0..6).map(|i| (i % 100) as f32).collect(), vec![1, 6]).unwrap();
+        let emb = model.embed(&input, PoolingStrategy::Cls).unwrap();
+        assert_eq!(emb.shape(), &[1, 64]);
+    }
+
+    #[test]
+    fn test_embed_mean_output_shape() {
+        let config = tiny_config();
+        let model = LlmModel::new(&config).unwrap();
+        let input =
+            Tensor::from_vec((0..6).map(|i| (i % 100) as f32).collect(), vec![1, 6]).unwrap();
+        let emb = model.embed(&input, PoolingStrategy::Mean).unwrap();
+        assert_eq!(emb.shape(), &[1, 64]);
+    }
+
+    #[test]
+    fn test_embed_max_output_shape() {
+        let config = tiny_config();
+        let model = LlmModel::new(&config).unwrap();
+        let input =
+            Tensor::from_vec((0..6).map(|i| (i % 100) as f32).collect(), vec![1, 6]).unwrap();
+        let emb = model.embed(&input, PoolingStrategy::Max).unwrap();
+        assert_eq!(emb.shape(), &[1, 64]);
+    }
+
+    #[test]
+    fn test_embed_batch2_output_shape() {
+        let config = tiny_config();
+        let model = LlmModel::new(&config).unwrap();
+        let input =
+            Tensor::from_vec((0..8).map(|i| (i % 100) as f32).collect(), vec![2, 4]).unwrap();
+        let emb = model.embed(&input, PoolingStrategy::Mean).unwrap();
+        assert_eq!(emb.shape(), &[2, 64]);
+    }
+
+    #[test]
+    fn test_embed_cls_is_prefix_of_encode() {
+        // CLS pooling should return the first token of encode() output.
+        let config = tiny_config();
+        let model = LlmModel::new(&config).unwrap();
+        let input =
+            Tensor::from_vec((0..5).map(|i| (i % 100) as f32).collect(), vec![1, 5]).unwrap();
+
+        let hidden = model.encode(&input).unwrap();
+        let emb = model.embed(&input, PoolingStrategy::Cls).unwrap();
+
+        // Both should have the same values for the first token (dim=64).
+        for d in 0..64 {
+            let h = hidden.get(&[0, 0, d]).unwrap();
+            let e = emb.get(&[0, d]).unwrap();
+            assert!(
+                (h - e).abs() < 1e-6,
+                "CLS pooled[{d}] = {e} != hidden[0,0,{d}] = {h}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_encode_with_bidirectional_config() {
+        // A model with causal=false should run without error.
+        let config = ModelConfig {
+            causal: false,
+            pooling_strategy: Some(PoolingStrategy::Cls),
+            ..tiny_config()
+        };
+        let model = LlmModel::new(&config).unwrap();
+        let input =
+            Tensor::from_vec((0..4).map(|i| (i % 100) as f32).collect(), vec![1, 4]).unwrap();
+        let hidden = model.encode(&input).unwrap();
+        assert_eq!(hidden.shape(), &[1, 4, 64]);
     }
 }

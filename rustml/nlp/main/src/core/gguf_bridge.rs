@@ -45,6 +45,9 @@ pub fn convert_tensors(tensors: HashMap<String, LoadedTensor>) -> HashMap<String
 /// - `embedding_scale = sqrt(dim)` (Gemma embedding scaling)
 pub fn gguf_config_to_model_config(gc: &GgufModelConfig) -> NlpResult<ModelConfig> {
     let is_gemma3 = gc.architecture == "gemma3";
+    let is_bert = gc.architecture == "bert";
+    let is_nomic_bert = gc.architecture == "nomic-bert";
+    let is_bert_family = is_bert || is_nomic_bert;
     let head_dim = gc.head_dim.unwrap_or(gc.dim / gc.n_heads);
 
     let config = ModelConfig {
@@ -56,28 +59,45 @@ pub fn gguf_config_to_model_config(gc: &GgufModelConfig) -> NlpResult<ModelConfi
         vocab_size: gc.vocab_size,
         norm_eps: gc.norm_eps,
         max_seq_len: gc.max_seq_len,
-        use_bias: Some(false),
-        position_encoding: PositionEncoding::RoPE,
-        causal: true,
+        use_bias: if is_bert {
+            Some(true)
+        } else {
+            Some(false)
+        },
+        position_encoding: if is_bert {
+            PositionEncoding::Learned
+        } else {
+            PositionEncoding::RoPE
+        },
+        causal: !is_bert_family,
         rope_theta: gc.rope_theta,
         bos_token_id: gc.bos_token_id,
         eos_token_id: gc.eos_token_id,
         chat_template: gc.chat_template.clone(),
         sliding_window: gc.sliding_window,
         attn_logit_cap: None,
-        embedding_scale: if is_gemma3 { Some((gc.dim as f32).sqrt()) } else { None },
+        embedding_scale: if is_gemma3 {
+            Some((gc.dim as f32).sqrt())
+        } else {
+            None
+        },
         // GGUF converter (convert_hf_to_gguf.py) already adds +1.0 to Gemma norm weights,
         // so we must NOT add it again at forward time. Explicitly set 0.0 for Gemma.
         rms_norm_offset: if is_gemma3 { Some(0.0) } else { None },
-        attention_bias: None,
+        attention_bias: if is_bert { Some(true) } else { None },
         parallel_residual: None,
         num_local_experts: None,
         num_experts_per_tok: None,
         head_dim: gc.head_dim,
         sliding_window_pattern: if is_gemma3 { Some(6) } else { None },
-        query_pre_attn_scalar: if is_gemma3 { Some(head_dim as f32) } else { None },
+        query_pre_attn_scalar: if is_gemma3 {
+            Some(head_dim as f32)
+        } else {
+            None
+        },
         rope_local_base_freq: if is_gemma3 { Some(10000.0) } else { None },
         rope_scaling_factor: None,
+        pooling_strategy: None,
     };
     config.validate()?;
     Ok(config)
@@ -174,6 +194,67 @@ mod tests {
         assert_eq!(mc.dim, 4096);
         assert_eq!(mc.head_dim, None);
         assert_eq!(mc.sliding_window_pattern, None);
+        assert_eq!(mc.embedding_scale, None);
+        assert_eq!(mc.rms_norm_offset, None);
+    }
+
+    #[test]
+    fn test_gguf_config_to_model_config_bert() {
+        let gc = GgufModelConfig {
+            architecture: "bert".to_string(),
+            dim: 384,
+            hidden_dim: 1536,
+            n_layers: 6,
+            n_heads: 12,
+            n_kv_heads: None,
+            vocab_size: 30522,
+            norm_eps: 1e-12,
+            max_seq_len: 512,
+            rope_theta: 10000.0,
+            bos_token_id: Some(101),
+            eos_token_id: Some(102),
+            chat_template: None,
+            head_dim: None,
+            sliding_window: None,
+        };
+        let mc = gguf_config_to_model_config(&gc).unwrap();
+        assert_eq!(mc.dim, 384);
+        assert!(!mc.causal, "BERT must be bidirectional");
+        assert_eq!(mc.use_bias, Some(true));
+        assert_eq!(mc.attention_bias, Some(true));
+        assert_eq!(mc.position_encoding, PositionEncoding::Learned);
+        assert_eq!(mc.embedding_scale, None);
+        assert_eq!(mc.rms_norm_offset, None);
+    }
+
+    #[test]
+    fn test_gguf_config_to_model_config_nomic_bert() {
+        let gc = GgufModelConfig {
+            architecture: "nomic-bert".to_string(),
+            dim: 768,
+            hidden_dim: 3072,
+            n_layers: 12,
+            n_heads: 12,
+            n_kv_heads: None,
+            vocab_size: 30522,
+            norm_eps: 1e-12,
+            max_seq_len: 8192,
+            rope_theta: 10000.0,
+            bos_token_id: None,
+            eos_token_id: None,
+            chat_template: None,
+            head_dim: None,
+            sliding_window: None,
+        };
+        let mc = gguf_config_to_model_config(&gc).unwrap();
+        assert!(!mc.causal, "Nomic-BERT must be bidirectional");
+        assert_eq!(mc.use_bias, Some(false), "Nomic-BERT has no projection bias");
+        assert_eq!(
+            mc.position_encoding,
+            PositionEncoding::RoPE,
+            "Nomic-BERT uses RoPE, not learned embeddings"
+        );
+        assert_eq!(mc.attention_bias, None, "Nomic-BERT has no attention bias");
         assert_eq!(mc.embedding_scale, None);
         assert_eq!(mc.rms_norm_offset, None);
     }

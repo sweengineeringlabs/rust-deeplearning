@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::api::error::{GgufError, GgufResult};
 use crate::api::types::*;
-use crate::core::weight_map::{gguf_llama_weight_map, gguf_gemma3_weight_map};
+use crate::core::weight_map::{gguf_bert_weight_map, gguf_gemma3_weight_map, gguf_llama_weight_map, gguf_nomic_bert_weight_map};
 
 /// GGUF magic bytes: "GGUF"
 pub const GGUF_MAGIC: [u8; 4] = [0x47, 0x47, 0x55, 0x46];
@@ -26,7 +26,9 @@ impl<'a> Cursor<'a> {
     }
 
     fn read_u8(&mut self) -> GgufResult<u8> {
-        if self.remaining() < 1 { return Err(eof_error()); }
+        if self.remaining() < 1 {
+            return Err(eof_error());
+        }
         let v = self.data[self.pos];
         self.pos += 1;
         Ok(v)
@@ -37,7 +39,9 @@ impl<'a> Cursor<'a> {
     }
 
     fn read_u16(&mut self) -> GgufResult<u16> {
-        if self.remaining() < 2 { return Err(eof_error()); }
+        if self.remaining() < 2 {
+            return Err(eof_error());
+        }
         let v = u16::from_le_bytes(self.data[self.pos..self.pos + 2].try_into().unwrap());
         self.pos += 2;
         Ok(v)
@@ -48,7 +52,9 @@ impl<'a> Cursor<'a> {
     }
 
     fn read_u32(&mut self) -> GgufResult<u32> {
-        if self.remaining() < 4 { return Err(eof_error()); }
+        if self.remaining() < 4 {
+            return Err(eof_error());
+        }
         let v = u32::from_le_bytes(self.data[self.pos..self.pos + 4].try_into().unwrap());
         self.pos += 4;
         Ok(v)
@@ -59,7 +65,9 @@ impl<'a> Cursor<'a> {
     }
 
     fn read_u64(&mut self) -> GgufResult<u64> {
-        if self.remaining() < 8 { return Err(eof_error()); }
+        if self.remaining() < 8 {
+            return Err(eof_error());
+        }
         let v = u64::from_le_bytes(self.data[self.pos..self.pos + 8].try_into().unwrap());
         self.pos += 8;
         Ok(v)
@@ -70,14 +78,18 @@ impl<'a> Cursor<'a> {
     }
 
     fn read_f32(&mut self) -> GgufResult<f32> {
-        if self.remaining() < 4 { return Err(eof_error()); }
+        if self.remaining() < 4 {
+            return Err(eof_error());
+        }
         let v = f32::from_le_bytes(self.data[self.pos..self.pos + 4].try_into().unwrap());
         self.pos += 4;
         Ok(v)
     }
 
     fn read_f64(&mut self) -> GgufResult<f64> {
-        if self.remaining() < 8 { return Err(eof_error()); }
+        if self.remaining() < 8 {
+            return Err(eof_error());
+        }
         let v = f64::from_le_bytes(self.data[self.pos..self.pos + 8].try_into().unwrap());
         self.pos += 8;
         Ok(v)
@@ -89,7 +101,9 @@ impl<'a> Cursor<'a> {
 
     fn read_string(&mut self) -> GgufResult<String> {
         let len = self.read_u64()? as usize;
-        if self.remaining() < len { return Err(eof_error()); }
+        if self.remaining() < len {
+            return Err(eof_error());
+        }
         let s = String::from_utf8(self.data[self.pos..self.pos + len].to_vec())
             .map_err(|e| GgufError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
         self.pos += len;
@@ -97,7 +111,9 @@ impl<'a> Cursor<'a> {
     }
 
     fn read_bytes(&mut self, len: usize) -> GgufResult<&'a [u8]> {
-        if self.remaining() < len { return Err(eof_error()); }
+        if self.remaining() < len {
+            return Err(eof_error());
+        }
         let data = &self.data[self.pos..self.pos + len];
         self.pos += len;
         Ok(data)
@@ -126,7 +142,10 @@ impl<'a> Cursor<'a> {
             10 => Ok(GGUFValue::U64(self.read_u64()?)),
             11 => Ok(GGUFValue::I64(self.read_i64()?)),
             12 => Ok(GGUFValue::F64(self.read_f64()?)),
-            _ => Err(GgufError::UnsupportedType(format!("Unknown GGUF value type: {}", type_id))),
+            _ => Err(GgufError::UnsupportedType(format!(
+                "Unknown GGUF value type: {}",
+                type_id
+            ))),
         }
     }
 }
@@ -153,16 +172,18 @@ impl GGUFFile {
 
         let magic = cur.read_bytes(4)?;
         if magic != GGUF_MAGIC {
-            return Err(GgufError::InvalidFormat(
-                format!("Invalid GGUF magic: expected {:?}, got {:?}", GGUF_MAGIC, magic)
-            ));
+            return Err(GgufError::InvalidFormat(format!(
+                "Invalid GGUF magic: expected {:?}, got {:?}",
+                GGUF_MAGIC, magic
+            )));
         }
 
         let version = cur.read_u32()?;
         if version < 2 || version > 3 {
-            return Err(GgufError::InvalidFormat(
-                format!("Unsupported GGUF version: {}", version)
-            ));
+            return Err(GgufError::InvalidFormat(format!(
+                "Unsupported GGUF version: {}",
+                version
+            )));
         }
 
         let tensor_count = cur.read_u64()? as usize;
@@ -185,8 +206,9 @@ impl GGUFFile {
                 dimensions.push(cur.read_u64()? as usize);
             }
             let ggml_type_id = cur.read_u32()?;
-            let ggml_type = GGMLType::from_u32(ggml_type_id)
-                .ok_or_else(|| GgufError::UnsupportedType(format!("GGML type: {}", ggml_type_id)))?;
+            let ggml_type = GGMLType::from_u32(ggml_type_id).ok_or_else(|| {
+                GgufError::UnsupportedType(format!("GGML type: {}", ggml_type_id))
+            })?;
             let offset = cur.read_u64()?;
 
             tensor_infos.push(GGUFTensorInfo {
@@ -212,24 +234,25 @@ impl GGUFFile {
     /// Detects the architecture from `general.architecture` and uses the
     /// appropriate metadata key prefix (e.g. `llama.`, `gemma3.`).
     pub fn to_model_config(&self) -> GgufResult<GgufModelConfig> {
-        let arch = self.metadata.get("general.architecture")
+        let arch = self
+            .metadata
+            .get("general.architecture")
             .and_then(|v| v.as_string())
             .unwrap_or("llama")
             .to_string();
 
         let get_u32 = |key: &str| -> GgufResult<u32> {
-            self.metadata.get(key)
+            self.metadata
+                .get(key)
                 .and_then(|v| v.as_u32())
                 .ok_or_else(|| GgufError::MissingMetadata(key.to_string()))
         };
 
-        let get_u32_opt = |key: &str| -> Option<u32> {
-            self.metadata.get(key).and_then(|v| v.as_u32())
-        };
+        let get_u32_opt =
+            |key: &str| -> Option<u32> { self.metadata.get(key).and_then(|v| v.as_u32()) };
 
-        let get_f32_opt = |key: &str| -> Option<f32> {
-            self.metadata.get(key).and_then(|v| v.as_f32())
-        };
+        let get_f32_opt =
+            |key: &str| -> Option<f32> { self.metadata.get(key).and_then(|v| v.as_f32()) };
 
         let dim = get_u32(&format!("{}.embedding_length", arch))? as usize;
         let n_heads = get_u32(&format!("{}.attention.head_count", arch))? as usize;
@@ -246,26 +269,27 @@ impl GGUFFile {
             })
             .unwrap_or(32000) as usize;
 
-        let hidden_dim = get_u32(&format!("{}.feed_forward_length", arch))
-            .unwrap_or((dim * 4) as u32) as usize;
+        let hidden_dim =
+            get_u32(&format!("{}.feed_forward_length", arch)).unwrap_or((dim * 4) as u32) as usize;
         let n_kv_heads = get_u32(&format!("{}.attention.head_count_kv", arch))
-            .ok().map(|v| v as usize);
-        let max_seq_len = get_u32(&format!("{}.context_length", arch))
-            .unwrap_or(2048) as usize;
+            .ok()
+            .map(|v| v as usize);
+        let max_seq_len = get_u32(&format!("{}.context_length", arch)).unwrap_or(2048) as usize;
         let norm_eps = get_f32_opt(&format!("{}.attention.layer_norm_rms_epsilon", arch))
+            .or_else(|| get_f32_opt(&format!("{}.attention.layer_norm_epsilon", arch)))
             .unwrap_or(1e-5);
-        let rope_theta = get_f32_opt(&format!("{}.rope.freq_base", arch))
-            .unwrap_or(10000.0);
+        let rope_theta = get_f32_opt(&format!("{}.rope.freq_base", arch)).unwrap_or(10000.0);
 
-        let head_dim = get_u32_opt(&format!("{}.attention.key_length", arch))
-            .map(|v| v as usize);
-        let sliding_window = get_u32_opt(&format!("{}.attention.sliding_window", arch))
-            .map(|v| v as usize);
+        let head_dim = get_u32_opt(&format!("{}.attention.key_length", arch)).map(|v| v as usize);
+        let sliding_window =
+            get_u32_opt(&format!("{}.attention.sliding_window", arch)).map(|v| v as usize);
 
         let bos_token_id = get_u32("tokenizer.ggml.bos_token_id").ok();
         let eos_token_id = get_u32("tokenizer.ggml.eos_token_id").ok();
 
-        let chat_template = self.metadata.get("tokenizer.chat_template")
+        let chat_template = self
+            .metadata
+            .get("tokenizer.chat_template")
             .and_then(|v| v.as_string())
             .map(|s| s.to_string());
 
@@ -289,7 +313,10 @@ impl GGUFFile {
     }
 
     /// Load tensor data from the file, returning raw bytes per tensor.
-    pub fn load_tensors<P: AsRef<Path>>(&self, path: P) -> GgufResult<HashMap<String, LoadedTensor>> {
+    pub fn load_tensors<P: AsRef<Path>>(
+        &self,
+        path: P,
+    ) -> GgufResult<HashMap<String, LoadedTensor>> {
         let mut file = File::open(path)?;
         let mut data = Vec::new();
         file.read_to_end(&mut data)?;
@@ -322,7 +349,11 @@ impl GGUFFile {
             let loaded = if info.ggml_type.needs_dequant() {
                 let f32_data = dequantize_kquant(raw_data, n_elements, info.ggml_type)?;
                 let f32_bytes = rustml_quant::f32_vec_to_bytes(f32_data);
-                LoadedTensor { data: f32_bytes, shape, dtype: LoadedDType::F32 }
+                LoadedTensor {
+                    data: f32_bytes,
+                    shape,
+                    dtype: LoadedDType::F32,
+                }
             } else {
                 let dtype = match info.ggml_type {
                     GGMLType::F32 => LoadedDType::F32,
@@ -334,16 +365,28 @@ impl GGUFFile {
                         // Legacy quant types: dequantize to F32 at load time
                         let f32_data = dequantize_legacy(raw_data, n_elements, info.ggml_type)?;
                         let f32_bytes = rustml_quant::f32_vec_to_bytes(f32_data);
-                        tensors.insert(info.name.clone(), LoadedTensor { data: f32_bytes, shape, dtype: LoadedDType::F32 });
+                        tensors.insert(
+                            info.name.clone(),
+                            LoadedTensor {
+                                data: f32_bytes,
+                                shape,
+                                dtype: LoadedDType::F32,
+                            },
+                        );
                         continue;
                     }
                     _ => {
-                        return Err(GgufError::UnsupportedType(
-                            format!("Unsupported GGML type {:?} for tensor '{}'", info.ggml_type, info.name)
-                        ));
+                        return Err(GgufError::UnsupportedType(format!(
+                            "Unsupported GGML type {:?} for tensor '{}'",
+                            info.ggml_type, info.name
+                        )));
                     }
                 };
-                LoadedTensor { data: raw_data.to_vec(), shape, dtype }
+                LoadedTensor {
+                    data: raw_data.to_vec(),
+                    shape,
+                    dtype,
+                }
             };
             tensors.insert(info.name.clone(), loaded);
         }
@@ -352,7 +395,11 @@ impl GGUFFile {
     }
 
     /// Load and remap tensors using the standard Llama weight map.
-    pub fn load_and_remap<P: AsRef<Path>>(&self, path: P, n_layers: usize) -> GgufResult<HashMap<String, LoadedTensor>> {
+    pub fn load_and_remap<P: AsRef<Path>>(
+        &self,
+        path: P,
+        n_layers: usize,
+    ) -> GgufResult<HashMap<String, LoadedTensor>> {
         let tensors = self.load_tensors(path)?;
         let weight_map = gguf_llama_weight_map(n_layers);
         Ok(weight_map.remap(tensors))
@@ -361,9 +408,41 @@ impl GGUFFile {
     /// Load tensors and remap using Gemma 3 GGUF naming conventions.
     ///
     /// Handles Gemma 3 specifics: QK norms, 4 sandwich norms, GeGLU MLP.
-    pub fn load_and_remap_gemma3<P: AsRef<Path>>(&self, path: P, n_layers: usize) -> GgufResult<HashMap<String, LoadedTensor>> {
+    pub fn load_and_remap_gemma3<P: AsRef<Path>>(
+        &self,
+        path: P,
+        n_layers: usize,
+    ) -> GgufResult<HashMap<String, LoadedTensor>> {
         let tensors = self.load_tensors(path)?;
         let weight_map = gguf_gemma3_weight_map(n_layers);
+        Ok(weight_map.remap(tensors))
+    }
+
+    /// Load tensors and remap using BERT GGUF naming conventions.
+    ///
+    /// Handles BERT specifics: bias on all projections, `attn_output_norm`/`layer_output_norm`,
+    /// position embeddings, embedding norm, no gate_proj.
+    pub fn load_and_remap_bert<P: AsRef<Path>>(
+        &self,
+        path: P,
+        n_layers: usize,
+    ) -> GgufResult<HashMap<String, LoadedTensor>> {
+        let tensors = self.load_tensors(path)?;
+        let weight_map = gguf_bert_weight_map(n_layers);
+        Ok(weight_map.remap(tensors))
+    }
+
+    /// Load tensors and remap using Nomic-BERT GGUF naming conventions.
+    ///
+    /// Handles Nomic-BERT specifics: fused QKV (no bias), SwiGLU FFN,
+    /// RoPE (no position embeddings), embedding norm.
+    pub fn load_and_remap_nomic_bert<P: AsRef<Path>>(
+        &self,
+        path: P,
+        n_layers: usize,
+    ) -> GgufResult<HashMap<String, LoadedTensor>> {
+        let tensors = self.load_tensors(path)?;
+        let weight_map = gguf_nomic_bert_weight_map(n_layers);
         Ok(weight_map.remap(tensors))
     }
 
@@ -371,7 +450,11 @@ impl GGUFFile {
     ///
     /// Uses seek+read_exact to read only the bytes for this tensor,
     /// avoiding loading the entire file into memory.
-    pub fn read_tensor_f32<P: AsRef<Path>>(path: P, info: &GGUFTensorInfo, data_offset: usize) -> GgufResult<Vec<f32>> {
+    pub fn read_tensor_f32<P: AsRef<Path>>(
+        path: P,
+        info: &GGUFTensorInfo,
+        data_offset: usize,
+    ) -> GgufResult<Vec<f32>> {
         let n_elements: usize = info.dimensions.iter().product();
         let n_blocks = if info.ggml_type.block_size() > 1 {
             n_elements / info.ggml_type.block_size()
@@ -391,7 +474,8 @@ impl GGUFFile {
                 let mut out = vec![0.0f32; n_elements];
                 for i in 0..n_elements {
                     let off = i * 4;
-                    out[i] = f32::from_le_bytes([raw[off], raw[off+1], raw[off+2], raw[off+3]]);
+                    out[i] =
+                        f32::from_le_bytes([raw[off], raw[off + 1], raw[off + 2], raw[off + 3]]);
                 }
                 Ok(out)
             }
@@ -399,7 +483,7 @@ impl GGUFFile {
                 let mut out = vec![0.0f32; n_elements];
                 for i in 0..n_elements {
                     let off = i * 2;
-                    out[i] = f16_from_bytes(raw[off], raw[off+1]);
+                    out[i] = f16_from_bytes(raw[off], raw[off + 1]);
                 }
                 Ok(out)
             }
@@ -412,12 +496,11 @@ impl GGUFFile {
             GGMLType::Q5_0 | GGMLType::Q5_1 | GGMLType::Q8_1 => {
                 dequantize_legacy(&raw, n_elements, info.ggml_type)
             }
-            t if t.needs_dequant() => {
-                dequantize_kquant(&raw, n_elements, info.ggml_type)
-            }
-            _ => Err(GgufError::UnsupportedType(
-                format!("Unsupported GGML type {:?} for read_tensor_f32", info.ggml_type)
-            )),
+            t if t.needs_dequant() => dequantize_kquant(&raw, n_elements, info.ggml_type),
+            _ => Err(GgufError::UnsupportedType(format!(
+                "Unsupported GGML type {:?} for read_tensor_f32",
+                info.ggml_type
+            ))),
         }
     }
 }
@@ -429,9 +512,10 @@ fn dequantize_legacy(data: &[u8], n_elements: usize, ggml_type: GGMLType) -> Ggu
         GGMLType::Q5_0 => dequantize_q5_0(data, n_elements),
         GGMLType::Q5_1 => dequantize_q5_1(data, n_elements),
         GGMLType::Q8_1 => dequantize_q8_1(data, n_elements),
-        _ => Err(GgufError::UnsupportedType(
-            format!("Legacy dequantization not implemented for {:?}", ggml_type)
-        )),
+        _ => Err(GgufError::UnsupportedType(format!(
+            "Legacy dequantization not implemented for {:?}",
+            ggml_type
+        ))),
     }
 }
 
@@ -551,9 +635,10 @@ fn dequantize_kquant(data: &[u8], n_elements: usize, ggml_type: GGMLType) -> Ggu
         GGMLType::Q8K => dequantize_q8k(data, n_elements),
         GGMLType::Q3K => dequantize_q3k(data, n_elements),
         GGMLType::Q2K => dequantize_q2k(data, n_elements),
-        _ => Err(GgufError::UnsupportedType(
-            format!("Dequantization not implemented for {:?}", ggml_type)
-        )),
+        _ => Err(GgufError::UnsupportedType(format!(
+            "Dequantization not implemented for {:?}",
+            ggml_type
+        ))),
     }
 }
 
@@ -584,12 +669,18 @@ fn dequantize_q6k(data: &[u8], n_elements: usize) -> GgufResult<Vec<f32>> {
 
             for l in 0..32usize {
                 let is = l / 16;
-                let q1 = ((ql[ql_off + l] & 0xF) | (((qh[qh_off + l] >> 0) & 3) << 4)) as i8 as f32 - 32.0;
-                let q2 = ((ql[ql_off + l + 32] & 0xF) | (((qh[qh_off + l] >> 2) & 3) << 4)) as i8 as f32 - 32.0;
-                let q3 = ((ql[ql_off + l] >> 4) | (((qh[qh_off + l] >> 4) & 3) << 4)) as i8 as f32 - 32.0;
-                let q4 = ((ql[ql_off + l + 32] >> 4) | (((qh[qh_off + l] >> 6) & 3) << 4)) as i8 as f32 - 32.0;
+                let q1 = ((ql[ql_off + l] & 0xF) | (((qh[qh_off + l] >> 0) & 3) << 4)) as i8 as f32
+                    - 32.0;
+                let q2 = ((ql[ql_off + l + 32] & 0xF) | (((qh[qh_off + l] >> 2) & 3) << 4)) as i8
+                    as f32
+                    - 32.0;
+                let q3 = ((ql[ql_off + l] >> 4) | (((qh[qh_off + l] >> 4) & 3) << 4)) as i8 as f32
+                    - 32.0;
+                let q4 = ((ql[ql_off + l + 32] >> 4) | (((qh[qh_off + l] >> 6) & 3) << 4)) as i8
+                    as f32
+                    - 32.0;
 
-                out[y_off + l]      = d * (scales[sc_off + is] as i8 as f32) * q1;
+                out[y_off + l] = d * (scales[sc_off + is] as i8 as f32) * q1;
                 out[y_off + l + 32] = d * (scales[sc_off + is + 2] as i8 as f32) * q2;
                 out[y_off + l + 64] = d * (scales[sc_off + is + 4] as i8 as f32) * q3;
                 out[y_off + l + 96] = d * (scales[sc_off + is + 6] as i8 as f32) * q4;
@@ -747,9 +838,8 @@ fn dequantize_q3k(data: &[u8], n_elements: usize) -> GgufResult<Vec<f32>> {
         aux[0] = (aux[0] & kmask2) | (((tmp >> 0) & kmask1) << 4);
         aux[1] = (aux[1] & kmask2) | (((tmp >> 2) & kmask1) << 4);
 
-        let scales_bytes: [u8; 16] = unsafe {
-            std::mem::transmute::<[u32; 4], [u8; 16]>(aux.map(|v| v.to_le()))
-        };
+        let scales_bytes: [u8; 16] =
+            unsafe { std::mem::transmute::<[u32; 4], [u8; 16]>(aux.map(|v| v.to_le())) };
 
         let out = &mut output[b * block_size..(b + 1) * block_size];
 
